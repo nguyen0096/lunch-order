@@ -392,8 +392,16 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
       // Not scrollIntoView: the Who column is sticky and sits *over* the scroll
       // area, so centring the target leaves its left edge underneath it and
       // clips the dish name. Park it just clear of that column instead.
+      //
+      // Measured as a delta between two rects rather than from `offsetLeft`,
+      // which is relative to the nearest positioned ancestor. That is not the
+      // scroller here, so any page padding or offset ancestor between them was
+      // being added to scrollLeft and the grid overshot the target day.
       const sticky = gridRef.current?.querySelector<HTMLElement>("thead th:first-child");
-      scroller.scrollLeft = Math.max(0, column.offsetLeft - (sticky?.offsetWidth ?? 0) - 8);
+      const gap = (sticky?.getBoundingClientRect().width ?? 0) + 8;
+      const delta =
+        column.getBoundingClientRect().left - scroller.getBoundingClientRect().left - gap;
+      scroller.scrollLeft = Math.max(0, scroller.scrollLeft + delta);
       scrolledFor.current = from;
     });
     return () => cancelAnimationFrame(frame);

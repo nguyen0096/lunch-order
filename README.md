@@ -9,6 +9,8 @@ parsing come first, but the schema is multi-tenant from the first migration.
 
 ## Status
 
+Live at <https://lunch-order.nexus-9c9.workers.dev>.
+
 Running. Every migration is applied, the web app is deployed, all three Edge
 Functions are live, and the Telegram bot has been used end to end: a member with no
 email address joined with a code, was asked their name, and ordered lunch.
