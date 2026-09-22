@@ -98,7 +98,7 @@ export function parseMenu(text: string, opts: ParseOptions): ParsedMenu {
     // Strip the matched price off the end; what remains is the dish name.
     const name = body
       .replace(
-        /\s*(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*[.…]*\s*$/iu,
+        /\s*[(\[]?\s*(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*[)\]]?\s*[.,;!…]*\s*$/iu,
         "",
       )
       .replace(/[\s\-–—:·.]+$/u, "")

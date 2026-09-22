@@ -93,15 +93,43 @@ describe("lines that are not dishes", () => {
     "không có gì",
     "35k",
     "45.000đ",
-    // The price has to end the line, so trailing punctuation is not recoverable.
-    "Cơm gà 45k.",
-    "Cơm gà 45k ...",
   ];
 
   it.each(junk)("rejects %s rather than inventing a dish", (line) => {
     const parsed = parse(line);
     expect(parsed.items).toEqual([]);
     expect(parsed.unparsed).toEqual([{ line: 0, raw: line }]);
+  });
+
+  // These were once asserted as unparseable, on the reasoning that the price
+  // must end the line. That reasoning held, and the conclusion was still wrong:
+  // a caterer writing in sentences ends every line with a full stop, so the
+  // whole menu parsed as nothing and the admin retyped it by hand.
+  const punctuated: Array<[string, string, number]> = [
+    ["a full stop", "Cơm gà 45k.", 45_000],
+    ["an ellipsis", "Cơm gà 45k ...", 45_000],
+    ["a comma", "Bún bò 50k,", 50_000],
+    ["round brackets", "Cơm gà (45k)", 45_000],
+    ["square brackets", "Cơm gà [45k]", 45_000],
+    ["an exclamation", "Phở bò 40.000đ!", 40_000],
+  ];
+
+  it.each(punctuated)("reads a price followed by %s", (_label, line, priceMinor) => {
+    const parsed = parse(line);
+    expect(parsed.unparsed).toEqual([]);
+    expect(parsed.items).toHaveLength(1);
+    expect(parsed.items[0]?.priceMinor).toBe(priceMinor);
+    // The punctuation belongs to the sentence, not to the dish.
+    expect(parsed.items[0]?.name).not.toMatch(/[.,!…()[\]]$/);
+  });
+
+  // Still unsupported, and deliberately left so: the line has a different shape
+  // rather than decoration around the same one. It lands in unparsed, which the
+  // editor offers as "add as item", so the admin loses a click and not the menu.
+  it("does not yet read a price written before the dish", () => {
+    const parsed = parse("45k - Cơm gà");
+    expect(parsed.items).toEqual([]);
+    expect(parsed.unparsed).toEqual([{ line: 0, raw: "45k - Cơm gà" }]);
   });
 });
 

@@ -63,8 +63,12 @@ const CURRENCY_WORDS = ["đ", "d", "vnd", "vnđ", "₫"];
  */
 export function parseVietnamesePrice(raw: string): PriceReading | null {
   const s = raw.toLowerCase().trim();
+  // The price ends the line, but a caterer writing in sentences ends it with a
+  // full stop and one writing a list often brackets it. Anchoring tightly to
+  // the digits meant "Cơm gà 45k." parsed as nothing, so a politely punctuated
+  // message produced an empty menu rather than a wrong one.
   const m = s.match(
-    /(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*$/u,
+    /[(\[]?\s*(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*[)\]]?\s*[.,;!…]*\s*$/u,
   );
   if (!m) return null;
 
