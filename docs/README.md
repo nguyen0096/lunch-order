@@ -13,6 +13,7 @@ mixing them is what makes documentation that nobody finds anything in.
 
 - [Deploy the Edge Functions](how-to/deploy-edge-functions.md)
 - [Rotate the Telegram join code](how-to/rotate-the-join-code.md)
+- [Set up where the money goes](how-to/set-up-payment.md)
 
 ## Reference
 
