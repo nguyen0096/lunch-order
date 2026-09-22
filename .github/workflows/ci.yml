@@ -35,6 +35,9 @@ jobs:
           # config error to every visitor.
           VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          # Optional. Absent, the preferences screen shows the raw /start command
+          # instead of a t.me deep link, which still works.
+          VITE_TELEGRAM_BOT: ${{ vars.VITE_TELEGRAM_BOT }}
       # Cloudflare's official action. It installs its own wrangler, so the
       # devDependency here only serves local `npm run deploy`.
       - uses: cloudflare/wrangler-action@v4

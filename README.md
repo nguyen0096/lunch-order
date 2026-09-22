@@ -79,6 +79,120 @@ One-time setup, in order:
 To ship without CI, or to check a build before merging, `npm run deploy` does the same
 build and upload from your machine.
 
+## Secrets
+
+Four systems hold secrets and none of them can read another's, so two values are
+deliberately stored twice. `OUTBOX_DRAIN_SECRET` in particular lives in both the Edge
+Function environment and in Vault, because Postgres is the sender and the function is
+the receiver.
+
+| Value | Edge Function | Vault | GitHub | Telegram |
+| --- | --- | --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | yes | | | issuer |
+| `TELEGRAM_WEBHOOK_SECRET` | yes | | | yes |
+| `OUTBOX_DRAIN_SECRET` | yes | same value | | |
+| `project_url`, `publishable_key` | auto-injected | yes | | |
+| `CLOUDFLARE_*` | | | secrets | |
+| `VITE_*` | | | variables | |
+
+`VITE_` values are repository **variables**, not secrets. Vite inlines them into the
+bundle, so they are public the moment anyone loads the page, and masking them in a CI
+log would only give false assurance. They are still required: without them the build
+succeeds and ships an app that reports a config error to every visitor.
+
+### 1. Generate the two shared secrets
+
+```bash
+openssl rand -hex 32    # TELEGRAM_WEBHOOK_SECRET
+openssl rand -hex 32    # OUTBOX_DRAIN_SECRET
+```
+
+### 2. Edge Function secrets
+
+`--project-ref` avoids needing `supabase link`. Lead with a space to keep the tokens
+out of shell history.
+
+```bash
+ npx supabase secrets set \
+   TELEGRAM_BOT_TOKEN='<from BotFather>' \
+   TELEGRAM_WEBHOOK_SECRET='<step 1>' \
+   OUTBOX_DRAIN_SECRET='<step 1>' \
+   --project-ref wvtbstticnactealupph
+```
+
+`SUPABASE_URL`, `SUPABASE_DB_URL`, `SUPABASE_SECRET_KEYS` and `SUPABASE_PUBLISHABLE_KEYS`
+are injected automatically and must not be set by hand.
+
+### 3. Vault, so pg_cron can reach the drain
+
+The hourly tick and the outbox drain run inside Postgres, which cannot read Edge
+Function environment variables. Run in the SQL editor:
+
+```sql
+select vault.create_secret('https://<ref>.supabase.co',   'project_url');
+select vault.create_secret('<publishable key>',           'publishable_key');
+select vault.create_secret('<OUTBOX_DRAIN_SECRET>',       'outbox_drain_secret');
+```
+
+Not hardcoded in a migration: migrations are committed, and Vault is encrypted at rest.
+Until these exist the drain logs a NOTICE with the pending count each minute and sends
+nothing, which is recoverable. An unsent message is; an unrecorded one is not.
+
+### 4. GitHub, for the Cloudflare deploy
+
+```bash
+gh secret   set CLOUDFLARE_API_TOKEN    --repo <owner>/lunch-order
+gh secret   set CLOUDFLARE_ACCOUNT_ID   --repo <owner>/lunch-order
+gh variable set VITE_SUPABASE_URL       --repo <owner>/lunch-order --body 'https://<ref>.supabase.co'
+gh variable set VITE_SUPABASE_PUBLISHABLE_KEY --repo <owner>/lunch-order --body 'sb_publishable_...'
+gh variable set VITE_TELEGRAM_BOT       --repo <owner>/lunch-order --body '<bot username, no @>'
+```
+
+The API token comes from the *Edit Cloudflare Workers* template.
+
+### 5. Deploy, then point Telegram at it
+
+Order matters: registering the webhook before the function exists means every update
+Telegram sends lands on a 404.
+
+```bash
+./scripts/deploy-functions.sh
+
+curl -sX POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url":"https://<ref>.supabase.co/functions/v1/telegram",
+       "secret_token":"<TELEGRAM_WEBHOOK_SECRET>",
+       "allowed_updates":["message","callback_query"],
+       "drop_pending_updates":true}'
+```
+
+`secret_token` is not derived from the bot token. Telegram echoes it back in the
+`X-Telegram-Bot-Api-Secret-Token` header on every update, and the function compares it
+in constant time. It is the only thing proving a request came from Telegram rather than
+from someone who guessed the webhook URL.
+
+### 6. Verify
+
+```bash
+npx supabase secrets list --project-ref <ref>     # names only, never values
+gh secret list --repo <owner>/lunch-order
+gh variable list --repo <owner>/lunch-order
+curl -s "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"   # url set, last_error_message empty
+```
+
+```sql
+select name from vault.secrets order by name;
+select j.jobname, d.status, max(d.end_time)
+  from cron.job_run_details d join cron.job j on j.jobid = d.jobid
+ group by j.jobname, d.status;
+```
+
+Before shipping, confirm nothing secret reached the bundle:
+
+```bash
+grep -rn "SERVICE_ROLE\|BOT_TOKEN\|sb_secret_" dist/web/
+```
+
 ## Database
 
 Migrations are in `supabase/migrations/`, applied in filename order.
