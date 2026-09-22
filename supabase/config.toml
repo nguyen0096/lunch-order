@@ -1,0 +1,28 @@
+# Description: per-function deploy settings, so local, script and CI deploys agree.
+#
+# These used to live as --no-verify-jwt in scripts/deploy-functions.sh, which
+# meant a CI deploy running `supabase functions deploy` over the whole directory
+# would silently re-enable the platform gate on the telegram webhook and reject
+# every update Telegram sent. Declaring it here is what keeps the two paths from
+# disagreeing.
+
+project_id = "wvtbstticnactealupph"
+
+# Telegram authenticates itself with the X-Telegram-Bot-Api-Secret-Token header,
+# which the function compares in constant time. The platform's JWT gate would
+# reject every update before that check ever ran, because Telegram has no reason
+# to hold a project key and must not be given one.
+[functions.telegram]
+verify_jwt = false
+
+# The gate stays ON here, deliberately. pg_net sends the publishable key, which
+# satisfies it and is not a secret, and X-Outbox-Secret is the gate that actually
+# decides. Two independent checks rather than one.
+[functions.outbox-drain]
+verify_jwt = true
+
+# Admin-only by its own check: it verifies the caller's JWT and their admin role
+# against the org before any request reaches DeepSeek. An unauthenticated LLM
+# proxy is someone else's token bill.
+[functions.parse-assist]
+verify_jwt = true

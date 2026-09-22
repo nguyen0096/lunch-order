@@ -45,3 +45,21 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy
+
+  # Migrations reach the database through the Supabase GitHub integration, but
+  # Edge Functions do not: without this they stay whatever was last pushed by
+  # hand, which is the silent drift scripts/deploy-functions.sh exists to stop
+  # and could not stop on its own. verify_jwt per function comes from
+  # supabase/config.toml, so this deploys the whole directory in one command.
+  deploy-functions:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      - run: supabase functions deploy --project-ref wvtbstticnactealupph
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
