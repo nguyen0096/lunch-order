@@ -51,6 +51,18 @@ jobs:
           # Optional. Absent, the preferences screen shows the raw /start command
           # instead of a t.me deep link, which still works.
           VITE_TELEGRAM_BOT: ${{ vars.VITE_TELEGRAM_BOT }}
+      # A missing repository variable does not fail the build, it changes what
+      # gets built: supabase.ts sets configError, main.tsx renders "Not
+      # configured" instead of <App/>, and Rollup then tree-shakes the entire
+      # application out of the bundle. The build succeeds, the deploy is green,
+      # and every visitor gets an error page. Two strings from opposite ends of
+      # the app are cheaper than discovering that from a screenshot.
+      - name: Refuse to deploy an empty bundle
+        run: |
+          for marker in billing_statements 'Continue with Google'; do
+            grep -rqF "$marker" dist/web/assets/*.js \
+              || { echo "::error::built bundle has no '$marker' -- is a VITE_ variable unset?"; exit 1; }
+          done
       # Cloudflare's official action. It installs its own wrangler, so the
       # devDependency here only serves local `npm run deploy`.
       - uses: cloudflare/wrangler-action@v4
