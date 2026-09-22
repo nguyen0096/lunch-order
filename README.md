@@ -27,15 +27,6 @@ disables a visible feature until they are: `organizations.payment_config` is
 [set up where the money goes](docs/how-to/set-up-payment.md)), and
 `telegram_group_chat_id` is null, which is why the outbox has never held a row.
 
-Known drift: `supabase_migrations.schema_migrations` records 35 of the 37
-migration files. The two newest were applied by hand during a QA pass and their
-files were made idempotent, so the schema is correct and re-running them is a
-no-op; the registry catches up whenever the GitHub integration next syncs.
-Verify with
-
-```sql
-select count(*) from supabase_migrations.schema_migrations;
-```
 
 `supabase/tests/isolation.sql` proves cross-tenant isolation and is worth running
 after any policy change. It is not yet wired into CI, which it should be.
