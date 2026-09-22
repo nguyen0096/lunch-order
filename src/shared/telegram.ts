@@ -35,6 +35,63 @@ export function isLinkToken(arg: string): boolean {
   return UUID_RE.test(arg.trim());
 }
 
+// The alphabet organizations_telegram_join_code_check spells out, minus the
+// characters people misread off a phone screen: no O/0, no I/1.
+const JOIN_CODE_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{6,12}$/;
+
+/**
+ * The org's shared join code, as somebody with no web account arrives with.
+ *
+ * Folded to upper case first because join_with_code() does `upper(btrim(...))`
+ * on the way in, so a code typed in lower case is the same code.
+ */
+export function isJoinCode(arg: string): boolean {
+  return JOIN_CODE_RE.test(normalizeJoinCode(arg));
+}
+
+export function normalizeJoinCode(arg: string): string {
+  return arg.trim().toUpperCase();
+}
+
+/* ------------------------------------------------------- the name prompt */
+
+/**
+ * The name has to be asked for BEFORE the account exists: join_with_code()
+ * writes profiles.full_name and private.suggest_short_code() then folds that
+ * name into the code printed on bank transfer memos. Signing somebody up first
+ * would stamp them 'NEWM' forever, and abandoning the prompt would leave an
+ * orphan auth user behind.
+ *
+ * Which means the bot has to remember a join code across two messages, and it
+ * has nowhere to put it: an Edge Function keeps nothing between invocations and
+ * a conversation-state table would be a third door into this schema. So the
+ * prompt carries the code and is sent with force_reply, and Telegram hands it
+ * straight back in reply_to_message. The conversation is the state.
+ */
+const JOIN_CODE_LABEL = "Join code: ";
+
+export function namePrompt(orgName: string, joinCode: string): string {
+  return [
+    `Joining <b>${escapeHtml(orgName)}</b>.`,
+    "",
+    "What should people call you? Reply to this message with your name, and I'll",
+    "sign you up. It's the name colleagues see next to your lunch.",
+    "",
+    // Last line, and read back anchored to the end, so an org that has named
+    // itself "Join code: AAAAAA" cannot talk the bot into a different org.
+    `${JOIN_CODE_LABEL}${escapeHtml(normalizeJoinCode(joinCode))}`,
+  ].join("\n");
+}
+
+/** The code out of a prompt the bot sent, or null if this is not that message. */
+export function joinCodeInPrompt(text: string | undefined): string | null {
+  if (text === undefined) return null;
+  const match = new RegExp(
+    `(?:^|\\n)${JOIN_CODE_LABEL}([ABCDEFGHJKLMNPQRSTUVWXYZ2-9]{6,12})\\s*$`,
+  ).exec(text);
+  return match?.[1] ?? null;
+}
+
 /* ----------------------------------------------------------------- messages */
 
 export function escapeHtml(s: string): string {

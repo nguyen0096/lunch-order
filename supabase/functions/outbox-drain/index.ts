@@ -22,7 +22,7 @@
  * own JWT gate stays ON for this function, so an anonymous POST never reaches
  * this code at all.
  */
-import { serviceClient } from "../_shared/userToken.ts";
+import { serviceClient } from "../_shared/supabaseClient.ts";
 import { secretsMatch } from "../_shared/secrets.ts";
 import {
   editMessageText, isMessageGone, isNotModified, isPermanent, sendMessage,

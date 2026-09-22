@@ -76,14 +76,29 @@ export type InlineKeyboard = Array<Array<{ text: string; callback_data: string }
 
 export function sendMessage(
   token: string, chatId: number, text: string,
-  opts: { parseMode?: string | null; keyboard?: InlineKeyboard } = {},
+  opts: {
+    parseMode?: string | null;
+    keyboard?: InlineKeyboard;
+    /**
+     * Opens the client's reply composer on this message, so the answer comes
+     * back carrying reply_to_message. That is the only thing in an update that
+     * says which question it answers. It is one reply_markup field, so a forced
+     * reply and a keyboard cannot both be sent.
+     */
+    forceReply?: { placeholder: string };
+  } = {},
 ): Promise<BotResult<TgMessage>> {
+  const markup = opts.forceReply
+    ? { force_reply: true, input_field_placeholder: opts.forceReply.placeholder }
+    : opts.keyboard
+    ? { inline_keyboard: opts.keyboard }
+    : null;
   return callBot<TgMessage>(token, "sendMessage", {
     chat_id: chatId,
     text,
     ...parseModeOf(opts.parseMode),
     link_preview_options: { is_disabled: true },
-    ...(opts.keyboard ? { reply_markup: { inline_keyboard: opts.keyboard } } : {}),
+    ...(markup ? { reply_markup: markup } : {}),
   });
 }
 

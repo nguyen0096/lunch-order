@@ -8,8 +8,12 @@ import {
   formatCutoffIn,
   formatServiceDate,
   humanError as botHumanError,
+  isJoinCode,
   isLinkToken,
+  joinCodeInPrompt,
+  namePrompt,
   nextOrderableDay,
+  normalizeJoinCode,
   orderingClosedReason,
   parseCommand,
   todayIn,
@@ -150,6 +154,55 @@ describe("link tokens and deep links", () => {
     expect(isLinkToken(token)).toBe(true);
     expect(isLinkToken("' or 1=1--")).toBe(false);
     expect(isLinkToken("")).toBe(false);
+  });
+});
+
+describe("join codes", () => {
+  it("matches organizations_telegram_join_code_check, case-insensitively", () => {
+    expect(isJoinCode("LUNCH7")).toBe(true);
+    expect(isJoinCode(" lunch7 ")).toBe(true);
+    expect(normalizeJoinCode(" lunch7 ")).toBe("LUNCH7");
+    expect(isJoinCode("ABCDEFGHJKLM")).toBe(true); // 12, the maximum
+  });
+
+  it("rejects the characters the alphabet leaves out, and the wrong lengths", () => {
+    for (const bad of ["LUNCH0", "LUNCHO", "LUNCH1", "LUNCHI", "LUNC7", "ABCDEFGHJKLMN", ""]) {
+      expect(isJoinCode(bad)).toBe(false);
+    }
+  });
+
+  // The bot tells the two kinds of /start argument apart by shape alone, so an
+  // overlap would silently send somebody down the wrong door.
+  it("never collides with a link token", () => {
+    const linkToken = "3f2504e0-4f89-11d3-9a0c-0305e82c3301";
+    expect(isJoinCode(linkToken)).toBe(false);
+    expect(isLinkToken("LUNCH7")).toBe(false);
+  });
+});
+
+describe("the name prompt carries the join code back", () => {
+  it("round-trips through the text Telegram hands back", () => {
+    expect(joinCodeInPrompt(namePrompt("Test Office", "lunch7"))).toBe("LUNCH7");
+  });
+
+  it("is null for anything that is not one of our prompts", () => {
+    expect(joinCodeInPrompt(undefined)).toBeNull();
+    expect(joinCodeInPrompt("What's for lunch?")).toBeNull();
+    expect(joinCodeInPrompt("Join code: nope")).toBeNull();
+    expect(joinCodeInPrompt("Join code: LUNCH7 and then some")).toBeNull();
+  });
+
+  // organizations.name allows newlines, so an org can put a whole line of its
+  // own choosing into this prompt. Reading the code anchored to the END means
+  // the worst it can do is be ignored.
+  it("reads the last line, not an org name imitating one", () => {
+    const prompt = namePrompt("Acme\nJoin code: EVILAA", "LUNCH7");
+    expect(prompt).toContain("Join code: EVILAA");
+    expect(joinCodeInPrompt(prompt)).toBe("LUNCH7");
+  });
+
+  it("escapes the org name, which reaches Telegram as HTML", () => {
+    expect(namePrompt("A & <b>B</b>", "LUNCH7")).toContain("A &amp; &lt;b&gt;B&lt;/b&gt;");
   });
 });
 
