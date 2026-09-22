@@ -8,8 +8,9 @@
 -- moves, so a timezone change would be reported to an admin as a rotation. A
 -- number that is wrong in a way nobody can see is worse than no number.
 
+-- `if not exists` so re-running the file is a no-op rather than an error.
 alter table public.organizations
-  add column telegram_join_code_set_at timestamptz;
+  add column if not exists telegram_join_code_set_at timestamptz;
 
 comment on column public.organizations.telegram_join_code_set_at is
   'When telegram_join_code was last written. Owned entirely by the stamp_join_code_set_at trigger; a value sent by a client is discarded. Null means the code predates this column; do not read null as "never".';
@@ -54,6 +55,7 @@ begin
 end
 $fn$;
 
+drop trigger if exists organizations_stamp_join_code on public.organizations;
 create trigger organizations_stamp_join_code
 before insert or update on public.organizations
 for each row execute function public.stamp_join_code_set_at();

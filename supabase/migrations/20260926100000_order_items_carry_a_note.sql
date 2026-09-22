@@ -11,8 +11,10 @@
 --
 -- Short on purpose. This is a line in a message to a caterer, not a comment
 -- thread, and a long one will not survive being read aloud down a phone.
+-- `if not exists` so re-running the file is a no-op rather than an error, the
+-- same reason the pg_cron migration unschedules before it schedules.
 alter table public.order_items
-  add column note text
+  add column if not exists note text
     check (note is null or length(btrim(note)) between 1 and 120);
 
 comment on column public.order_items.note is
