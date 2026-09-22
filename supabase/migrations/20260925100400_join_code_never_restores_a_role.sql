@@ -110,7 +110,7 @@ begin
       from public.organizations o
       join public.memberships m on m.org_id = o.id and m.profile_id = v_uid
      where o.id = v_org.id;
-end $function$;
+end $$;
 
 revoke execute on function public.join_with_code(text, text, bigint) from public, anon;
 grant  execute on function public.join_with_code(text, text, bigint) to authenticated;
