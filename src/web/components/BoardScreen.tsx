@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, DicesIcon, PlusIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, Dice5Icon, PlusIcon } from "lucide-react";
 import {
   Action,
   Button,
@@ -912,7 +912,7 @@ function MyCell({
           className={cn("h-9 flex-1 px-0", OPEN_CELL)}
           onClick={onOrder}
         >
-          <DicesIcon className="size-5" aria-hidden="true" />
+          <Dice5Icon className="size-5" aria-hidden="true" />
         </Action>
       </div>
     );

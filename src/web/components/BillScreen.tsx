@@ -87,8 +87,8 @@ export function BillScreen({ me, org }: ScreenProps) {
   const outstanding = outstandingMinor(statement);
 
   return (
-    <section className="flex flex-col gap-8">
-      <article className="flex max-w-xl flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
+    <section className="flex max-w-2xl flex-col gap-8">
+      <article className="flex flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
         <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
           <h1 className="text-lg font-semibold">{weekLabel(lead)}</h1>
           <StatusBadge statement={statement} />
@@ -272,8 +272,8 @@ function PastWeek({
 /** Shaped like the card, so the amount does not jump when the data lands. */
 function BillSkeleton() {
   return (
-    <section className="flex flex-col gap-8">
-      <div className="flex max-w-xl flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
+    <section className="flex max-w-2xl flex-col gap-8">
+      <div className="flex flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
         <Skeleton className="h-6 w-44" />
         <div className="flex flex-col gap-2">
           <Skeleton className="h-4 w-20" />
