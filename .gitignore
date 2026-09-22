@@ -9,3 +9,6 @@ dist/
 
 dist/web/
 supabase/.temp/
+
+# Written by `deno check`, which runs against Deno rather than this package.
+deno.lock

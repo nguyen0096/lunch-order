@@ -15,6 +15,19 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # tsconfig excludes supabase/functions, and `supabase functions deploy`
+      # does not typecheck either, so until this step the Edge Functions were
+      # checked by nothing. Deno sees errors tsc structurally cannot: it caught a
+      # narrowing bug that tsc had no view of, because the files are not in its
+      # program at all.
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      # --node-modules-dir=none because these run on Deno, not Node: resolving
+      # against the repo's node_modules would typecheck them against the wrong
+      # runtime's types and trip Deno's minimum-dependency-age policy on
+      # devDependencies they never import.
+      - run: deno check --node-modules-dir=none supabase/functions/*/index.ts
 
   deploy:
     needs: check
