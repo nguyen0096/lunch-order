@@ -49,6 +49,16 @@ needed its own trigger; the old one was BEFORE UPDATE only.
 deactivated admin returned as an admin by sending a string every remaining
 member can read.
 
+**Anonymous sign-ins are on, and the advisor is right to flag them.** Joining
+from Telegram must not require an email address, so a visitor can arrive holding
+a real JWT whose role is `authenticated` -- the same role every policy here is
+written against. Supabase's linter therefore reports all twenty tables as
+reachable by anonymous users, and they are. What makes it safe is that
+`private.my_org_ids()` returns nothing for a subject with no membership row, and
+every policy goes through it. Measured, against production: 17 checks, all zero
+rows, including the join code itself.
+`supabase/tests/anonymous.sql` is that measurement, kept.
+
 **Detection, not prevention, for the join code.** It is shared in a group chat,
 so it will eventually reach someone it should not; designing as though it will
 not is wishful. The People screen shows when the code was last set and who
@@ -132,6 +142,12 @@ working correctly: every control was greyed with no reason given.
 failure, and `run` resolves rather than rejects, which is what actually removes
 `try/catch` from screens instead of merely discouraging it. A role change used to
 succeed in silence, so a working feature was indistinguishable from a broken one.
+
+**One API module per screen, behind a barrel.** `api.ts` was 925 lines that
+every screen imported, so any two people building any two screens edited the
+same file. `src/web/api/` splits it by domain and `api.ts` re-exports, which
+means no call site changed and none has to change again. All 38 exports were
+diffed before and after.
 
 ## Process
 
