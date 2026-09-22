@@ -1,9 +1,9 @@
 -- The second job the hourly tick said belonged here. There is a sender now, so
 -- the queue can be drained.
 --
--- Every minute, not every hour: settle_outbox backs off in 1m/3m/9m/27m/81m
--- steps and next_attempt_at is a timestamp, so an hourly job would round every
--- one of those up to the next hour and make a transient Telegram blip cost an
+-- Every minute, not every hour: settle_outbox backs off in 3m/9m/27m/81m steps
+-- and next_attempt_at is a timestamp, so an hourly job would round every one of
+-- those up to the next hour and make a transient Telegram blip cost an
 -- afternoon. A cutoff warning that arrives an hour late is not a warning.
 --
 -- Postgres cannot call an Edge Function, so this goes out through pg_net and
