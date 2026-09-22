@@ -302,6 +302,30 @@ describe("escaping and VietQR", () => {
   });
 
   it("is null when the org has not configured one, or the currency has sub-units", () => {
+    // What the Settings screen actually writes. The bot read the top level
+    // only, so a configured office got a QR on the web and none in Telegram.
+    expect(
+      vietQrLink(
+        {
+          vietqr: { bankBin: "970436", accountNumber: "0123456789", accountName: "Chi Le" },
+          note: "cash is fine too",
+        },
+        { amountMinor: 45000, minorUnits: 0, addInfo: "L39NGUY" },
+      ),
+    ).toBe(
+      "https://img.vietqr.io/image/970436-0123456789-compact2.png?" +
+        "amount=45000&addInfo=L39NGUY&accountName=Chi+Le",
+    );
+
+    // A half-filled nested account is no account, not a fall-through to the
+    // top level, which would silently pay whatever the old row said.
+    expect(
+      vietQrLink(
+        { vietqr: { bankBin: "970436" }, bank_bin: "970415", account_number: "999" },
+        { amountMinor: 1, minorUnits: 0, addInfo: "X" },
+      ),
+    ).toBeNull();
+
     expect(vietQrLink({}, { amountMinor: 1, minorUnits: 0, addInfo: "X" })).toBeNull();
     expect(vietQrLink(null, { amountMinor: 1, minorUnits: 0, addInfo: "X" })).toBeNull();
     expect(vietQrLink({ bank_bin: "970415" }, { amountMinor: 1, minorUnits: 0, addInfo: "X" }))

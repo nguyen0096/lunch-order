@@ -284,15 +284,26 @@ export function vietQrLink(
   if (paymentConfig === null || typeof paymentConfig !== "object") return null;
   const cfg = paymentConfig as Record<string, unknown>;
 
-  const bank = str(cfg, "bank_bin", "bankBin", "bank_code", "bankCode", "bank");
-  const account = str(cfg, "account_number", "accountNumber", "account");
+  // The Settings screen writes the account nested under `vietqr`, because
+  // shared/payment.ts keeps `note` beside the account rather than inside it.
+  // Rows written by hand before that screen existed put the same fields at the
+  // top level. Look in the nested object first and fall back, or an admin who
+  // fills the form in gets a QR on the web bill and none from the bot.
+  const nested = cfg["vietqr"];
+  const acct =
+    typeof nested === "object" && nested !== null
+      ? (nested as Record<string, unknown>)
+      : cfg;
+
+  const bank = str(acct, "bank_bin", "bankBin", "bank_code", "bankCode", "bank");
+  const account = str(acct, "account_number", "accountNumber", "account");
   if (bank === null || account === null) return null;
 
-  const template = str(cfg, "template") ?? "compact2";
+  const template = str(acct, "template") ?? str(cfg, "template") ?? "compact2";
   const params = new URLSearchParams();
   if (args.amountMinor > 0) params.set("amount", String(args.amountMinor));
   if (args.addInfo.trim() !== "") params.set("addInfo", args.addInfo.trim());
-  const name = str(cfg, "account_name", "accountName");
+  const name = str(acct, "account_name", "accountName");
   if (name !== null) params.set("accountName", name);
 
   return `https://img.vietqr.io/image/${bank}-${account}-${template}.png?${params.toString()}`;
