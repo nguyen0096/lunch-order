@@ -51,8 +51,8 @@ import {
 } from "../_shared/telegramApi.ts";
 import {
   addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatCutoffIn, formatServiceDate,
-  humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, nextOrderableDay,
-  normalizeJoinCode, orderingClosedReason, parseCommand, todayIn, vietQrLink,
+  humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, normalizeJoinCode,
+  orderingClosedReason, parseCommand, targetMenu, todayIn, vietQrLink,
 } from "../_shared/telegram.ts";
 import { formatMoney, type Currency } from "../_shared/money.ts";
 
@@ -61,8 +61,8 @@ const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET");
 
 const HELP = [
   "<b>What I can do</b>",
-  "/today - the next menu, and order from it",
-  "/cancel - cancel today's order",
+  "/order - the next menu, and order from it",
+  "/cancel - cancel your next order",
   "/me - what you owe this week",
   "/help - this message",
 ].join("\n");
@@ -233,7 +233,11 @@ async function onMessage(message: Message): Promise<void> {
   if (links.length === 0) return await say(chatId, NOT_CONNECTED);
 
   switch (command?.name) {
-    case "today": return await onToday(chatId, links);
+    // "today" is the name this command shipped under and is deliberately absent
+    // from HELP: it was wrong (ordering closes the night before, so it showed
+    // tomorrow), but people have it in their fingers.
+    case "order":
+    case "today": return await onOrder(chatId, links);
     case "me": return await onMe(chatId, links);
     case "cancel": return await onCancel(chatId, links);
     case "start":
@@ -422,9 +426,9 @@ async function sayJoined(
   await say(chatId, `You're in, at <b>${orgName}</b>.\n\n${HELP}`);
 }
 
-/* ------------------------------------------------------------------- /today */
+/* ------------------------------------------------------------------- /order */
 
-async function onToday(chatId: number, links: Link[]): Promise<void> {
+async function onOrder(chatId: number, links: Link[]): Promise<void> {
   for (const link of links) {
     // One transaction per member action, so the menu, the member's own order
     // and the offers waiting for them are all one consistent answer. Sending is
@@ -453,16 +457,21 @@ type MenuRow = {
   items: Array<{ id: number; name: string; price_minor: number }>;
 };
 
-async function dayView(
-  tx: Tx, link: Link, showOrgName: boolean, menuId?: number,
-): Promise<Rendered> {
-  const now = new Date();
-  const today = todayIn(link.org.timezone, now);
-  const currency = currencyOf(link.org);
-  const header = showOrgName ? `<b>${escapeHtml(link.org.name)}</b>\n` : "";
-  const gate = { isAdmin: link.isAdmin, now, timeZone: link.org.timezone };
+/** A menu and why ordering from it is shut, or null when it is open. */
+type Target = { menu: MenuRow; closedReason: string | null };
 
-  const rows = await tx<MenuRow[]>`
+/**
+ * Either the week ahead, or the one menu a button named.
+ *
+ * A tapped button names its own menu, so that day is read whether or not it is
+ * still the next one; a bare command has only a window, and resolveTarget picks
+ * from it. `today` bounds that window and is passed in rather than read here,
+ * so the day the window starts on is the same day the choice is made against.
+ */
+async function menuRows(
+  tx: Tx, link: Link, today: string, menuId?: number,
+): Promise<MenuRow[]> {
+  return await tx<MenuRow[]>`
     select m.id,
            m.service_date::text as service_date,
            m.status,
@@ -478,9 +487,6 @@ async function dayView(
       from public.menus m
       left join public.menu_items mi on mi.menu_id = m.id and mi.is_available
      where m.org_id = ${link.org.id}
-       -- A tapped button names its own menu, so that day is shown whether or
-       -- not it is still the next one; /today names a window instead and picks
-       -- from it. The reason line below explains itself either way.
        and case when ${menuId ?? null}::bigint is null
                 then m.service_date between ${today}::date
                                         and ${addDaysIso(today, 6)}::date
@@ -488,39 +494,96 @@ async function dayView(
            end
      group by m.id
      order by m.service_date`;
+}
 
-  let menu: MenuRow;
-  let closedReason: string | null;
+/**
+ * Which menu a command that named none is about. THE one answer.
+ *
+ * /order and /cancel both arrive here, so they cannot disagree about which day
+ * they are talking about: one window read, and the choice within it made by
+ * targetMenu(), which is pure and covered by test/telegram.test.ts.
+ */
+async function resolveTarget(tx: Tx, link: Link): Promise<Target | null> {
+  const now = new Date();
+  const today = todayIn(link.org.timezone, now);
+  const rows = await menuRows(tx, link, today);
 
-  if (menuId === undefined) {
-    const chosen = nextOrderableDay(
-      rows.map((m) => ({
-        serviceDate: m.service_date, status: m.status, orderCutoffAt: m.order_cutoff_at, row: m,
-      })),
-      { ...gate, today },
-    );
-    if (!chosen) {
-      return { text: `${header}No menu is up yet. I'll be here when there is one.`, keyboard: [] };
-    }
-    menu = chosen.menu.row;
-    closedReason = chosen.closedReason;
-  } else {
-    const only = rows[0];
-    if (!only) return { text: `${header}That menu is gone.`, keyboard: [] };
-    menu = only;
-    closedReason = orderingClosedReason({
-      ...gate,
+  const chosen = targetMenu(
+    rows.map((row) => ({
+      serviceDate: row.service_date,
+      status: row.status,
+      orderCutoffAt: row.order_cutoff_at,
+      row,
+    })),
+    { today, isAdmin: link.isAdmin, now, timeZone: link.org.timezone },
+  );
+  return chosen === null ? null : { menu: chosen.menu.row, closedReason: chosen.closedReason };
+}
+
+/** The menu a button named, which resolveTarget may well no longer pick. */
+async function targetById(tx: Tx, link: Link, menuId: number): Promise<Target | null> {
+  const now = new Date();
+  const [menu] = await menuRows(tx, link, todayIn(link.org.timezone, now), menuId);
+  if (menu === undefined) return null;
+
+  return {
+    menu,
+    closedReason: orderingClosedReason({
       menu: {
         serviceDate: menu.service_date,
         status: menu.status,
         orderCutoffAt: menu.order_cutoff_at,
       },
-    });
+      isAdmin: link.isAdmin,
+      now,
+      timeZone: link.org.timezone,
+    }),
+  };
+}
+
+/** The next menu, and where this member stands on it. */
+async function dayView(tx: Tx, link: Link, showOrgName: boolean): Promise<Rendered> {
+  const target = await resolveTarget(tx, link);
+  if (target === null) {
+    return {
+      text: `${orgHeader(link, showOrgName)}No menu is up yet. I'll be here when there is one.`,
+      keyboard: [],
+    };
   }
+  return renderDay(link, showOrgName, target, await myOrder(tx, link, target.menu.id));
+}
 
-  const order = await myOrder(tx, link, menu.id);
+/**
+ * One named menu, redrawn after a tap.
+ *
+ * `order` is what the write that prompted the redraw returned, so the common
+ * path does not read back a row it has only just written itself.
+ */
+async function menuView(
+  tx: Tx, link: Link, showOrgName: boolean, menuId: number, order?: OrderRow | null,
+): Promise<Rendered> {
+  const target = await targetById(tx, link, menuId);
+  if (target === null) {
+    return { text: `${orgHeader(link, showOrgName)}That menu is gone.`, keyboard: [] };
+  }
+  return renderDay(
+    link, showOrgName, target,
+    order === undefined ? await myOrder(tx, link, menuId) : order,
+  );
+}
 
-  const lines = [`${header}<b>${formatServiceDate(menu.service_date)}</b>`];
+/** A member belonging to two offices needs to be told which one is speaking. */
+function orgHeader(link: Link, showOrgName: boolean): string {
+  return showOrgName ? `<b>${escapeHtml(link.org.name)}</b>\n` : "";
+}
+
+function renderDay(
+  link: Link, showOrgName: boolean, target: Target, order: OrderRow | null,
+): Rendered {
+  const { menu, closedReason } = target;
+  const currency = currencyOf(link.org);
+
+  const lines = [`${orgHeader(link, showOrgName)}<b>${formatServiceDate(menu.service_date)}</b>`];
   lines.push(closedReason !== null
     ? escapeHtml(closedReason)
     : `Orders close ${formatCutoffIn(menu.order_cutoff_at, link.org.timezone)}.`);
@@ -723,22 +786,34 @@ function renderStatement(s: StatementRow, link: Link): string {
 
 /* ------------------------------------------------------------------ /cancel */
 
+/** Which order was cancelled, and the day it was for, named by the menu. */
+type Cancellation =
+  | { result: "no-menu" }
+  | { result: "none" | "already" | "cancelled"; day: string };
+
 async function onCancel(chatId: number, links: Link[]): Promise<void> {
   for (const link of links) {
-    const today = todayIn(link.org.timezone, new Date());
-    const head = links.length > 1 ? `<b>${escapeHtml(link.org.name)}</b>\n` : "";
+    const head = orgHeader(link, links.length > 1);
 
     // Read and write in one transaction: split across two, the cutoff could
     // pass between them, and the order read would not be the order cancelled.
     const outcome = await attempt(() =>
-      asMember(link.profileId, async (tx) => {
+      asMember(link.profileId, async (tx): Promise<Cancellation> => {
+        // The same menu /order offers, resolved the same way. Working out the
+        // day again here is what made the two commands disagree.
+        const target = await resolveTarget(tx, link);
+        if (target === null) return { result: "no-menu" };
+        const day = formatServiceDate(target.menu.service_date);
+
+        // menu_id, not service_date: (menu_id, profile_id) is
+        // orders_menu_profile_uk, so this is at most one row, and it is the
+        // row the member actually placed rather than whatever sits on today.
         const [order] = await tx<Array<{ id: number; status: string }>>`
           select o.id, o.status from public.orders o
-           where o.org_id = ${link.org.id}
-             and o.profile_id = ${link.profileId}::uuid
-             and o.service_date = ${today}::date`;
-        if (!order) return "none" as const;
-        if (order.status === "cancelled") return "already" as const;
+           where o.menu_id = ${target.menu.id}
+             and o.profile_id = ${link.profileId}::uuid`;
+        if (!order) return { result: "none", day };
+        if (order.status === "cancelled") return { result: "already", day };
 
         // Members have no DELETE on orders on purpose: cancelling is a status
         // change, which keeps the audit trail and holds the one-order-per-day
@@ -746,7 +821,7 @@ async function onCancel(chatId: number, links: Link[]): Promise<void> {
         await tx`update public.orders
                     set status = 'cancelled', cancelled_at = now()
                   where id = ${order.id} and profile_id = ${link.profileId}::uuid`;
-        return "cancelled" as const;
+        return { result: "cancelled", day };
       })
     );
 
@@ -754,13 +829,15 @@ async function onCancel(chatId: number, links: Link[]): Promise<void> {
       await say(chatId, head + escapeHtml(outcome.reason));
       continue;
     }
-    const day = formatServiceDate(today);
+    const done = outcome.value;
     await say(chatId, head + (
-      outcome.value === "none"
-        ? `You have no order for ${day}.`
-        : outcome.value === "already"
-        ? `Your order for ${day} is already cancelled.`
-        : `Cancelled your order for ${day}.`
+      done.result === "no-menu"
+        ? "There's no menu up, so there's nothing to cancel."
+        : done.result === "none"
+        ? `You have no order for ${done.day}.`
+        : done.result === "already"
+        ? `Your order for ${done.day} is already cancelled.`
+        : `Cancelled your order for ${done.day}.`
     ));
   }
 }
@@ -827,27 +904,52 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
 
   const menuId = action.menuId;
   const outcome = await attempt(() =>
-    asMember(link.profileId, (tx) =>
-      action.kind === "pick"
-        ? placeOrder(tx, link, menuId, action.itemId)
-        : clearOrder(tx, link, menuId))
+    asMember(link.profileId, async (tx) => {
+      const written = action.kind === "pick"
+        ? await placeOrder(tx, link, menuId, action.itemId)
+        : await clearOrder(tx, link, menuId);
+      if (written.refusal !== null) {
+        return { reason: written.refusal, dish: null, rendered: null };
+      }
+      // Redrawn inside the SAME transaction on the common path: one round trip
+      // instead of two, and the write and the message the member is left
+      // looking at are one snapshot. Nothing is read back that was only just
+      // written -- the write returned the order itself.
+      return {
+        reason: null,
+        dish: written.order?.item_name_snapshot ?? null,
+        rendered: await menuView(tx, link, links.length > 1, menuId, written.order),
+      };
+    })
   );
-  const reason = outcome.ok ? outcome.value : outcome.reason;
+
+  const reason = outcome.ok ? outcome.value.reason : outcome.reason;
+  const dish = outcome.ok ? outcome.value.dish : null;
 
   await answerCallbackQuery(
     BOT_TOKEN, cb.id,
-    reason ?? (action.kind === "pick" ? "Ordered" : "Cancelled"),
+    // Naming the dish lets the confirmation stand on its own, before the
+    // message underneath it has been redrawn and whether or not it ever is.
+    reason ?? (action.kind === "pick"
+      ? (dish === null ? "Ordered" : `Ordered ${dish}`)
+      : "Cancelled"),
     reason !== null,
   );
 
-  // A second transaction, deliberately: a refusal above rolled the first one
-  // back, taking its reads with it. Redrawing from the database either way
-  // leaves the member looking at what is actually true rather than at their
-  // failed tap. They already have the verdict from the callback answer, so a
-  // failed redraw leaves the old message alone rather than talking twice.
-  const rendered = await attempt(() =>
-    asMember(link.profileId, (tx) => dayView(tx, link, links.length > 1, menuId)));
-  if (rendered.ok) await edit(chat.id, messageId, rendered.value.text, rendered.value.keyboard);
+  const rendered = outcome.ok ? outcome.value.rendered : null;
+  if (rendered !== null) {
+    return await edit(chat.id, messageId, rendered.text, rendered.keyboard);
+  }
+
+  // A second transaction, deliberately: a refusal above was a thrown database
+  // error, which rolled the first one back and took its reads with it, so the
+  // redraw could not have ridden along. Redrawing from the database leaves the
+  // member looking at what is actually true rather than at their failed tap.
+  // They already have the verdict from the callback answer, so a failed redraw
+  // leaves the old message alone rather than talking twice.
+  const redrawn = await attempt(() =>
+    asMember(link.profileId, (tx) => menuView(tx, link, links.length > 1, menuId)));
+  if (redrawn.ok) await edit(chat.id, messageId, redrawn.value.text, redrawn.value.keyboard);
 }
 
 /**
@@ -868,6 +970,11 @@ async function orgOfCallback(
   return row?.org_id ?? null;
 }
 
+/** The member's order as the write left it, or the sentence refusing the write. */
+type Written =
+  | { refusal: string; order?: undefined }
+  | { refusal: null; order: OrderRow | null };
+
 /**
  * The same sequence setOrder() runs in the web app, as one statement each.
  *
@@ -878,7 +985,7 @@ async function orgOfCallback(
  */
 async function placeOrder(
   tx: Tx, link: Link, menuId: number, itemId: number,
-): Promise<string | null> {
+): Promise<Written> {
   // Insert-from-select so org_id and service_date cannot disagree with the
   // menu, and ON CONFLICT so re-picking a dish is one statement rather than a
   // read followed by a write that races it.
@@ -889,27 +996,56 @@ async function placeOrder(
     on conflict (menu_id, profile_id) do update
        set status = 'placed', cancelled_at = null
     returning id, org_id, menu_id`;
-  if (!order) return "That menu is gone.";
+  if (!order) return { refusal: "That menu is gone." };
 
   await tx`delete from public.order_items where order_id = ${order.id}`;
-  await tx`
+  const [item] = await tx<Array<{
+    item_name_snapshot: string; line_total_minor: number | null;
+  }>>`
     insert into public.order_items
       (order_id, org_id, profile_id, menu_id, menu_item_id,
        item_name_snapshot, unit_price_minor)
     values (${order.id}, ${order.org_id}, ${link.profileId}::uuid, ${order.menu_id}, ${itemId},
             -- Overwritten unconditionally by the snapshot trigger; sent only
             -- because the columns are NOT NULL.
-            '', 0)`;
-  return null;
+            '', 0)
+    -- order_items_snapshot is BEFORE INSERT and line_total_minor is generated
+    -- from what it writes, so these come back spelled and priced as the caterer
+    -- has them. That is the redraw's copy of the order and the name the
+    -- callback answer confirms, without a second read of the row.
+    returning item_name_snapshot, line_total_minor`;
+
+  return {
+    refusal: null,
+    order: {
+      id: order.id,
+      status: "placed",
+      item_name_snapshot: item?.item_name_snapshot ?? null,
+      line_total_minor: item?.line_total_minor ?? null,
+    },
+  };
 }
 
-async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<string | null> {
-  await tx`update public.orders
-              set status = 'cancelled', cancelled_at = now()
-            where menu_id = ${menuId}
-              and profile_id = ${link.profileId}::uuid
-              and status = 'placed'`;
-  return null;
+async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<Written> {
+  const [order] = await tx<Array<{ id: number }>>`
+    update public.orders
+       set status = 'cancelled', cancelled_at = now()
+     where menu_id = ${menuId}
+       and profile_id = ${link.profileId}::uuid
+       and status = 'placed'
+    returning id`;
+
+  // No row updated means nothing was placed, which the day message renders the
+  // same way it renders a cancelled one.
+  return {
+    refusal: null,
+    order: order === undefined ? null : {
+      id: order.id,
+      status: "cancelled",
+      item_name_snapshot: null,
+      line_total_minor: null,
+    },
+  };
 }
 
 /* ------------------------------------------------------------------ plumbing */

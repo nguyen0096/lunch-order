@@ -12,10 +12,10 @@ import {
   isLinkToken,
   joinCodeInPrompt,
   namePrompt,
-  nextOrderableDay,
   normalizeJoinCode,
   orderingClosedReason,
   parseCommand,
+  targetMenu,
   todayIn,
   vietQrLink,
   type CallbackAction,
@@ -124,6 +124,7 @@ describe("callback payloads", () => {
 
 describe("command parsing", () => {
   it("reads the name, the bot suffix and the argument", () => {
+    expect(parseCommand("/order")).toEqual({ name: "order", arg: "" });
     expect(parseCommand("/today")).toEqual({ name: "today", arg: "" });
     expect(parseCommand("  /Today  ")).toEqual({ name: "today", arg: "" });
     expect(parseCommand("/start@LunchBot abc-def")).toEqual({ name: "start", arg: "abc-def" });
@@ -224,27 +225,58 @@ describe("dates in the org's timezone", () => {
   });
 });
 
-describe("nextOrderableDay", () => {
-  const args = { today: "2026-09-22", isAdmin: false, now: BEFORE, timeZone: TZ };
-  const closed = { serviceDate: "2026-09-22", status: "locked", orderCutoffAt: CUTOFF };
-  const open = { serviceDate: "2026-09-23", status: "published", orderCutoffAt: CUTOFF };
+describe("targetMenu picks the day every command without a menu id is about", () => {
+  const TODAY = "2026-09-22";
+  const TOMORROW = "2026-09-23";
+  // Two consecutive evening cutoffs: today's menu shuts at 21:00 on 22/09,
+  // tomorrow's at 21:00 on 23/09. BEFORE and AFTER straddle the first.
+  const TOMORROW_CUTOFF = "2026-09-23T14:00:00.000Z";
+  const base = { today: TODAY, isAdmin: false, timeZone: TZ };
 
-  it("prefers the soonest day still open", () => {
-    expect(nextOrderableDay([closed, open], args)).toEqual({ menu: open, closedReason: null });
+  const openToday = { serviceDate: TODAY, status: "published", orderCutoffAt: CUTOFF };
+  const openTomorrow = {
+    serviceDate: TOMORROW, status: "published", orderCutoffAt: TOMORROW_CUTOFF,
+  };
+
+  it("picks today while today is still open", () => {
+    expect(targetMenu([openToday, openTomorrow], { ...base, now: BEFORE }))
+      .toEqual({ menu: openToday, closedReason: null });
   });
 
-  it("falls back to the soonest day with a menu and says why it is shut", () => {
-    const got = nextOrderableDay([closed], args);
-    expect(got?.menu).toEqual(closed);
+  // The reason the command could not keep being called /today: for most of the
+  // day the answer is tomorrow, because ordering closes the night before.
+  it("picks tomorrow once today's cutoff has passed", () => {
+    expect(targetMenu([openToday, openTomorrow], { ...base, now: AFTER }))
+      .toEqual({ menu: openTomorrow, closedReason: null });
+  });
+
+  it("skips a cancelled day", () => {
+    const cancelled = { ...openToday, status: "cancelled" };
+    expect(targetMenu([cancelled, openTomorrow], { ...base, now: BEFORE }))
+      .toEqual({ menu: openTomorrow, closedReason: null });
+  });
+
+  it("skips a locked day", () => {
+    const locked = { ...openToday, status: "locked" };
+    expect(targetMenu([locked, openTomorrow], { ...base, now: BEFORE }))
+      .toEqual({ menu: openTomorrow, closedReason: null });
+  });
+
+  it("falls back to the soonest menu with a reason when none is open", () => {
+    const locked = { ...openToday, status: "locked" };
+    const got = targetMenu([locked, { ...openTomorrow, status: "cancelled" }],
+      { ...base, now: BEFORE });
+    expect(got?.menu).toEqual(locked);
     expect(got?.closedReason).toContain("gone to the caterer");
   });
 
-  it("ignores days already past", () => {
-    expect(nextOrderableDay([{ ...open, serviceDate: "2026-09-01" }], args)).toBeNull();
+  it("is null when there is no menu at all", () => {
+    expect(targetMenu([], { ...base, now: BEFORE })).toBeNull();
   });
 
-  it("is null when there is nothing at all", () => {
-    expect(nextOrderableDay([], args)).toBeNull();
+  it("ignores days already past", () => {
+    expect(targetMenu([{ ...openTomorrow, serviceDate: "2026-09-01" }],
+      { ...base, now: BEFORE })).toBeNull();
   });
 });
 

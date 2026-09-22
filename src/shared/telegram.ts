@@ -242,13 +242,18 @@ export function orderingClosedReason(args: {
 }
 
 /**
- * Which day /today should talk about.
+ * Which menu a command that named no menu is about.
+ *
+ * The single answer for every such command, /order and /cancel alike. Asking
+ * this question in two places is what let a member order for tomorrow and then
+ * be told, by a /cancel that had looked at today, that they had nothing to
+ * cancel.
  *
  * Same intent as defaultSelectedDay() in gating.ts: the soonest day still open,
  * else the soonest day with a menu at all, so a member who asks after the
  * cutoff is told what closed rather than shown nothing.
  */
-export function nextOrderableDay<T extends MenuLike>(
+export function targetMenu<T extends MenuLike>(
   menus: T[],
   args: { today: string; isAdmin: boolean; now: Date; timeZone: string },
 ): { menu: T; closedReason: string | null } | null {
