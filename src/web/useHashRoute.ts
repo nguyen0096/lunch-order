@@ -22,7 +22,7 @@ function read(): Route {
 
   const parts = path.split("/").filter(Boolean);
   if (parts[0] === "o" && parts[1]) {
-    return { slug: parts[1], page: parts.slice(2).join("/") || "orders", query };
+    return { slug: parts[1], page: parts.slice(2).join("/") || "board", query };
   }
   return { slug: null, page: parts.join("/") || "home", query };
 }

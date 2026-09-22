@@ -1,0 +1,251 @@
+import type { BoardCell, BoardDay } from "../src/web/api.js";
+import {
+  cellMark,
+  cellReason,
+  columnLabel,
+  cutoffLabel,
+  passOnReason,
+  pickDish,
+  visibleDays,
+  weekRangeLabel,
+} from "../src/web/components/boardModel.js";
+
+const TZ = "Asia/Ho_Chi_Minh";
+
+const DISHES = [
+  { id: 5, name: "Cơm gà", priceMinor: 45_000 },
+  { id: 6, name: "Bún bò", priceMinor: 50_000 },
+  { id: 7, name: "Phở bò", priceMinor: 40_000 },
+];
+
+function day(over: Partial<BoardDay> = {}): BoardDay {
+  return {
+    serviceDate: "2026-09-23",
+    menuId: 5,
+    status: "published",
+    orderCutoffAt: "2026-09-22T14:00:00Z",
+    dishes: DISHES,
+    ...over,
+  };
+}
+
+function cell(over: Partial<BoardCell> = {}): BoardCell {
+  return {
+    orderId: 7,
+    status: "placed",
+    source: "member",
+    dishName: "Phở bò",
+    amountMinor: 40_000,
+    transferredToName: null,
+    ...over,
+  };
+}
+
+const BEFORE = new Date("2026-09-22T10:00:00Z");
+const AFTER = new Date("2026-09-22T15:00:00Z");
+
+describe("visibleDays", () => {
+  // Monday 2026-09-21 through Sunday 2026-09-27.
+  const week = Array.from({ length: 7 }, (_, i) => day({ serviceDate: `2026-09-${21 + i}` }));
+
+  it("gives a column to the five weekdays", () => {
+    expect(visibleDays(week, () => false).map((d) => d.serviceDate)).toEqual([
+      "2026-09-21",
+      "2026-09-22",
+      "2026-09-23",
+      "2026-09-24",
+      "2026-09-25",
+    ]);
+  });
+
+  it("adds a weekend day that lunch actually happens on", () => {
+    const shown = visibleDays(week, (d) => d === "2026-09-26");
+    expect(shown.map((d) => d.serviceDate)).toContain("2026-09-26");
+    expect(shown.map((d) => d.serviceDate)).not.toContain("2026-09-27");
+  });
+});
+
+describe("weekRangeLabel", () => {
+  it("names the month once inside one month", () => {
+    // en-GB abbreviates September as "Sept", and `formatDay` already does
+    // the same everywhere else in the app.
+    expect(weekRangeLabel("2026-09-22", "2026-09-26")).toBe("22–26 Sept");
+  });
+
+  it("names both months when the week straddles them", () => {
+    expect(weekRangeLabel("2026-09-29", "2026-10-03")).toBe("29 Sept – 3 Oct");
+  });
+});
+
+describe("columnLabel", () => {
+  it("splits the weekday from the day number", () => {
+    expect(columnLabel("2026-09-22")).toEqual({ dow: "Tue", dom: "22" });
+  });
+
+  it("does not pad the day number", () => {
+    expect(columnLabel("2026-09-02").dom).toBe("2");
+  });
+});
+
+describe("cutoffLabel", () => {
+  it("spells the cutoff the way the database spells it, in the org's zone", () => {
+    expect(cutoffLabel("2026-09-22T14:00:00Z", TZ)).toBe("21:00 22/09");
+  });
+
+  it("uses the org's zone, not the reader's", () => {
+    expect(cutoffLabel("2026-09-22T14:00:00Z", "UTC")).toBe("14:00 22/09");
+  });
+});
+
+describe("cellReason", () => {
+  const ask = (d: BoardDay, isAdminHere = false, now = BEFORE) =>
+    cellReason({ day: d, isAdminHere, now, timeZone: TZ });
+
+  it("is null while the menu is published and the cutoff is ahead", () => {
+    expect(ask(day())).toBeNull();
+  });
+
+  it("names the day when there is no menu, rather than saying tomorrow", () => {
+    expect(ask(day({ menuId: null, status: null, orderCutoffAt: null, dishes: [] }))).toBe(
+      "No menu for Wed 23 Sept yet",
+    );
+  });
+
+  it("refuses a cancelled day", () => {
+    expect(ask(day({ status: "cancelled" }))).toBe("Lunch is cancelled this day");
+  });
+
+  it("refuses a menu with nothing on it", () => {
+    expect(ask(day({ dishes: [] }))).toBe("This menu has no dishes on it yet");
+  });
+
+  it("refuses a draft for a member", () => {
+    expect(ask(day({ status: "draft" }))).toBe("This menu isn't published yet");
+  });
+
+  it("refuses a locked day for a member", () => {
+    expect(ask(day({ status: "locked" }))).toBe(
+      "Orders are closed and have gone to the caterer",
+    );
+  });
+
+  it("quotes the cutoff once it has passed", () => {
+    expect(ask(day(), false, AFTER)).toBe("Ordering closed at 21:00 22/09");
+  });
+
+  it("exempts an admin from the window, as the trigger does", () => {
+    expect(ask(day({ status: "draft" }), true, AFTER)).toBeNull();
+  });
+
+  it("still refuses an admin a day with no menu at all", () => {
+    expect(ask(day({ menuId: null, dishes: [] }), true)).toBe("No menu for Wed 23 Sept yet");
+  });
+});
+
+describe("passOnReason", () => {
+  const ask = (over: Partial<Parameters<typeof passOnReason>[0]> = {}) =>
+    passOnReason({
+      cell: cell(),
+      serviceDate: "2026-09-23",
+      openWeekStart: "2026-09-21",
+      offeredTo: null,
+      mayAct: true,
+      ...over,
+    });
+
+  it("allows a meal inside the open billing week", () => {
+    expect(ask()).toBeNull();
+  });
+
+  /**
+   * The bug the old Transfers screen had: it asked the database for orders
+   * from `today`, so Monday's meal became unpassable on Wednesday although
+   * the trigger refuses only a meal already on a closed bill.
+   */
+  it("allows a meal earlier in the week than today", () => {
+    expect(ask({ serviceDate: "2026-09-21", openWeekStart: "2026-09-21" })).toBeNull();
+  });
+
+  it("refuses a meal from a week whose bill has closed", () => {
+    expect(ask({ serviceDate: "2026-09-18" })).toBe("That week's bill is closed");
+  });
+
+  it("refuses an empty cell", () => {
+    expect(ask({ cell: null })).toBe("There is no meal here to pass on");
+  });
+
+  it("refuses a cancelled order", () => {
+    expect(ask({ cell: cell({ status: "cancelled" }) })).toBe(
+      "There is no meal here to pass on",
+    );
+  });
+
+  it("refuses an optimistic cell that has no id yet", () => {
+    expect(ask({ cell: cell({ orderId: 0 }) })).toBe("Still saving this order");
+  });
+
+  it("names who already has it", () => {
+    expect(ask({ cell: cell({ transferredToName: "Tèo" }) })).toBe("Already passed to Tèo");
+  });
+
+  it("names who it is already offered to", () => {
+    expect(ask({ offeredTo: "Dinh" })).toBe("Already offered to Dinh");
+  });
+
+  it("refuses a member acting on somebody else's meal", () => {
+    expect(ask({ mayAct: false })).toBe("Only an admin can pass on somebody else's meal");
+  });
+});
+
+describe("cellMark", () => {
+  it("fills for an ordered dish", () => {
+    expect(cellMark(cell(), false)).toBe("ordered");
+  });
+
+  it("outlines for eating with no dish chosen", () => {
+    expect(cellMark(cell({ dishName: null }), false)).toBe("eating");
+  });
+
+  it("marks a meal that went to somebody else", () => {
+    expect(cellMark(cell({ transferredToName: "Tèo" }), false)).toBe("passed");
+  });
+
+  it("shows nothing for a cancelled order", () => {
+    expect(cellMark(cell({ status: "cancelled" }), false)).toBe("none");
+  });
+
+  it("shows a standing order only where no real row exists", () => {
+    expect(cellMark(null, true)).toBe("projected");
+    expect(cellMark(cell(), true)).toBe("ordered");
+  });
+});
+
+describe("pickDish", () => {
+  it("returns the only dish when there is only one", () => {
+    expect(pickDish([DISHES[0]!])?.name).toBe("Cơm gà");
+  });
+
+  it("reaches every dish, so the office is not funnelled onto the first", () => {
+    expect(pickDish(DISHES, { random: () => 0 })?.id).toBe(5);
+    expect(pickDish(DISHES, { random: () => 0.5 })?.id).toBe(6);
+    expect(pickDish(DISHES, { random: () => 0.99 })?.id).toBe(7);
+  });
+
+  it("never returns out of range on a random() of exactly 1", () => {
+    expect(pickDish(DISHES, { random: () => 1 })?.id).toBe(7);
+  });
+
+  it("skips the dish already ordered, so Surprise me surprises", () => {
+    for (const roll of [0, 0.5, 0.99]) {
+      expect(pickDish(DISHES, { excludeId: 6, random: () => roll })?.id).not.toBe(6);
+    }
+  });
+
+  it("re-offers the only dish rather than going blank", () => {
+    expect(pickDish([DISHES[0]!], { excludeId: 5 })?.id).toBe(5);
+  });
+
+  it("has nothing to pick from an empty menu", () => {
+    expect(pickDish([])).toBeNull();
+  });
+});

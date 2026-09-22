@@ -648,9 +648,32 @@ export type GiveableOrder = {
   pendingWith: string | null;
 };
 
+/**
+ * Everything the board needs in order to draw a transfer on the cell it
+ * concerns: offers made to me, offers I made, and every live offer the caller
+ * can see at all.
+ *
+ * `openPeriodStart` is the start of the OPEN BILLING WEEK, and naming it that
+ * is the point. It used to be `fromDate`, and the caller passed `today`, so a
+ * Tuesday meal could not be handed over on Thursday although the database
+ * permits it: `enforce_transfer_rules` refuses only a meal already on a
+ * *closed* bill. People remember on Thursday that Tuesday's lunch went to
+ * somebody else, and the alternative to letting them say so is a bill that is
+ * quietly wrong.
+ */
 export async function fetchTransfers(args: {
-  orgId: number; meProfileId: string; fromDate: string;
-}): Promise<{ incoming: TransferRow[]; outgoing: TransferRow[]; giveable: GiveableOrder[] }> {
+  orgId: number; meProfileId: string; openPeriodStart: string;
+}): Promise<{
+  incoming: TransferRow[];
+  outgoing: TransferRow[];
+  giveable: GiveableOrder[];
+  /**
+   * Live offers by order id. RLS decides how much of this there is: both
+   * parties for a member, the whole org for an admin, which is what lets an
+   * admin see that a meal is already spoken for before recording a swap.
+   */
+  live: Map<number, TransferRow>;
+}> {
   const [transfersRes, ordersRes, membersRes] = await Promise.all([
     supabase
       .from("meal_transfers")
@@ -664,7 +687,7 @@ export async function fetchTransfers(args: {
       .eq("org_id", args.orgId)
       .eq("profile_id", args.meProfileId)
       .eq("status", "placed")
-      .gte("service_date", args.fromDate)
+      .gte("service_date", args.openPeriodStart)
       .order("service_date"),
     supabase
       .from("memberships")
@@ -703,14 +726,15 @@ export async function fetchTransfers(args: {
 
   // RLS shows a member only transfers they are party to, so no further
   // filtering is needed for safety -- this split is purely presentational.
-  const live = new Map<number, string>();
+  const live = new Map<number, TransferRow>();
   for (const t of rows) {
-    if (t.status === "pending" || t.status === "accepted") live.set(t.orderId, t.toName);
+    if (t.status === "pending" || t.status === "accepted") live.set(t.orderId, t);
   }
 
   return {
     incoming: rows.filter((t) => t.toProfileId === args.meProfileId && t.status === "pending"),
     outgoing: rows.filter((t) => t.fromProfileId === args.meProfileId),
+    live,
     giveable: (ordersRes.data ?? []).map((o) => {
       const lines = (o.order_items ?? []) as unknown as Line[];
       return {
@@ -718,7 +742,7 @@ export async function fetchTransfers(args: {
         serviceDate: o.service_date,
         dishName: lines[0]?.item_name_snapshot ?? null,
         amountMinor: lines.reduce((s, l) => s + (l.line_total_minor ?? 0), 0) || null,
-        pendingWith: live.get(o.id) ?? null,
+        pendingWith: live.get(o.id)?.toName ?? null,
       };
     }),
   };
@@ -753,64 +777,6 @@ export async function createTransfer(args: {
 export async function decideTransfer(id: number, status: "accepted" | "declined" | "cancelled") {
   const { error } = await supabase.from("meal_transfers").update({ status }).eq("id", id);
   if (error) throw error;
-}
-
-/**
- * Every upcoming order in the org, for an admin recording a swap between two
- * other people. Members can read these too (the board is shared), but only an
- * admin can create a transfer against someone else's order.
- */
-export async function fetchOrgUpcomingOrders(args: {
-  orgId: number; fromDate: string;
-}): Promise<Array<{
-  orderId: number; serviceDate: string; profileId: string; memberName: string;
-  dishName: string | null; amountMinor: number | null; pendingWith: string | null;
-}>> {
-  const [ordersRes, membersRes, transfersRes] = await Promise.all([
-    supabase
-      .from("orders")
-      .select(`id, service_date, profile_id,
-               order_items ( item_name_snapshot, line_total_minor )`)
-      .eq("org_id", args.orgId)
-      .eq("status", "placed")
-      .gte("service_date", args.fromDate)
-      .order("service_date"),
-    supabase
-      .from("memberships")
-      .select(`profile_id, short_code, display_name, profiles ( full_name )`)
-      .eq("org_id", args.orgId)
-      .eq("status", "active"),
-    supabase
-      .from("meal_transfers")
-      .select(`order_id, to_profile_id, status`)
-      .eq("org_id", args.orgId)
-      .in("status", ["pending", "accepted"]),
-  ]);
-  for (const r of [ordersRes, membersRes, transfersRes]) if (r.error) throw r.error;
-
-  const nameOf = new Map<string, string>();
-  for (const m of membersRes.data ?? []) {
-    const prof = m.profiles as unknown as { full_name: string } | null;
-    nameOf.set(m.profile_id, m.display_name ?? prof?.full_name ?? m.short_code);
-  }
-  const live = new Map<number, string>();
-  for (const t of transfersRes.data ?? []) {
-    live.set(t.order_id, nameOf.get(t.to_profile_id) ?? "someone");
-  }
-
-  type Line = { item_name_snapshot: string; line_total_minor: number | null };
-  return (ordersRes.data ?? []).map((o) => {
-    const lines = (o.order_items ?? []) as unknown as Line[];
-    return {
-      orderId: o.id,
-      serviceDate: o.service_date,
-      profileId: o.profile_id,
-      memberName: nameOf.get(o.profile_id) ?? "someone",
-      dishName: lines[0]?.item_name_snapshot ?? null,
-      amountMinor: lines.reduce((s, l) => s + (l.line_total_minor ?? 0), 0) || null,
-      pendingWith: live.get(o.id) ?? null,
-    };
-  });
 }
 
 export type OrgMember = {

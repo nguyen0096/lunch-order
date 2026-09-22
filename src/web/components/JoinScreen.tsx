@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { acceptInvitation, humanError } from "../api.js";
+import { useEffect, useState, type ReactNode } from "react";
+import { Action, Button, useAction } from "@/ui";
+import { acceptInvitation } from "../api.js";
 
 /**
  * Landing page for an invitation link. Deliberately not automatic: joining an
@@ -7,49 +8,50 @@ import { acceptInvitation, humanError } from "../api.js";
  * should not silently enrol you.
  */
 export function JoinScreen({ token, onJoined }: { token: string; onJoined: () => void }) {
-  const [state, setState] = useState<"ready" | "working" | "done">("ready");
-  const [org, setOrg] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [joined, setJoined] = useState<string | null>(null);
 
-  useEffect(() => { setState("ready"); setError(null); }, [token]);
-
-  async function join() {
-    setState("working");
-    try {
-      const result = await acceptInvitation(token);
-      setOrg(result.name);
-      setState("done");
+  const accept = useAction(acceptInvitation, {
+    // `accept_invitation` writes its refusals for people -- "This invitation
+    // was sent to x. You are signed in as y." -- and useAction shows them
+    // unedited, which is the whole reason they are worded that way.
+    success: (org) => `Joined ${org.name}`,
+    onSuccess: (org) => {
+      setJoined(org.name);
       onJoined();
-    } catch (e) {
-      // The function's messages are written for people -- "This invitation was
-      // sent to x. You are signed in as y." -- so show them as they are.
-      setError(humanError(e));
-      setState("ready");
-    }
-  }
+    },
+  });
 
-  if (state === "done") {
+  useEffect(() => setJoined(null), [token]);
+
+  if (joined !== null) {
     return (
-      <main className="center">
-        <h1>You're in</h1>
-        <p className="muted">Joined {org}.</p>
-        <a className="btn primary" href="#/">Go to the board</a>
-      </main>
+      <Prose heading="You're in">
+        <p className="text-muted">Joined {joined}.</p>
+        <Button asChild>
+          <a href="#/">Go to the board</a>
+        </Button>
+      </Prose>
     );
   }
 
   return (
-    <main className="center">
-      <h1>Join an office</h1>
-      {error && <p className="notice error" role="alert">{error}</p>}
-      <p className="muted">
-        You've been invited to an office lunch board. Accepting adds you to it and
-        lets colleagues see what you order.
+    <Prose heading="Join an office">
+      <p className="text-muted">
+        You've been invited to an office lunch board. Accepting adds you to it and lets colleagues
+        see what you order.
       </p>
-      <button className="btn primary" disabled={state === "working"}
-              onClick={() => void join()}>
-        {state === "working" ? "Joining…" : "Accept invitation"}
-      </button>
+      <Action reason={null} pending={accept.pending} onClick={() => void accept.run(token)}>
+        Accept invitation
+      </Action>
+    </Prose>
+  );
+}
+
+function Prose({ heading, children }: { heading: string; children: ReactNode }) {
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
+      <h1 className="text-xl font-semibold">{heading}</h1>
+      {children}
     </main>
   );
 }
