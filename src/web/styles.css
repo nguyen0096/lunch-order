@@ -1,0 +1,412 @@
+/* Mobile-first: this is opened from a pinned chat link, on a phone, daily.
+   One breakpoint is all nine screens need. */
+
+/* Tells the browser to render its OWN widgets -- scrollbars, date and time
+   pickers, spinners -- in the matching theme. Without it they stay light on a
+   dark page, which shows up first as a white scrollbar track. */
+:root {
+  color-scheme: light dark;
+
+  --bg: #ffffff;
+  --fg: #14171a;
+  --muted: #5b6570;
+  --line: #e3e7eb;
+  --accent: #1d6f42;
+  --accent-fg: #ffffff;
+  --warn-bg: #fff6e0;
+  --warn-fg: #7a5200;
+  --error-bg: #fdeceb;
+  --error-fg: #96231c;
+  --info-bg: #eef3f8;
+  --info-fg: #33506b;
+  --scroll-thumb: #c4ccd4;
+  --scroll-thumb-hover: #a8b2bc;
+  /* Selection is a neutral tint on purpose: the accent already means "today"
+     and "ordered", so reusing it for a third thing makes all three vaguer. */
+  --success-bg: #e7f4ec;
+  --success-fg: #14522f;
+  --selected-bg: #eceff3;
+  --selected-bg-strong: #dfe4ea;
+  --selected-rule: #5b6570;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171a; --fg: #e8ebed; --muted: #98a2ad; --line: #2b3136;
+    --accent: #3fa06a; --accent-fg: #08130c;
+    --warn-bg: #3a2f12; --warn-fg: #f0d193;
+    --error-bg: #3a1d1a; --error-fg: #f3b3ad;
+    --info-bg: #1d2833; --info-fg: #bcd2e6;
+    --scroll-thumb: #3d454c; --scroll-thumb-hover: #525c65;
+    --success-bg: #16301f; --success-fg: #a6e0bd;
+    --selected-bg: #22282e;
+    --selected-bg-strong: #2b3238;
+    --selected-rule: #98a2ad;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Use the width when there is width: the board is a grid of dates by people
+   and more columns visible at once is the whole point. A cap at a very large
+   size only stops the name column drifting absurdly far from the ticks on an
+   ultrawide display. */
+main {
+  padding: 16px;
+  padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  max-width: 1800px;
+  margin: 0 auto;
+}
+/* Prose-shaped screens still want a readable measure, not the full width. */
+main.center {
+  min-height: 100dvh; display: flex; flex-direction: column;
+  justify-content: center; align-items: center; text-align: center;
+  gap: 12px; max-width: 34rem;
+}
+.bar { max-width: 1800px; margin: 0 auto; }
+
+h1 { font-size: 1.4rem; margin: 0 0 12px; }
+h2 { font-size: 1.05rem; margin: 20px 0 4px; }
+.muted { color: var(--muted); }
+
+.bar {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 10px 16px; border-bottom: 1px solid var(--line);
+}
+.bar nav { display: flex; gap: 12px; margin-left: auto; }
+.bar a { color: var(--muted); text-decoration: none; padding: 6px 2px; }
+.bar a[aria-current="page"] { color: var(--fg); box-shadow: inset 0 -2px 0 var(--accent); }
+
+.notice { padding: 10px 12px; border-radius: 8px; margin: 8px 0; }
+.notice.info  { background: var(--info-bg);  color: var(--info-fg); }
+.notice.warn  { background: var(--warn-bg);  color: var(--warn-fg); }
+.notice.error { background: var(--error-bg); color: var(--error-fg); }
+
+.dishes, .days { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+
+/* The whole row is the target: a 44px minimum is the difference between
+   ordering lunch one-handed on the way to a meeting and not bothering. */
+.dish {
+  width: 100%; min-height: 56px; display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.dish:disabled { opacity: 0.55; cursor: not-allowed; }
+.dish.picked { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.dish.picked::before { content: "✓"; color: var(--accent); font-weight: 700; }
+.dish-name { flex: 1; }
+.dish-price { color: var(--muted); white-space: nowrap; }
+
+.row { display: flex; align-items: center; gap: 12px; min-height: 48px; cursor: pointer; }
+.row input { width: 22px; height: 22px; }
+
+.actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+
+.btn {
+  min-height: 48px; padding: 12px 18px; border-radius: 10px;
+  border: 1px solid var(--line); background: transparent; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.btn.ghost { border-color: transparent; color: var(--muted); }
+
+/* iOS Safari zooms the page when a focused input is under 16px. */
+input, select, textarea { font-size: 16px; font-family: inherit; }
+
+@media (min-width: 700px) {
+  .dishes { grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); }
+}
+
+/* ---------------------------------------------------------------- the board */
+
+/* A tight cluster, not a spread. The label used to take `margin-right: auto`,
+   which threw Next to the far edge -- fine at 720px, absurd once the page uses
+   the full width. */
+.week-nav { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.week-nav strong { min-width: 9rem; text-align: center; font-variant-numeric: tabular-nums; }
+.week-nav .btn { padding: 10px 14px; }
+.week-nav .spacer { flex: 1; }
+
+/* Dates across, people down. It is wide by nature, so scroll horizontally and
+   pin the name column -- otherwise on a phone you cannot tell whose row you
+   are ticking. */
+.board-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  /* Firefox and modern Chrome. Thumb first, then track. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+/* WebKit ignores the two properties above, so it needs the pseudo-elements.
+   A transparent track lets the container's own background show through. */
+.board-scroll::-webkit-scrollbar { height: 10px; }
+.board-scroll::-webkit-scrollbar-track { background: transparent; }
+.board-scroll::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb);
+  border-radius: 999px;
+  /* Inset the thumb so it reads as floating in the gutter rather than filling it. */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.board-scroll::-webkit-scrollbar-thumb:hover { background: var(--scroll-thumb-hover); background-clip: content-box; }
+.board { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 0.95rem; }
+.board th, .board td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.board thead th { position: sticky; top: 0; background: var(--bg); z-index: 2; }
+.board .sticky-col {
+  position: sticky; left: 0; background: var(--bg); text-align: left;
+  font-weight: 500; z-index: 3; min-width: 9rem; max-width: 12rem;
+  overflow: hidden; text-overflow: ellipsis;
+  box-shadow: 1px 0 0 var(--line);
+}
+.board thead .sticky-col { z-index: 4; }
+.board tr.is-me .sticky-col, .board tr.is-me td { background: var(--info-bg); }
+.board .you { color: var(--muted); font-weight: 400; }
+.board .dow { display: block; font-size: 0.75rem; color: var(--muted); text-transform: uppercase; }
+.board .dom { display: block; font-variant-numeric: tabular-nums; }
+.board .no-menu { display: block; color: var(--muted); font-size: 0.75rem; }
+/* Today and "selected" must differ in KIND, not in thickness: a day can be
+   both at once, and two green underlines of 2px and 3px are indistinguishable.
+   Today marks the DATE ITSELF -- a filled circle on the number, the convention
+   every calendar uses. Selection marks the COLUMN -- a tint plus a top rule.
+   They then read independently and can coexist. */
+.board thead .is-today .dom {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.75rem; height: 1.75rem; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg); font-weight: 700;
+}
+.board tr.totals th, .board tr.totals td {
+  border-bottom: none; border-top: 1px solid var(--line);
+  color: var(--muted); font-variant-numeric: tabular-nums;
+}
+
+/* 44px minimum: this is the control people actually use, once a day, on a phone. */
+.tick {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 44px; height: 44px; border-radius: 8px;
+  border: 1px solid var(--line); background: transparent; color: var(--accent);
+  font: inherit; font-size: 1.1rem; font-weight: 700; cursor: pointer;
+}
+.tick:disabled { cursor: not-allowed; opacity: 0.6; }
+.tick.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+.tick.static { border-style: dashed; cursor: default; }
+.tick.static.on { border-style: solid; }
+
+.pick-row { margin: 12px 0; }
+
+/* -------------------------------------------------------- the menu editor */
+
+.field-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+.field-row label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.field-row input { padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
+
+.paste { width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: transparent; color: inherit; resize: vertical; }
+.parse-summary { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 8px 0; }
+
+.unparsed { list-style: none; padding: 0; display: grid; gap: 6px; }
+.unparsed li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.unparsed code { background: var(--info-bg); padding: 4px 8px; border-radius: 6px; }
+
+.edit-rows { list-style: none; padding: 0; display: grid; gap: 8px; }
+.edit-rows li { display: flex; gap: 8px; align-items: center; }
+.edit-rows input { flex: 1; min-width: 0; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: inherit; }
+.edit-rows input.price { flex: 0 0 7rem; text-align: right; }
+
+.chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: var(--warn-bg); color: var(--warn-fg); font-weight: 700; cursor: help;
+}
+
+.day-head {
+  display: block; width: 100%; padding: 4px 2px; border: 0;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.board .is-selected { background: var(--selected-bg); }
+.board thead .is-selected {
+  box-shadow: inset 0 3px 0 var(--selected-rule);
+  background: var(--selected-bg);
+}
+.board thead .is-selected .dow { color: var(--fg); font-weight: 700; }
+/* The tint has to survive the row's own background on your own row. */
+.board tr.is-me td.is-selected { background: var(--selected-bg-strong); }
+.day-panel { margin-top: 20px; padding-top: 4px; border-top: 1px solid var(--line); }
+
+/* Mobile keeps everything stacked. Given room, the board and the day it has
+   selected sit side by side, so choosing a dish does not scroll the board off
+   screen. */
+.orders-layout { display: grid; gap: 20px; }
+
+@media (min-width: 1024px) {
+  .orders-layout { grid-template-columns: minmax(0, 1fr) 22rem; align-items: start; }
+  .day-panel {
+    margin-top: 0; padding: 16px; border: 1px solid var(--line); border-radius: 10px;
+    position: sticky; top: 16px;
+  }
+  .day-panel .dishes { grid-template-columns: 1fr; }
+  /* With room to spare, let names breathe rather than truncating them. */
+  .board .sticky-col { max-width: none; }
+}
+
+@media (min-width: 1400px) {
+  .orders-layout { grid-template-columns: minmax(0, 1fr) 26rem; }
+}
+
+.board-col { min-width: 0; }
+
+/* Paste on one side, the reviewed dishes on the other, so the admin can see
+   the caterer's message and what it parsed into at the same time. Stacked on a
+   phone, where comparing two panes is not possible anyway. */
+.editor-layout { display: grid; gap: 20px; }
+@media (min-width: 1024px) {
+  .editor-layout { grid-template-columns: 1fr 1fr; align-items: start; }
+  .paste { min-height: 18rem; }
+}
+
+/* A projected tick is a prediction, not a commitment: outlined and faded so it
+   reads differently from an order that actually exists. */
+.tick.projected {
+  color: var(--accent); background: transparent;
+  border-style: dashed; border-color: var(--accent); opacity: 0.6;
+}
+
+.row.skeleton {
+  display: block; height: 24px; width: 60%; border-radius: 6px;
+  background: var(--line); opacity: 0.6;
+}
+
+.board-foot { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+.board-foot .legend { display: inline-flex; gap: 8px; align-items: center; }
+.tick.mini { width: 24px; height: 24px; font-size: 0.8rem; border-radius: 6px; }
+
+.preview { margin: 12px 0; padding: 14px; border: 1px solid var(--accent); border-radius: 10px; }
+.preview h3 { margin: 0 0 8px; font-size: 1rem; }
+.preview-table { width: 100%; border-collapse: collapse; }
+.preview-table th, .preview-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; }
+.preview-table th:last-child, .preview-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+.preview details { margin-top: 8px; }
+.preview details ul { margin: 6px 0 0 1rem; padding: 0; }
+
+/* Dev-only, compiled out of production builds along with the override itself. */
+.clock-banner {
+  padding: 8px 16px; background: var(--warn-bg); color: var(--warn-fg);
+  font-size: 0.85rem; text-align: center;
+}
+
+.name-form, .invite-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.name-form input, .invite-form input, .invite-form select {
+  padding: 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: inherit; min-width: 0;
+}
+.name-form input, .invite-form input { flex: 1 1 16rem; }
+
+.invite-list { list-style: none; padding: 0; display: grid; gap: 8px; }
+.invite-list li {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px;
+}
+.invite-list .who { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+
+/* ------------------------------------------------ admin: the day strip */
+
+.strip-nav { display: flex; align-items: stretch; gap: 6px; margin-bottom: 14px; }
+.strip-nav .btn { padding: 0 10px; }
+
+.day-strip {
+  list-style: none; margin: 0; padding: 0;
+  display: flex; gap: 6px; overflow-x: auto; flex: 1;
+  scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent;
+}
+.day-strip::-webkit-scrollbar { height: 8px; }
+.day-strip::-webkit-scrollbar-track { background: transparent; }
+.day-strip::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 999px; }
+
+.day-chip {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  min-width: 3.6rem; padding: 8px 6px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.day-chip .dow { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; }
+.day-chip .dom { font-size: 1.05rem; font-variant-numeric: tabular-nums; }
+.day-chip .state { font-size: 0.65rem; color: var(--muted); white-space: nowrap; }
+
+.day-chip.is-past { opacity: 0.55; }
+
+/* Three things to say per chip, so three separate channels:
+     selected -> a filled tint and a ring around the whole chip
+     today    -> a circle on the date, as in the board header
+     state    -> a coloured dot beside the label, not a border that competes
+                 with the selection ring */
+.day-chip.is-selected {
+  background: var(--selected-bg-strong);
+  border-color: var(--selected-rule);
+  box-shadow: inset 0 0 0 2px var(--selected-rule);
+}
+.day-chip.is-today .dom {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.6rem; height: 1.6rem; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg); font-weight: 700;
+}
+.day-chip .state::before {
+  content: "●"; margin-right: 4px; font-size: 0.6em; vertical-align: 1px;
+}
+.day-chip.is-published .state::before { color: var(--accent); }
+.day-chip.is-draft     .state::before { color: var(--warn-fg); }
+.day-chip.is-locked    .state::before { color: var(--muted); }
+.day-chip.is-none      { border-style: dashed; }
+.day-chip.is-none .state::before { content: none; }
+
+.legend-today {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.5rem; height: 1.5rem; border-radius: 999px;
+  background: var(--accent); color: var(--accent-fg);
+  font-size: 0.75rem; font-weight: 700;
+}
+
+/* ------------------------------------------------------------- transfers */
+
+.transfer-list { list-style: none; padding: 0; display: grid; gap: 8px; margin: 8px 0 20px; }
+.transfer-list li {
+  display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+}
+/* An incoming offer is the one thing on this screen needing a response. */
+.transfer-list li.is-incoming { border-color: var(--accent); background: var(--info-bg); }
+.transfer-list .what { flex: 1 1 18rem; min-width: 0; }
+.transfer-list .actions { margin: 0; }
+
+.pill {
+  margin-left: 8px; padding: 2px 8px; border-radius: 999px;
+  font-size: 0.75rem; background: var(--line); color: var(--muted);
+}
+.pill.is-accepted { background: var(--accent); color: var(--accent-fg); }
+.pill.is-pending  { background: var(--warn-bg); color: var(--warn-fg); }
+
+.offer-form {
+  display: grid; gap: 12px; max-width: 30rem; margin: 0 0 20px;
+  padding: 14px; border: 1px solid var(--accent); border-radius: 10px;
+}
+.offer-form h3 { margin: 0; font-size: 1rem; }
+.offer-form label { display: grid; gap: 4px; font-size: 0.85rem; color: var(--muted); }
+.offer-form input, .offer-form select {
+  padding: 12px; border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: inherit;
+}
+
+.notice.success { background: var(--success-bg); color: var(--success-fg); }
+
+.invite-list li.is-inactive { opacity: 0.55; }
+.invite-list select {
+  padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: transparent; color: inherit; font: inherit;
+}

@@ -1,0 +1,121 @@
+-- Carry-forward stops depending on the previous week having been closed.
+--
+-- run_billing() step 3 picked the prior period with `and bp.status = 'closed'`.
+-- That loses money two different ways:
+--
+--   * No code path closed a period, so v_prev was always NULL and every
+--     statement got carried_in_minor = 0. An unpaid week simply vanished.
+--   * Once closing exists, a week that was skipped or left open makes the
+--     lookup fall through to an OLDER closed week whose remainder was already
+--     carried into the week in between, billing the same debt twice.
+--
+-- The chain is only right if it is exactly one link long, so the predicate is
+-- now "the immediately preceding period that is not void". 'void' is the one
+-- status meaning the week is retracted, and billing_periods_no_overlap already
+-- treats void rows as absent, so the preceding period is only well defined over
+-- the rest. 'open' and 'computing' weeks are real weeks with real balances.
+--
+-- Nothing else moves. The do-update set-list still omits
+-- status/paid_minor/paid_at, so a recompute cannot un-pay anybody.
+
+create or replace function public.run_billing(p_period_id bigint, p_force boolean default false)
+returns table (lines integer, statements integer, total_minor bigint)
+language plpgsql security definer set search_path = '' as $$
+declare v_p public.billing_periods%rowtype; v_prev bigint;
+begin
+  perform pg_advisory_xact_lock(hashtext('lunch.run_billing'), p_period_id::int);
+
+  select * into v_p from public.billing_periods where id = p_period_id for update;
+  if not found          then raise exception 'billing period % not found', p_period_id; end if;
+  if v_p.status = 'void' then raise exception 'period % is void', p_period_id; end if;
+  if v_p.status = 'closed' and not p_force then
+    raise exception 'period % is closed; pass p_force to recompute', p_period_id
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  update public.billing_periods set status = 'computing' where id = p_period_id;
+
+  -- 1. upsert a line per placed order in the window
+  insert into public.billing_lines as bl (
+    org_id, billing_period_id, order_id, service_date,
+    payer_profile_id, original_profile_id, transfer_id, amount_minor, description)
+  select c.org_id, p_period_id, c.order_id, c.service_date,
+         c.payer_profile_id, c.placed_by_profile_id, c.transfer_id,
+         c.amount_minor, c.description
+    from public.v_order_charges c
+   where c.org_id = v_p.org_id
+     and c.order_status = 'placed'
+     and c.service_date between v_p.period_start and v_p.period_end
+  on conflict (order_id) do update set
+        billing_period_id   = excluded.billing_period_id,
+        service_date        = excluded.service_date,
+        payer_profile_id    = excluded.payer_profile_id,
+        original_profile_id = excluded.original_profile_id,
+        transfer_id         = excluded.transfer_id,
+        amount_minor        = excluded.amount_minor,
+        description         = excluded.description
+   -- never yank a line out of a period it already belongs to
+   where bl.billing_period_id = excluded.billing_period_id;
+
+  -- 2. retract lines whose order is no longer billable
+  delete from public.billing_lines bl
+   where bl.billing_period_id = p_period_id
+     and not exists (
+       select 1 from public.v_order_charges c
+        where c.order_id = bl.order_id
+          and c.order_status = 'placed'
+          and c.service_date between v_p.period_start and v_p.period_end);
+
+  -- 3. roll lines up into statements, carrying forward what is still unpaid
+  select bp.id into v_prev from public.billing_periods bp
+   where bp.org_id = v_p.org_id and bp.period_end < v_p.period_start and bp.status <> 'void'
+   order by bp.period_end desc limit 1;
+
+  insert into public.billing_statements as st (
+    org_id, billing_period_id, profile_id, meal_count, meals_minor,
+    carried_in_minor, payment_ref)
+  select v_p.org_id, p_period_id, bl.payer_profile_id, count(*)::int,
+         sum(bl.amount_minor)::bigint,
+         coalesce((select greatest(ps.total_due_minor - ps.paid_minor, 0)
+                     from public.billing_statements ps
+                    where ps.billing_period_id = v_prev
+                      and ps.profile_id = bl.payer_profile_id
+                      and ps.status <> 'waived'), 0),
+         private.payment_ref(v_p.org_id, v_p.period_start, bl.payer_profile_id)
+    from public.billing_lines bl
+   where bl.billing_period_id = p_period_id
+   group by bl.payer_profile_id
+  on conflict (billing_period_id, profile_id) do update set
+        meal_count       = excluded.meal_count,
+        meals_minor      = excluded.meals_minor,
+        carried_in_minor = excluded.carried_in_minor;
+        -- status / paid_minor / paid_at / marked_paid_by deliberately untouched
+
+  delete from public.billing_statements st
+   where st.billing_period_id = p_period_id
+     and st.paid_minor = 0
+     and not exists (select 1 from public.billing_lines bl
+                      where bl.billing_period_id = st.billing_period_id
+                        and bl.payer_profile_id = st.profile_id);
+
+  -- 4. roll up the period
+  update public.billing_periods p set
+    status      = case when v_p.status = 'closed' then 'closed' else 'open' end,
+    computed_at = now(),
+    line_count  = (select count(*) from public.billing_lines
+                    where billing_period_id = p_period_id),
+    total_minor = (select coalesce(sum(amount_minor), 0) from public.billing_lines
+                    where billing_period_id = p_period_id)
+   where p.id = p_period_id;
+
+  return query
+    select p.line_count,
+           (select count(*)::int from public.billing_statements
+             where billing_period_id = p_period_id),
+           p.total_minor
+      from public.billing_periods p where p.id = p_period_id;
+end $$;
+
+-- CREATE OR REPLACE keeps the existing ACL, but restate it so the file can be
+-- read on its own: this is called by cron and service_role, never the browser.
+revoke execute on function public.run_billing(bigint, boolean) from public, anon, authenticated;

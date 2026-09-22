@@ -1,0 +1,44 @@
+# Typecheck and unit tests on every push. The parser and billing maths are pure
+# functions and exactly the kind of logic that regresses silently. A push to main
+# that passes those then builds the SPA and deploys it to Cloudflare.
+name: ci
+on: [push, pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  deploy:
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Repository variables, not secrets: Vite inlines every VITE_ var into
+          # the bundle, so masking them in the log would only give false comfort.
+          # They must be set, or the build ships a Supabase client that reports a
+          # config error to every visitor.
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+      # Cloudflare's official action. It installs its own wrangler, so the
+      # devDependency here only serves local `npm run deploy`.
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

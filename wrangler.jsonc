@@ -1,0 +1,17 @@
+// Description: deploys the built SPA to Cloudflare Workers static assets.
+// There is no Worker script and no `main`: `main` is optional for assets-only
+// Workers, and the bundle talks to Supabase directly, so nothing needs to run
+// at the edge.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "lunch-order",
+  "compatibility_date": "2026-09-22",
+  "assets": {
+    "directory": "./dist/web",
+    // Routing is hash based (`#/o/:slug/orders`), so the browser only ever asks
+    // the origin for `/` and index.html is the sole HTML entry point. An SPA
+    // history fallback would rewrite genuine 404s, missing asset included, into
+    // a 200 page and hide broken deploys.
+    "not_found_handling": "none"
+  }
+}
