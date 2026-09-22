@@ -4,6 +4,8 @@ import {
   cellReason,
   columnLabel,
   cutoffLabel,
+  longDayLabel,
+  nextOrderableDay,
   passOnReason,
   pickDish,
   visibleDays,
@@ -34,7 +36,9 @@ function cell(over: Partial<BoardCell> = {}): BoardCell {
     orderId: 7,
     status: "placed",
     source: "member",
+    itemId: 6,
     dishName: "Phở bò",
+    note: null,
     amountMinor: 40_000,
     transferredToName: null,
     ...over,
@@ -94,6 +98,47 @@ describe("cutoffLabel", () => {
 
   it("uses the org's zone, not the reader's", () => {
     expect(cutoffLabel("2026-09-22T14:00:00Z", "UTC")).toBe("14:00 22/09");
+  });
+});
+
+describe("longDayLabel", () => {
+  it("spells the day out, for a panel with the room to say it", () => {
+    expect(longDayLabel("2026-09-23")).toBe("Wednesday 23 September");
+  });
+});
+
+describe("nextOrderableDay", () => {
+  // Monday 2026-09-21 through Friday 2026-09-25.
+  const week = Array.from({ length: 5 }, (_, i) => day({ serviceDate: `2026-09-${21 + i}` }));
+  const date = (d: BoardDay | null) => d?.serviceDate ?? null;
+
+  it("takes the next day still open, not one already gone", () => {
+    expect(date(nextOrderableDay(week, () => true, "2026-09-23"))).toBe("2026-09-23");
+  });
+
+  it("skips a day inside the window that has already passed", () => {
+    const open = (d: BoardDay) => d.serviceDate !== "2026-09-23";
+    expect(date(nextOrderableDay(week, open, "2026-09-23"))).toBe("2026-09-24");
+  });
+
+  it("falls back to a day already gone rather than showing nothing", () => {
+    const open = (d: BoardDay) => d.serviceDate === "2026-09-21";
+    expect(date(nextOrderableDay(week, open, "2026-09-23"))).toBe("2026-09-21");
+  });
+
+  it("falls back to today when no day can be ordered on at all", () => {
+    expect(date(nextOrderableDay(week, () => false, "2026-09-24"))).toBe("2026-09-24");
+  });
+
+  it("falls back to a day that at least has dishes on it", () => {
+    const bare = week.map((d) =>
+      d.serviceDate === "2026-09-22" ? d : { ...d, menuId: null, dishes: [] },
+    );
+    expect(date(nextOrderableDay(bare, () => false, "2026-10-01"))).toBe("2026-09-22");
+  });
+
+  it("has nothing to offer for a week with no days in it", () => {
+    expect(nextOrderableDay([], () => true, "2026-09-23")).toBeNull();
   });
 });
 

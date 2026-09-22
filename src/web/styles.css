@@ -90,8 +90,8 @@
   --radius: 0.5rem;
 }
 
-/* Follows the OS by default; `.light` on <html> lets a future preference
-   opt back out without a second media query. */
+/* Follows the OS by default; `.light` on <html>, set by the theme choice in
+   the account menu, opts back out without a second media query. */
 @media (prefers-color-scheme: dark) {
   :root:not(.light) {
     --surface: #17110a;
@@ -131,8 +131,16 @@
 }
 
 /* Same values under an explicit class, for a theme switch that does not want
-   to wait for the OS. */
+   to wait for the OS. `color-scheme` is restated on both explicit classes
+   because the declaration on `:root` follows the media query, which a chosen
+   theme has just overruled -- otherwise a forced dark page keeps a white
+   scrollbar on a light machine. */
+:root.light {
+  color-scheme: light;
+}
+
 :root.dark {
+  color-scheme: dark;
   --surface: #17110a;
   --surface-raised: #211a11;
   --surface-sunken: #110c07;

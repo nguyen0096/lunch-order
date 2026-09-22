@@ -68,9 +68,30 @@ on white is close to the AA boundary for small text, so the accent is a
 **background** with dark text on it, or a **large** foreground, never small ochre
 body copy on white.
 
-**Two states, one hue.** Today and ordered both used the accent before, which made
-each vaguer. Now: *ordered* is a filled accent cell, *today* is an accent rule on
-the column edge. Fill versus stroke, not two colours.
+**One hue, and it means ordered.** Today and ordered both used the accent once,
+which made each vaguer. Today was then an accent rule down the column edge, and
+that was worse: a rule between two columns reads as a divider, not as a property
+of one of them, and the first person to see it read it as "past days are not
+editable". So the accent is spent on *ordered* alone.
+
+What the grid has to answer first is **which days you can act on**, so a day you
+cannot order on recedes into `surface-sunken`, across its head, its cells and its
+total. Today is a word, `Today`, under the date in the column head. Colour for
+the thing you do, a label for the thing you orient by.
+
+A colleague's cell is read the same way, by fill rather than by glyph: *ordered*
+is a filled `accent-subtle` block, *eating with no dish yet* is the same fill
+under a dashed edge, *passed on* is a `surface-sunken` block carrying the
+recipient's name, and *nothing* is an empty cell inside a hairline. Size is the
+weakest channel there is, and the five sizes of dot this replaces could not be
+told apart while scanning a week.
+
+**The theme is a choice, not only a preference.** The tokens follow
+`prefers-color-scheme` by default, and `System / Light / Dark` in the account menu
+overrides it by putting `.light` or `.dark` on the document element. System means
+system: the class comes off and the media query decides again. The class is set
+by an inline script in `index.html` before the stylesheet applies, because a
+theme chosen after first paint is a flash of the wrong one.
 
 ## Type
 
@@ -90,45 +111,76 @@ The board is the hero: a week of dates across, people down, and it should use th
 width it is given. It is a table, semantically and visually, because it is one.
 
 ```
-┌──────────────────────────────────────────────────────┐
-│  Test Office            Board   Me      Menu  People │
-├──────────────────────────────────────────────────────┤
-│  ‹  22–26 Sep                              This week ›│
-│                                                       │
-│           Mon 22   Tue 23│  Wed 24   Thu 25   Fri 26 │
-│  Tèo        ●        ○   │    ●        ·        ·    │
-│  Dinh       ●        ●   │    ○        ·        ·    │
-│  Neyu       ·        ●   │    ●        ·        ·    │
-│           ────────────── │ ─────────────────────────  │
-│  Total      2        2   │    3        0        0    │
-└──────────────────────────────────────────────────────┘
-   ● ordered (filled)   ○ eating, no dish   · none
-   │ today (column rule, not a colour change)
+┌───────────────────────────────────────────────────────────┐
+│  Test Office              Board   Bill        Menu People │
+├───────────────────────────────────────────────────────────┤
+│  ‹  22–26 Sept                                 This week ›│
+│                                                            │
+│            Mon 22    Tue 23     Wed 24    Thu 25   Fri 26 │
+│            ▒▒▒▒▒▒    ▒▒▒▒▒▒     Today                     │
+│                                 ══════                     │
+│  You (me)  ▓Cơm gà▓  ▓Phở bò▓   ▓Bún bò▓   [ + ]   [+][⚄] │
+│            ▓ít cơm▓                                        │
+│  Tèo       ▓▓▓▓▓▓▓▓  ░░░░░░░░   ▒to Dinh▒  ┌────┐  ┌────┐ │
+│  Dinh      ▓▓▓▓▓▓▓▓  ┌──────┐   ▓▓▓▓▓▓▓▓   └────┘  └────┘ │
+│            ──────────────────────────────────────────────  │
+│  Total     2         1          2          0       0      │
+├───────────────────────────────────────────────────────────┤
+│  Wednesday 24 September                  Closes 21:00 23/09│
+│  Cơm gà    45.000 ₫   Bún bò  50.000 ₫   Phở bò  40.000 ₫ │
+└───────────────────────────────────────────────────────────┘
+   ▓ ordered (filled)   ░ eating, no dish yet (dashed edge)
+   ▒ recessive: a day you cannot act on, or a meal already passed on
+   ┌┐ empty, and still a target    ══ the day the menu panel is showing
 ```
 
 Left aligned throughout. Numbers right aligned in their own column.
 
+The menu is a panel under the grid, not content inside the cells: a week of
+people by days cannot also carry five days of dish lists, and it is what stops
+the cell from having to say what you are about to order. Tapping a column head
+moves the panel to that day.
+
 ## Interaction
 
 Ordering is one tap in the common case, and the dialog only appears when there is
-a genuine choice to make.
+a genuine choice to make. A cell is an action and nothing else: what is on offer
+is in the menu panel, so nobody has to tap a cell to find out what they got.
 
 | Situation | Taps |
 | --- | --- |
-| Menu has one dish | 1, the cell fills |
-| Menu has several | 1 opens the dish dialog |
+| Menu has one dish | 1 on `+`, the cell fills. No dialog, there is nothing to choose |
+| Menu has several | 1 on the dice orders one at random, 1 on `+` opens the chooser |
 | Inside the dialog | 1 on a dish, or 1 on **Surprise me** |
 | Changing your mind | tap the cell, tap a different dish |
-| Not eating | tap a filled cell to clear it |
+| Not eating | tap a filled cell, then **Not eating** |
+| How you want it | a note under the dish, 120 characters, saved against that dish |
+
+The dice appears only where there is something to randomise, which is the whole
+rule rather than a special case. Both targets carry a label and a title, because
+a phone has no hover and an unlabelled glyph is a puzzle.
 
 There is no "eating but no dish chosen" limbo to fall into by accident. The old
 flow created that state on every tick and then nagged about it. **Surprise me**
 is a primary action in the dialog, not a fallback, because on most days nobody
 cares which of three similar dishes they get.
 
-Passing a meal to somebody is an action on the cell you are already looking at,
-not a separate destination. Both directions, offering and accepting, appear where
-the meal is.
+**You pass a meal by tapping the person you are giving it to.** The board is
+already a grid of people, so sending somebody to a dropdown to find a colleague
+asks them to re-enter what the screen is showing. A colleague's cell opens a
+sheet of sentences: `Give Tèo my Bún bò` for anybody, `Pass Tèo's Cơm gà to
+someone` for an admin recording a swap between two other people, which is the one
+case that still needs a picker. An empty colleague cell opens it too, because "I
+am out, you have mine" is usually said to somebody who was not eating anyway.
+
+Sentences rather than icons, deliberately. A cell is a person and a day, and a
+tap on it could mean give or take: that is a difference of grammar, not of
+appearance, and two arrows pointing the same way would need a legend to tell them
+apart. There is no legend on this board and there should never be one.
+
+An offer that has not been answered is legible on the board itself, as the
+recipient's name on the cell it concerns, because an admin has no reason to open
+a cell to discover something they cannot see.
 
 **Which meals can still be passed on.** The old screen asked for orders from
 today forward, so a Tuesday meal could not be handed over on Thursday even though
@@ -146,9 +198,10 @@ the repo rather than imported from a runtime dependency, so they can be changed
 and are not a vendor lock.
 
 Used because the app genuinely needs them, not to fill a kit: `Dialog` (dish
-picker, confirmations), `Sonner` (the one toast surface), `Combobox` (person
-pickers that must not be a flat list of every day × person × dish), `Button`,
-`Badge`, `Table`, `Tooltip` (disabled reasons), `Tabs`, `Skeleton`.
+picker, handover sheet, confirmations), `Sonner` (the one toast surface),
+`Combobox` (the admin's recording form, the only place left where a person has to
+be named rather than tapped), `Button`, `Badge`, `Table`, `Tooltip` (disabled
+reasons), `Tabs`, `Skeleton`.
 
 ## The two hooks that make it systematic
 

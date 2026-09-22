@@ -101,11 +101,13 @@ export async function fetchMenu(orgId: number, serviceDate: string): Promise<Men
 /**
  * Place or update today's order. Prices are never sent: the database snapshots
  * them from menu_items, and the column grant means a browser could not write
- * one even if this code tried.
+ * one even if this code tried. The note is the third column a member may
+ * write, and it hangs off the dish rather than the order because that is how
+ * it is read out to the caterer.
  */
 export async function setOrder(args: {
   orgId: number; menuId: number; serviceDate: string; profileId: string;
-  itemId: number | null; existing: MyOrder | null;
+  itemId: number | null; note?: string | null; existing: MyOrder | null;
 }): Promise<void> {
   let orderId = args.existing?.id;
 
@@ -129,9 +131,13 @@ export async function setOrder(args: {
   if (del) throw del;
 
   if (args.itemId !== null) {
+    const note = args.note?.trim();
     const { error } = await supabase.from("order_items").insert({
       order_id: orderId, org_id: args.orgId, profile_id: args.profileId,
       menu_id: args.menuId, menu_item_id: args.itemId,
+      // The constraint takes null or 1 to 120 trimmed characters, so a field
+      // somebody emptied has to arrive as null rather than as "".
+      note: note ? note.slice(0, 120) : null,
       // Overwritten unconditionally by the snapshot trigger; sent only because
       // the columns are NOT NULL.
       item_name_snapshot: "", unit_price_minor: 0,
@@ -217,7 +223,11 @@ export type BoardCell = {
   orderId: number;
   status: "placed" | "cancelled";
   source: "member" | "standing" | "admin";
+  /** The menu item behind the snapshot, so a note can be saved against it. */
+  itemId: number | null;
   dishName: string | null;
+  /** How this person wants the dish. It goes to the caterer. */
+  note: string | null;
   amountMinor: number | null;
   /** Set when this meal was handed to someone else and they accepted. */
   transferredToName: string | null;
@@ -274,7 +284,7 @@ export async function fetchBoard(args: {
     supabase
       .from("orders")
       .select(`id, profile_id, service_date, status, source,
-               order_items ( item_name_snapshot, line_total_minor )`)
+               order_items ( menu_item_id, item_name_snapshot, line_total_minor, note )`)
       .eq("org_id", args.orgId)
       .gte("service_date", args.from)
       .lte("service_date", args.to),
@@ -351,7 +361,12 @@ export async function fetchBoard(args: {
     transferTo.set(t.order_id, nameOf.get(t.to_profile_id) ?? "someone");
   }
 
-  type LineRow = { item_name_snapshot: string; line_total_minor: number | null };
+  type LineRow = {
+    menu_item_id: number | null;
+    item_name_snapshot: string;
+    line_total_minor: number | null;
+    note: string | null;
+  };
   const cells = new Map<string, BoardCell>();
   for (const o of ordersRes.data ?? []) {
     const lines = (o.order_items ?? []) as unknown as LineRow[];
@@ -360,7 +375,9 @@ export async function fetchBoard(args: {
       orderId: o.id,
       status: o.status as BoardCell["status"],
       source: o.source as BoardCell["source"],
+      itemId: lines[0]?.menu_item_id ?? null,
       dishName: lines[0]?.item_name_snapshot ?? null,
+      note: lines[0]?.note ?? null,
       amountMinor: lines.length > 0 ? amount : null,
       transferredToName: transferTo.get(o.id) ?? null,
     });
@@ -754,8 +771,7 @@ export async function fetchTransfers(args: {
  * admin recording a swap has already confirmed it with both people.
  */
 export async function createTransfer(args: {
-  orgId: number; orderId: number; toProfileId: string;
-  createdBy: string; reason: string | null;
+  orgId: number; orderId: number; toProfileId: string; createdBy: string;
 }): Promise<void> {
   const { error } = await supabase.from("meal_transfers").insert({
     org_id: args.orgId,
@@ -764,7 +780,6 @@ export async function createTransfer(args: {
     // Overwritten by the trigger from the order; sent only because it is NOT NULL.
     from_profile_id: args.createdBy,
     created_by: args.createdBy,
-    reason: args.reason,
   });
   if (error) throw error;
 }

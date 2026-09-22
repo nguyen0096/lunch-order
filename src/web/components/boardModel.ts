@@ -39,6 +39,17 @@ export function weekRangeLabel(from: string, to: string, locale = "en-GB"): stri
   return sameMonth ? `${day(f)}–${dayMonth(t)}` : `${dayMonth(f)} – ${dayMonth(t)}`;
 }
 
+/** `Wednesday 23 September`, for the menu panel, which has the room to spell it. */
+export function longDayLabel(serviceDate: string, locale = "en-GB"): string {
+  const at = new Date(`${serviceDate}T00:00:00Z`);
+  return new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(at);
+}
+
 /** `Mon` / `22`, for a two-line column head. */
 export function columnLabel(serviceDate: string, locale = "en-GB"): { dow: string; dom: string } {
   const at = new Date(`${serviceDate}T00:00:00Z`);
@@ -94,6 +105,29 @@ export function cellReason(args: {
     return `Ordering closed at ${cutoffLabel(day.orderCutoffAt, timeZone)}`;
   }
   return null;
+}
+
+/**
+ * The day the menu panel opens on, and the column the grid scrolls to.
+ *
+ * The next one still orderable, so the panel answers "what is on offer that I
+ * can still act on" without a tap. Past days are skipped even for an admin,
+ * who can order on them but is not usually looking at them. The fallbacks run
+ * down to *some* day, because a panel that renders nothing teaches nothing.
+ */
+export function nextOrderableDay(
+  days: BoardDay[],
+  canOrder: (day: BoardDay) => boolean,
+  today: string,
+): BoardDay | null {
+  return (
+    days.find((d) => d.serviceDate >= today && canOrder(d)) ??
+    days.find(canOrder) ??
+    days.find((d) => d.serviceDate === today) ??
+    days.find((d) => d.dishes.length > 0) ??
+    days[0] ??
+    null
+  );
 }
 
 /**

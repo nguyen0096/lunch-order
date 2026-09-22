@@ -7,7 +7,7 @@ import {
   SettingsIcon,
   UsersIcon,
 } from "lucide-react";
-import { Button, Popover, PopoverContent, PopoverTrigger, cn } from "@/ui";
+import { Button, Popover, PopoverContent, PopoverTrigger, ThemeChoice, cn } from "@/ui";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
 
 export type Page = "board" | "bill" | "menu" | "people" | "settings";
@@ -230,7 +230,10 @@ function AvatarMenu({
             Settings
           </a>
         </Button>
-        <Button variant="ghost" className="w-full justify-start" onClick={onSignOut}>
+        {/* Not a `useAction`: there is no write to report, and a toast on
+            every tap of a three-state control is noise. */}
+        <ThemeChoice />
+        <Button variant="ghost" className="mt-1 w-full justify-start" onClick={onSignOut}>
           <LogOutIcon />
           Sign out
         </Button>

@@ -11,6 +11,7 @@ export { Combobox, type ComboboxOption } from "@/ui/combobox";
 export { EmptyState } from "@/ui/empty-state";
 export { Skeleton } from "@/ui/skeleton";
 export { Toaster } from "@/ui/sonner";
+export { ThemeChoice, applyTheme, readTheme, useTheme, THEME_KEY, type Theme } from "@/ui/theme";
 
 export {
   Dialog,

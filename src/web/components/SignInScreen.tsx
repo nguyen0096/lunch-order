@@ -7,32 +7,57 @@ const DISHES = ["Cơm gà", "Phở bò", "Bún bò Huế", "Bánh mì", "Cơm t�
 
 /**
  * The one screen with nothing to do, so it carries the identity: full-bleed
- * ochre, dish names set large as texture, a single button. Everything after it
- * stays quiet and functional. The boldness is spent here and nowhere else.
+ * ochre, the dish names set large, a single button. Everything after it stays
+ * quiet and functional. The boldness is spent here and nowhere else.
+ *
+ * Two compositions rather than one stretched, which is the same rule the shell
+ * follows. On a phone the names sit behind the words as a wash. On a monitor
+ * they become the second column and run off the bottom edge, so the screen
+ * fills its width with the subject instead of leaving the wordmark and the
+ * button huddled in the left 250 pixels of a mustard field.
+ *
+ * The names are set at a measured strength rather than whatever looked right:
+ * `accent-fg` over `accent` reaches 4.66:1 at full opacity in light and 8.42:1
+ * in dark, so one opacity would read as two different things. The pairs below
+ * land the wash near 1.9:1 and the column near 2.5:1 in both schemes: clearly
+ * texture, clearly not a rendering fault.
  */
 export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
   return (
-    <main className="relative flex min-h-dvh flex-col justify-between overflow-hidden bg-accent px-6 py-10 text-accent-fg">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 flex flex-col justify-center gap-2 overflow-hidden px-6 opacity-20 select-none"
-      >
-        {DISHES.map((dish) => (
-          <span key={dish} className="block text-3xl font-semibold whitespace-nowrap">
-            {dish}
-          </span>
-        ))}
-      </div>
+    <main className="relative min-h-dvh overflow-hidden bg-accent text-accent-fg">
+      <div className="mx-auto grid min-h-dvh max-w-[96rem] grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:grid-rows-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
+        <div className="flex flex-col gap-10 px-6 pt-10 pb-8 lg:gap-12 lg:px-16 lg:py-16">
+          <h1 className="text-xl font-semibold">Lunch</h1>
 
-      <h1 className="relative text-2xl font-semibold">Lunch</h1>
+          <div className="flex max-w-prose flex-col items-start gap-6 lg:flex-1 lg:justify-center">
+            <p className="text-2xl font-semibold lg:text-3xl">Order lunch with your office.</p>
+            {/* Dark text on the ochre fill, per the contrast rule: ochre is
+                never small type on paper, and here it is the page. */}
+            <Button variant="outline" size="lg" onClick={onSignIn}>
+              Continue with Google
+            </Button>
+          </div>
 
-      <div className="relative flex flex-col items-start gap-4">
-        <p className="max-w-prose text-lg font-medium">Order lunch with your office.</p>
-        {/* Dark text on the ochre fill, per the contrast rule: ochre is never
-            small type on paper, and here it is the page. */}
-        <Button variant="outline" size="lg" onClick={onSignIn}>
-          Continue with Google
-        </Button>
+          <p className="max-w-prose text-sm">
+            New here? You will need a join code from a colleague once you are in.
+          </p>
+        </div>
+
+        {/* Beside the words on a monitor, beneath them on a phone, and never
+            behind them: a wash under a headline makes both harder to read. */}
+        <div
+          aria-hidden="true"
+          className="flex flex-col justify-between overflow-hidden px-6 pb-2 opacity-40 select-none lg:px-0 lg:py-16 lg:opacity-55 dark:opacity-35 lg:dark:opacity-45"
+        >
+          {DISHES.map((dish) => (
+            <span
+              key={dish}
+              className="block border-b border-accent-fg/15 py-2 text-3xl font-semibold whitespace-nowrap lg:pr-16"
+            >
+              {dish}
+            </span>
+          ))}
+        </div>
       </div>
     </main>
   );

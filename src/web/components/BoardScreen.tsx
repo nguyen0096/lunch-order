@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRightIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from "lucide-react";
+import { ChevronLeftIcon, ChevronRightIcon, DicesIcon, PlusIcon } from "lucide-react";
 import {
   Action,
   Button,
@@ -31,10 +31,14 @@ import {
   type TransferRow,
 } from "../api.js";
 import { DishDialog } from "./DishDialog.js";
+import { HandoverDialog } from "./HandoverDialog.js";
 import {
   cellMark,
   cellReason,
   columnLabel,
+  cutoffLabel,
+  longDayLabel,
+  nextOrderableDay,
   passOnReason,
   pickDish,
   visibleDays,
@@ -43,6 +47,7 @@ import {
   type Mark,
 } from "./boardModel.js";
 import { now as appNow } from "../../shared/clock.js";
+import { formatMoney } from "../../shared/money.js";
 import { addDays, formatDay, todayIn, weekStart } from "../../shared/dates.js";
 import { isAdmin, type Me, type MyOrder, type Org, type Role } from "../../shared/types.js";
 
@@ -55,8 +60,15 @@ type Focus = { profileId: string; serviceDate: string };
  * Asymmetric on purpose: your own row shows dish names, everyone else's shows a
  * mark. You care *what* you are eating; you only need to know *whether*
  * colleagues are, because that is the headcount an admin defends to the
- * caterer. Today is a rule down the column edge rather than a colour, since
- * "ordered" already owns the accent and one hue cannot carry two meanings.
+ * caterer.
+ *
+ * The grid answers "which days can I act on" before it answers anything else,
+ * so a day you cannot order on recedes into `surface-sunken` and today is a
+ * word in the column head. Colour is spent on ordered cells alone.
+ *
+ * What is on the menu lives in the panel below the grid, not in the cells: a
+ * week of people by days cannot also carry five days of dish lists, and a cell
+ * that shows the menu is a cell that cannot show the order.
  */
 export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role }) {
   const admin = isAdmin(role);
@@ -68,6 +80,9 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
   const [transfers, setTransfers] = useState<Transfers | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [focus, setFocus] = useState<Focus | null>(null);
+  // Null follows the next orderable day. Once a column head is tapped it holds
+  // that day, and falls back on its own when the week changes under it.
+  const [panelDate, setPanelDate] = useState<string | null>(null);
   const [now, setNow] = useState(() => appNow());
 
   // The board as it stands, for the optimistic snapshot. Reading it inside a
@@ -116,8 +131,11 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
       profileId: string;
       itemId: number;
       dishName: string;
+      note: string | null;
       existing: MyOrder | null;
       randomised: boolean;
+      /** The dish is unchanged and only the note is being written. */
+      noteOnly: boolean;
     }) => {
       await setOrder({
         orgId: org.id,
@@ -125,12 +143,20 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
         serviceDate: a.day.serviceDate,
         profileId: a.profileId,
         itemId: a.itemId,
+        note: a.note,
         existing: a.existing,
       });
       return a;
     },
     {
-      success: (a) => (a.randomised ? `Ordered ${a.dishName} · tap to change` : `Ordered ${a.dishName}`),
+      success: (a) =>
+        a.noteOnly
+          ? a.note === null
+            ? "Note removed"
+            : "Note saved"
+          : a.randomised
+            ? `Ordered ${a.dishName} · tap to change`
+            : `Ordered ${a.dishName}`,
       onSuccess: () => void load(),
     },
   );
@@ -147,13 +173,12 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
   );
 
   const pass = useAction(
-    async (a: { orderId: number; toProfileId: string; toName: string; note: string | null }) => {
+    async (a: { orderId: number; toProfileId: string; toName: string }) => {
       await createTransfer({
         orgId: org.id,
         orderId: a.orderId,
         toProfileId: a.toProfileId,
         createdBy: me.profileId,
-        reason: a.note,
       });
       return a;
     },
@@ -217,7 +242,14 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
   );
 
   const order = useCallback(
-    (day: BoardDay, member: BoardMember, cell: BoardCell | null, dish: Dish, randomised: boolean) => {
+    (
+      day: BoardDay,
+      member: BoardMember,
+      cell: BoardCell | null,
+      dish: Dish,
+      opts: { randomised?: boolean; note?: string | null; noteOnly?: boolean } = {},
+    ) => {
+      const note = opts.note ?? null;
       const existing: MyOrder | null = cell
         ? {
             id: cell.orderId,
@@ -234,7 +266,9 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
         orderId: cell?.orderId ?? 0,
         status: "placed",
         source: cell?.source ?? "member",
+        itemId: dish.id,
         dishName: dish.name,
+        note,
         amountMinor: dish.priceMinor,
         transferredToName: null,
       };
@@ -245,8 +279,10 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             profileId: member.profileId,
             itemId: dish.id,
             dishName: dish.name,
+            note,
             existing,
-            randomised,
+            randomised: opts.randomised ?? false,
+            noteOnly: opts.noteOnly ?? false,
           }),
         ),
       );
@@ -289,6 +325,29 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
     );
   }, [board, from]);
 
+  // The days this reader cannot act on. One rule feeds the recessive column,
+  // the panel's opening day and the column the grid scrolls to, so the three
+  // cannot drift apart. An admin is inside the window on every day, so for
+  // them nothing recedes.
+  const closedDays = useMemo(
+    () =>
+      new Set(
+        days
+          .filter(
+            (d) => cellReason({ day: d, isAdminHere: admin, now, timeZone: org.timezone }) !== null,
+          )
+          .map((d) => d.serviceDate),
+      ),
+    [days, admin, now, org.timezone],
+  );
+
+  const panelDay = useMemo(
+    () =>
+      days.find((d) => d.serviceDate === panelDate) ??
+      nextOrderableDay(days, (d) => !closedDays.has(d.serviceDate), today),
+    [days, panelDate, closedDays, today],
+  );
+
   const totals = useMemo(() => {
     const perDay = new Map<string, number>();
     if (!board) return perDay;
@@ -308,9 +367,8 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
 
   // On a narrow screen the board opens on Monday and the only day you can act
   // on is usually off the right edge, so it looks like a week of nothing until
-  // you discover a horizontal scroll. Bring that column into view instead.
-  // Keyed on the week rather than on `days`, which is rebuilt on every fetch,
-  // and on `now`, which changes every render.
+  // you discover a horizontal scroll. Bring that column into view instead, the
+  // one the menu panel is already showing.
   const gridRef = useRef<HTMLElement>(null);
   // Once per week shown, and only after the board has arrived: on the first
   // render there is a skeleton rather than a table, so there is no column to
@@ -319,12 +377,8 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
   // somebody who has scrolled it themselves.
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
-    if (board === null || scrolledFor.current === from) return;
-    const target =
-      days.find(
-        (d) => cellReason({ day: d, isAdminHere: admin, now: appNow(), timeZone: org.timezone }) === null,
-      ) ?? days.find((d) => d.serviceDate === today);
-    if (target === undefined) return;
+    if (board === null || scrolledFor.current === from || panelDay === null) return;
+    const target = panelDay;
 
     // A frame later, not immediately: the table is laid out in this commit but
     // offsetLeft is only meaningful once it has been painted, and a width read
@@ -343,7 +397,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
       scrolledFor.current = from;
     });
     return () => cancelAnimationFrame(frame);
-  }, [board, days, from, admin, org.timezone, today]);
+  }, [board, from, panelDay]);
 
   const nav = (
     <WeekNav
@@ -392,6 +446,15 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
     focus && focused?.member && focused.day
       ? board.cells.get(cellKey(focus.profileId, focus.serviceDate)) ?? null
       : null;
+  // A cancelled row is still the row to reopen, so `order` keeps the raw cell
+  // while everything that asks "is there a meal here" reads this one.
+  const focusedLive = focusedCell?.status === "placed" ? focusedCell : null;
+  const focusedMine = focus
+    ? (() => {
+        const mine = board.cells.get(cellKey(me.profileId, focus.serviceDate)) ?? null;
+        return mine?.status === "placed" ? mine : null;
+      })()
+    : null;
 
   return (
     <section ref={gridRef} className="flex flex-col gap-4">
@@ -410,11 +473,30 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                   scope="col"
                   data-service-date={d.serviceDate}
                   aria-current={isToday ? "date" : undefined}
-                  className={cn("min-w-28 text-center", isToday && "border-l-2 border-l-accent")}
+                  className={cn(
+                    "min-w-28 p-0 text-center",
+                    closedDays.has(d.serviceDate) && "bg-surface-sunken",
+                    // Which column the menu below is describing. A neutral rule
+                    // rather than a tint: the accent is spoken for by ordered.
+                    panelDay?.serviceDate === d.serviceDate && "border-b-2 border-b-border-strong",
+                  )}
                 >
-                  <span className="block text-xs font-semibold text-muted">{dow}</span>
-                  <span className="block text-base font-semibold text-text tabular">{dom}</span>
-                  {isToday && <span className="sr-only">Today</span>}
+                  {/* Available on every day, including one with no menu: the
+                      panel then says so, which teaches more than a refusal. */}
+                  <Button
+                    variant="ghost"
+                    aria-pressed={panelDay?.serviceDate === d.serviceDate}
+                    aria-label={`${dow} ${dom}${isToday ? ", today" : ""}: show this day's menu`}
+                    className="h-auto w-full flex-col gap-0 rounded-none px-3 py-2 text-muted"
+                    onClick={() => setPanelDate(d.serviceDate)}
+                  >
+                    <span className="block text-xs font-semibold">{dow}</span>
+                    <span className="block text-base font-semibold text-text tabular">{dom}</span>
+                    {/* A word, not a colour: ordered owns the accent, and a
+                        rule down the column edge read as a divider between two
+                        days rather than a property of one. */}
+                    {isToday && <span className="block text-xs font-medium">Today</span>}
+                  </Button>
                 </TableHead>
               );
             })}
@@ -441,20 +523,13 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                   now,
                   timeZone: org.timezone,
                 });
-                const passReason = passOnReason({
-                  cell: live,
-                  serviceDate: day.serviceDate,
-                  openWeekStart: thisWeek,
-                  offeredTo: offer?.toName ?? null,
-                  mayAct: member.isMe || admin,
-                });
 
                 return (
                   <TableCell
                     key={day.serviceDate}
                     className={cn(
                       "p-1 text-center",
-                      day.serviceDate === today && "border-l-2 border-l-accent",
+                      closedDays.has(day.serviceDate) && "bg-surface-sunken",
                     )}
                   >
                     {incoming !== null ? (
@@ -469,29 +544,27 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                         cell={live}
                         projected={board.projected.has(day.serviceDate)}
                         offeredTo={offer?.toName ?? null}
-                        reason={orderReason !== null && passReason !== null ? orderReason : null}
+                        // A meal is always worth opening, to read the note or
+                        // take an offer back, whatever the ordering window says.
+                        reason={live !== null ? null : orderReason}
                         pending={busy}
-                        onTap={() => {
-                          if (live !== null || orderReason !== null) {
-                            setFocus({ profileId: member.profileId, serviceDate: day.serviceDate });
-                            return;
-                          }
+                        onOpen={() =>
+                          setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
+                        }
+                        onOrder={() => {
                           const dish = pickDish(day.dishes);
                           if (dish === null) return;
-                          order(day, member, cell, dish, day.dishes.length > 1);
+                          order(day, member, cell, dish, { randomised: day.dishes.length > 1 });
                         }}
                       />
                     ) : (
+                      // Empty or not: an empty cell is where "I am out, you
+                      // have mine" usually lands, so it can never be inert.
                       <TheirCell
                         member={member}
                         day={day}
                         cell={live}
                         offeredTo={offer?.toName ?? null}
-                        // Ordering for somebody else is not on offer here; an
-                        // admin's business with a colleague's cell is the swap,
-                        // and a cell with no meal in it has no swap to record.
-                        reason={admin && live !== null ? passReason : null}
-                        interactive={admin && live !== null}
                         onTap={() =>
                           setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
                         }
@@ -514,7 +587,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                 key={d.serviceDate}
                 className={cn(
                   "text-center font-medium tabular",
-                  d.serviceDate === today && "border-l-2 border-l-accent",
+                  closedDays.has(d.serviceDate) && "bg-surface-sunken",
                 )}
               >
                 {totals.get(d.serviceDate) ?? 0}
@@ -524,49 +597,47 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
         </TableFooter>
       </Table>
 
-      {days.every((d) => d.menuId === null) && (
+      {days.every((d) => d.menuId === null) ? (
         <EmptyState heading="No menus this week">
           An admin pastes the caterer's message on the Menu screen and publishes it, and these
           columns fill in.
         </EmptyState>
+      ) : (
+        panelDay && (
+          <MenuPanel
+            day={panelDay}
+            org={org}
+            reason={cellReason({ day: panelDay, isAdminHere: admin, now, timeZone: org.timezone })}
+          />
+        )
       )}
 
-      {focused?.member && focused.day && (
+      {focused?.member && focused.day && focused.member.isMe && (
         <DishDialog
-          // Remounted per cell, so the pass-on form starts empty on each one
-          // rather than carrying a name over to the wrong meal.
+          // Remounted per cell, so the note field starts on that cell's note
+          // rather than carrying one over to the wrong meal.
           key={`${focus?.profileId}|${focus?.serviceDate}`}
           open
           onOpenChange={(open) => !open && setFocus(null)}
           org={org}
           day={focused.day}
-          member={focused.member}
-          cell={focusedCell?.status === "placed" ? focusedCell : null}
+          cell={focusedLive}
           orderReason={cellReason({ day: focused.day, isAdminHere: admin, now, timeZone: org.timezone })}
-          passReason={passOnReason({
-            cell: focusedCell?.status === "placed" ? focusedCell : null,
-            serviceDate: focused.day.serviceDate,
-            openWeekStart: thisWeek,
-            offeredTo: focusedCell ? transfers?.live.get(focusedCell.orderId)?.toName ?? null : null,
-            mayAct: focused.member.isMe || admin,
-          })}
-          colleagues={board.members.filter((m) => m.profileId !== focused.member?.profileId)}
           offer={
-            focusedCell && focusedCell.transferredToName === null
-              ? transfers?.live.get(focusedCell.orderId) ?? null
+            focusedLive && focusedLive.transferredToName === null
+              ? transfers?.live.get(focusedLive.orderId) ?? null
               : null
           }
-          recording={!focused.member.isMe}
           pending={busy}
-          onPick={(itemId) => {
+          onPick={(itemId, note) => {
             const day = focused.day;
             const member = focused.member;
             const dish = day?.dishes.find((x) => x.id === itemId);
             if (!day || !member || !dish) return;
             setFocus(null);
-            order(day, member, focusedCell, dish, false);
+            order(day, member, focusedCell, dish, { note });
           }}
-          onSurprise={() => {
+          onSurprise={(note) => {
             const day = focused.day;
             const member = focused.member;
             if (!day || !member) return;
@@ -575,16 +646,92 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             });
             if (!dish) return;
             setFocus(null);
-            order(day, member, focusedCell, dish, true);
+            order(day, member, focusedCell, dish, { randomised: true, note });
+          }}
+          onSaveNote={(note) => {
+            const day = focused.day;
+            const member = focused.member;
+            if (!day || !member || !focusedLive || focusedLive.itemId === null) return;
+            setFocus(null);
+            order(
+              day,
+              member,
+              focusedLive,
+              {
+                id: focusedLive.itemId,
+                name: focusedLive.dishName ?? "",
+                priceMinor: focusedLive.amountMinor ?? 0,
+              },
+              { note, noteOnly: true },
+            );
           }}
           onNotEating={() => {
             if (focused.day && focused.member && focusedCell) {
               notEating(focused.day, focused.member, focusedCell);
             }
           }}
-          onPassOn={(toProfileId, toName, note) => {
-            if (!focusedCell) return;
-            void enqueue(() => pass.run({ orderId: focusedCell.orderId, toProfileId, toName, note }));
+          onWithdraw={(id) => void enqueue(() => decide.run({ id, status: "cancelled" }))}
+        />
+      )}
+
+      {focused?.member && focused.day && !focused.member.isMe && (
+        <HandoverDialog
+          // Remounted per cell, so a half-made choice cannot follow you to the
+          // next colleague.
+          key={`${focus?.profileId}|${focus?.serviceDate}`}
+          open
+          onOpenChange={(open) => !open && setFocus(null)}
+          org={org}
+          day={focused.day}
+          member={focused.member}
+          theirCell={focusedLive}
+          myCell={focusedMine}
+          admin={admin}
+          giveReason={
+            focusedMine === null
+              ? `You have nothing ordered on ${formatDay(focused.day.serviceDate)}`
+              : passOnReason({
+                  cell: focusedMine,
+                  serviceDate: focused.day.serviceDate,
+                  openWeekStart: thisWeek,
+                  offeredTo: transfers?.live.get(focusedMine.orderId)?.toName ?? null,
+                  mayAct: true,
+                })
+          }
+          passReason={passOnReason({
+            cell: focusedLive,
+            serviceDate: focused.day.serviceDate,
+            openWeekStart: thisWeek,
+            offeredTo: focusedLive ? transfers?.live.get(focusedLive.orderId)?.toName ?? null : null,
+            mayAct: admin,
+          })}
+          colleagues={board.members.filter((m) => m.profileId !== focused.member?.profileId)}
+          offer={
+            focusedLive && focusedLive.transferredToName === null
+              ? transfers?.live.get(focusedLive.orderId) ?? null
+              : null
+          }
+          mayWithdraw={
+            admin ||
+            (focusedLive
+              ? transfers?.live.get(focusedLive.orderId)?.fromProfileId === me.profileId
+              : false)
+          }
+          pending={busy}
+          onGive={() => {
+            const member = focused.member;
+            if (!member || focusedMine === null) return;
+            void enqueue(() =>
+              pass.run({
+                orderId: focusedMine.orderId,
+                toProfileId: member.profileId,
+                toName: member.name,
+              }),
+            );
+          }}
+          onPassOn={(toProfileId, toName) => {
+            if (!focusedLive) return;
+            void enqueue(() => pass.run({ orderId: focusedLive.orderId, toProfileId, toName }));
           }}
           onWithdraw={(id) => void enqueue(() => decide.run({ id, status: "cancelled" }))}
         />
@@ -618,7 +765,7 @@ function WeekNav({
         <ChevronRightIcon />
       </Button>
       {/* Only once you have left, because a reset to where you already are is a
-          control that does nothing, and the column rule already says which day
+          control that does nothing, and the column head already says which day
           is today. */}
       {away && (
         <Button variant="link" className="ml-1" onClick={onReset}>
@@ -629,6 +776,71 @@ function WeekNav({
   );
 }
 
+/**
+ * What is on offer that day, without a tap.
+ *
+ * The grid answers who is eating and cannot also carry five days of dish
+ * lists, so the menu lives under it, in the room the desktop board was
+ * wasting. The column heads switch which day it shows. With this here, a cell
+ * can go back to being nothing but an action.
+ */
+function MenuPanel({ day, org, reason }: { day: BoardDay; org: Org; reason: string | null }) {
+  // The reason, when there is one, already says the window is shut and when it
+  // shut, in the database's own words.
+  const when =
+    reason ??
+    (day.orderCutoffAt === null ? null : `Closes ${cutoffLabel(day.orderCutoffAt, org.timezone)}`);
+
+  return (
+    <section
+      aria-label={`Menu for ${longDayLabel(day.serviceDate)}`}
+      className="rounded-lg border border-border bg-surface-raised p-4 md:p-6"
+    >
+      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b border-border pb-3">
+        <h2 className="text-lg font-semibold">{longDayLabel(day.serviceDate)}</h2>
+        {when !== null && <p className="text-sm text-muted">{when}</p>}
+      </div>
+
+      {day.dishes.length === 0 ? (
+        <p className="pt-3 text-sm text-muted">
+          Nothing on the menu for this day. An admin pastes the caterer's message on the Menu
+          screen and publishes it.
+        </p>
+      ) : (
+        <ul className="grid gap-x-10 pt-1 sm:grid-cols-2 xl:grid-cols-3">
+          {day.dishes.map((dish) => (
+            <li
+              key={dish.id}
+              className="flex items-baseline justify-between gap-4 border-b border-border py-2"
+            >
+              <span className="min-w-0 truncate font-medium">{dish.name}</span>
+              <span className="shrink-0 text-sm text-muted tabular">
+                {formatMoney(dish.priceMinor, org.currency)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+// An empty cell you can use has to outweigh one you cannot. Action draws
+// unavailable as a dashed border-strong edge, which is right for a button
+// standing on its own and wrong in a grid: against cells that are only a
+// glyph, the days you CANNOT order on became the loudest thing on the screen.
+// Measured before this: disabled cells bordered #9E8363, the one open day
+// #E6DED0.
+const OPEN_CELL = "border border-border-strong text-muted hover:bg-accent-subtle hover:text-text";
+
+/**
+ * One of my days, and nothing but an action.
+ *
+ * The menu panel says what is on offer, so the cell does not repeat it. The
+ * dice appears only where there is something to randomise: with two dishes or
+ * more the `+` opens the chooser and the dice commits to one, and with a
+ * single dish there is nothing to choose, so `+` orders it outright.
+ */
 function MyCell({
   day,
   cell,
@@ -636,7 +848,8 @@ function MyCell({
   offeredTo,
   reason,
   pending,
-  onTap,
+  onOpen,
+  onOrder,
 }: {
   day: BoardDay;
   cell: BoardCell | null;
@@ -644,44 +857,89 @@ function MyCell({
   offeredTo: string | null;
   reason: string | null;
   pending: boolean;
-  onTap: () => void;
+  /** Open the dish dialog on this cell. */
+  onOpen: () => void;
+  /** Order a dish from this day's menu, chosen at random. */
+  onOrder: () => void;
 }) {
   const label = cell
     ? cell.dishName ?? "Dish to follow"
     : projected
       ? "Standing"
       : "Order lunch";
+  const state = cell
+    ? `${cell.dishName ?? "eating, no dish chosen"}${cell.note !== null ? `, ${cell.note}` : ""}`
+    : projected
+      ? "from your standing order"
+      : "not eating";
+  const described =
+    `${formatDay(day.serviceDate)}: ${state}` + (offeredTo !== null ? `. Offered to ${offeredTo}` : "");
+  // An empty cell inside the window: tapping it orders rather than opens.
+  const orders = cell === null && reason === null;
+
+  if (orders && !projected && day.dishes.length > 1) {
+    // Two targets of equal weight, filling the cell between them: a dice drawn
+    // as an afterthought beside a bordered plus reads as one control with a
+    // smudge next to it. A phone has no hover, so each carries its own title
+    // for the pointer and its own label for everything else.
+    return (
+      <div className="flex w-full min-w-24 items-center gap-1">
+        <Action
+          reason={null}
+          pending={pending}
+          variant="ghost"
+          title="Choose a dish"
+          aria-label={`${described}. Choose a dish`}
+          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          onClick={onOpen}
+        >
+          <PlusIcon className="size-4" aria-hidden="true" />
+        </Action>
+        <Action
+          reason={null}
+          pending={pending}
+          variant="ghost"
+          title="Order a random dish"
+          aria-label={`${described}. Order a dish at random`}
+          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          onClick={onOrder}
+        >
+          <DicesIcon className="size-5" aria-hidden="true" />
+        </Action>
+      </div>
+    );
+  }
 
   return (
     <Action
       reason={reason}
       pending={pending}
       variant="ghost"
-      aria-label={`${formatDay(day.serviceDate)}: ${cell ? cell.dishName ?? "eating, no dish chosen" : projected ? "from your standing order" : "not eating"}`}
+      title={orders ? "Order lunch" : undefined}
+      aria-label={orders ? `${described}. Order lunch` : described}
       className={cn(
         "h-auto w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
         cell
           ? "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70"
           : reason === null
-            // An empty cell you can use has to outweigh one you cannot. Action
-            // draws unavailable as a dashed border-strong edge, which is right
-            // for a button standing on its own and wrong in a grid: against
-            // cells that are only a glyph, the days you CANNOT order on became
-            // the loudest thing on the screen. Measured before this: disabled
-            // cells bordered #9E8363, the one open day #E6DED0.
-            ? "border border-border-strong text-muted hover:bg-accent-subtle hover:text-text"
+            ? OPEN_CELL
             : "border-border text-subtle",
         projected && !cell && "border border-dashed border-border-strong",
       )}
-      onClick={onTap}
+      onClick={orders ? onOrder : onOpen}
     >
       {cell ? (
         <>
           <span className={cn("block max-w-full truncate", offeredTo !== null && "line-through")}>
             {label}
           </span>
+          {cell.note !== null && (
+            <span className="block max-w-full truncate text-xs font-normal text-muted">
+              {cell.note}
+            </span>
+          )}
           {offeredTo !== null && (
-            <span className="block max-w-full truncate text-xs font-normal">→ {offeredTo}</span>
+            <span className="block max-w-full truncate text-xs font-normal">to {offeredTo}</span>
           )}
         </>
       ) : projected ? (
@@ -693,45 +951,54 @@ function MyCell({
   );
 }
 
+/**
+ * A colleague's day.
+ *
+ * Always a control, empty or not: you hand a meal over by tapping the person
+ * you are giving it to, and "I am out, you have mine" is usually said to
+ * somebody who was not already eating. An empty cell therefore has to look
+ * empty and still read as tappable, which is what the hairline is for.
+ */
 function TheirCell({
   member,
   day,
   cell,
   offeredTo,
-  reason,
-  interactive,
   onTap,
 }: {
   member: BoardMember;
   day: BoardDay;
   cell: BoardCell | null;
   offeredTo: string | null;
-  reason: string | null;
-  interactive: boolean;
   onTap: () => void;
 }) {
   const mark = cellMark(cell, false);
+  // An offer that has not been answered yet sits on a meal they still hold.
+  const pendingWith = mark !== "passed" ? offeredTo : null;
+  const gone = cell?.transferredToName ?? null;
   const described = `${member.name}, ${formatDay(day.serviceDate)}: ${MARK_LABEL[mark]}`;
-
-  if (!interactive) {
-    return (
-      <span className="flex h-9 items-center justify-center" title={described}>
-        <MarkGlyph mark={mark} />
-        <span className="sr-only">{described}</span>
-      </span>
-    );
-  }
+  const spoken =
+    gone !== null
+      ? `${described} to ${gone}`
+      : pendingWith !== null
+        ? `${described}. Offered to ${pendingWith}`
+        : described;
 
   return (
     <Action
-      reason={reason}
+      reason={null}
       variant="ghost"
-      aria-label={`${described}. Pass it on`}
-      className="h-9 w-full min-w-16"
+      aria-label={`${spoken}. Hand a meal over`}
+      className={cn(
+        "h-9 w-full min-w-16 rounded-md px-1 text-xs font-medium",
+        MARK_FILL[mark],
+        pendingWith !== null && "border border-dashed border-accent",
+      )}
       onClick={onTap}
     >
-      <MarkGlyph mark={mark} />
-      {offeredTo !== null && <span className="text-xs font-normal text-muted">→</span>}
+      {gone !== null || pendingWith !== null ? (
+        <span className="block max-w-full truncate">to {gone ?? pendingWith}</span>
+      ) : null}
     </Action>
   );
 }
@@ -744,29 +1011,24 @@ const MARK_LABEL: Record<Mark, string> = {
   none: "not eating",
 };
 
-/** Fill means ordered; the today rule is a stroke. Two states, one hue. */
-function MarkGlyph({ mark }: { mark: Mark }) {
-  if (mark === "ordered") {
-    return <span aria-hidden="true" className="block size-2.5 rounded-full bg-accent" />;
-  }
-  if (mark === "eating") {
-    return (
-      <span aria-hidden="true" className="block size-2.5 rounded-full border-2 border-accent" />
-    );
-  }
-  if (mark === "passed") {
-    return <ArrowRightIcon aria-hidden="true" className="size-3.5 text-muted" />;
-  }
-  if (mark === "projected") {
-    return (
-      <span
-        aria-hidden="true"
-        className="block size-2.5 rounded-full border border-dashed border-border-strong"
-      />
-    );
-  }
-  return <span aria-hidden="true" className="block size-1 rounded-full bg-border-strong" />;
-}
+/**
+ * The headcount, read as blocks of colour rather than counted as dots.
+ *
+ * Fill carries it, because fill is the channel that survives being scanned a
+ * whole week at a time. Size does not: five sizes of dot is four too many, and
+ * the reader ends up looking for a legend that should not need to exist.
+ */
+const MARK_FILL: Record<Mark, string> = {
+  ordered: "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70",
+  // A real headcount with an unresolved dish, so filled, but visibly unfinished.
+  eating: "border border-dashed border-border-strong bg-accent-subtle/50 text-accent-subtle-fg",
+  // Spent: the meal is on somebody else's bill now.
+  passed: "bg-surface-sunken text-subtle",
+  projected: "border border-dashed border-border text-subtle",
+  // Empty, and still a target. `border` is the decorative hairline, which is
+  // the faintest thing the tokens can say and still say something.
+  none: "border border-border hover:bg-surface-sunken",
+};
 
 /**
  * An offer appears on the cell it concerns, with both answers next to it. A

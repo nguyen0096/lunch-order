@@ -8,6 +8,17 @@
     <meta name="theme-color" content="#fdfcfa" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#17110a" media="(prefers-color-scheme: dark)" />
     <title>Lunch</title>
+    <!-- Before the stylesheet, not from the module: the tokens pick light or
+         dark off this class, and setting it from React repaints once in the
+         wrong scheme first. The key is THEME_KEY in ui/theme.tsx. -->
+    <script>
+      try {
+        var t = localStorage.getItem("lunch.theme");
+        if (t === "dark" || t === "light") document.documentElement.classList.add(t);
+      } catch (e) {
+        /* Storage refused; the media query decides, which is the default anyway. */
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>

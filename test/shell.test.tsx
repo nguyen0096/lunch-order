@@ -96,6 +96,60 @@ describe("AppShell account menu", () => {
   });
 });
 
+describe("AppShell theme choice", () => {
+  async function openMenu() {
+    await userEvent.click(screen.getAllByRole("button", { name: /Account: Nguyễn Neyu/ })[0]!);
+    const group = await screen.findByRole("group", { name: "Theme" });
+    return within(group);
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    document.documentElement.classList.remove("light", "dark");
+  });
+
+  it("starts on System, and follows the machine by adding no class at all", async () => {
+    shell();
+    const group = await openMenu();
+    expect(group.getByRole("button", { name: "System" })).toHaveAttribute("aria-pressed", "true");
+    expect(document.documentElement.className).toBe("");
+  });
+
+  it("forces the scheme on the document and remembers it", async () => {
+    shell();
+    const group = await openMenu();
+
+    await userEvent.click(group.getByRole("button", { name: "Dark" }));
+
+    expect(document.documentElement).toHaveClass("dark");
+    expect(localStorage.getItem("lunch.theme")).toBe("dark");
+    expect(group.getByRole("button", { name: "Dark" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("swaps one forced scheme for the other rather than stacking them", async () => {
+    shell();
+    const group = await openMenu();
+
+    await userEvent.click(group.getByRole("button", { name: "Dark" }));
+    await userEvent.click(group.getByRole("button", { name: "Light" }));
+
+    expect(document.documentElement).toHaveClass("light");
+    expect(document.documentElement).not.toHaveClass("dark");
+    expect(localStorage.getItem("lunch.theme")).toBe("light");
+  });
+
+  it("gives the machine back the decision on System, storage included", async () => {
+    shell();
+    const group = await openMenu();
+
+    await userEvent.click(group.getByRole("button", { name: "Dark" }));
+    await userEvent.click(group.getByRole("button", { name: "System" }));
+
+    expect(document.documentElement.className).toBe("");
+    expect(localStorage.getItem("lunch.theme")).toBeNull();
+  });
+});
+
 describe("initials", () => {
   it("takes the first and last word", () => {
     expect(initials("Nguyễn Neyu")).toBe("NN");
