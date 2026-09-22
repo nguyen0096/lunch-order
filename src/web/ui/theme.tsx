@@ -34,12 +34,44 @@ export function applyTheme(theme: Theme): void {
   const root = document.documentElement;
   root.classList.remove("light", "dark");
   if (theme !== "system") root.classList.add(theme);
+  syncBrowserChrome(theme);
   try {
     if (theme === "system") localStorage.removeItem(THEME_KEY);
     else localStorage.setItem(THEME_KEY, theme);
   } catch {
     // A refused write costs the choice on the next load, not this one.
   }
+}
+
+/**
+ * Keep the address bar with the page.
+ *
+ * index.html carries two `theme-color` tags scoped by `prefers-color-scheme`,
+ * which is right until somebody forces a theme: the page flips and the browser
+ * chrome stays on whatever the OS said. Appending a third, unconditional tag
+ * does not fix it -- the spec picks the FIRST tag whose media matches, so an
+ * unconditional one at the end never wins and one at the front would always
+ * win. The matching tag's content is what has to change.
+ *
+ * The colour is read from the token rather than repeated here, so styles.css
+ * stays the only place a surface colour is decided.
+ */
+function syncBrowserChrome(theme: Theme): void {
+  const tags = document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]');
+  for (const tag of tags) {
+    tag.dataset["bySystem"] ??= tag.content;
+  }
+  if (theme === "system") {
+    for (const tag of tags) tag.content = tag.dataset["bySystem"] ?? tag.content;
+    return;
+  }
+  // Reading a custom property forces the style recalc the classList change
+  // above queued, so this is the new theme's surface, not the old one's.
+  const surface = getComputedStyle(document.documentElement)
+    .getPropertyValue("--surface")
+    .trim();
+  if (surface === "") return;
+  for (const tag of tags) tag.content = surface;
 }
 
 const listeners = new Set<() => void>();

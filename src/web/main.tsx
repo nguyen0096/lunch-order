@@ -4,7 +4,7 @@ import { App } from "./App.js";
 import { initClock } from "../shared/clock.js";
 import { allParams } from "./useHashRoute.js";
 import { configError } from "./supabase.js";
-import { Button, Toaster, TooltipProvider } from "@/ui";
+import { Button, Toaster, TooltipProvider, applyTheme, readTheme } from "@/ui";
 import "./styles.css";
 
 /**
@@ -45,6 +45,12 @@ function Centered({ heading, children }: { heading: string; children: ReactNode 
     </main>
   );
 }
+
+// The inline script in index.html put the class on before first paint, which
+// is what stops the flash, but it runs before the stylesheet and so cannot
+// read a colour. Re-applying here is what moves the address bar onto a forced
+// theme; the class part is idempotent.
+applyTheme(readTheme());
 
 // Accepts ?now= before or inside the hash, since both get typed.
 const fakeNow = initClock(allParams().toString());
