@@ -17,6 +17,11 @@
 begin;
 
 create temp table probe (label text, got text, want text);
+-- Load-bearing. Every probe row below is inserted AFTER `set local role
+-- authenticated`, and a temp table is not writable by that role without this.
+-- Its absence did not make these tests fail, it made them ABORT at the first
+-- probe row with 42501, so neither file had ever produced a verdict.
+grant insert on probe to authenticated;
 
 do $$
 declare
@@ -52,7 +57,13 @@ begin
     ('leak: invitations',   (select count(*) from public.invitations where org_id = v_b)::text, '0'),
     ('leak: other org profile',
        (select count(*) from public.profiles where id = '33333333-3333-3333-3333-333333333333')::text, '0'),
-    ('within org: sees only own order', (select count(*) from public.orders)::text, '1');
+    -- Was 'within org: sees only own order', wanting 1. Stale twice over:
+    -- seed_fixtures creates no orders, and orders_select_own was replaced by
+    -- orders_select_org in 20260911140000, which made the board deliberately
+    -- org-wide. sharing.sql asserts that visibility positively; this file's job
+    -- is the other org, and the leak checks above already cover it.
+    ('within org: no other org''s orders',
+       (select count(*) from public.orders where org_id = v_b)::text, '0');
 
   -- Literal ids, so the write is genuinely attempted rather than an
   -- INSERT..SELECT that reads zero rows and trivially "succeeds".

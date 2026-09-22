@@ -10,6 +10,11 @@
 
 begin;
 create temp table probe (who text, label text, got text, want text);
+-- Load-bearing. Every probe row below is inserted AFTER `set local role
+-- authenticated`, and a temp table is not writable by that role without this.
+-- Its absence did not make these tests fail, it made them ABORT at the first
+-- probe row with 42501, so neither file had ever produced a verdict.
+grant insert on probe to authenticated;
 
 do $$
 declare

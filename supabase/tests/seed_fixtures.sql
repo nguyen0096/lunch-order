@@ -36,8 +36,15 @@ on conflict do nothing;
 insert into public.menu_items (menu_id, org_id, name, price_minor, position)
 select mu.id, mu.org_id, v.name, v.price, v.pos
 from public.menus mu
+join public.organizations o on o.id = mu.org_id and o.slug in ('org-a','org-b')
 join lateral (values ('Cơm gà xối mỡ', 45000, 0), ('Bún bò Huế', 40000, 1))
      as v(name, price, pos) on true
 on conflict do nothing;
 
-update public.menus set status = 'published' where status = 'draft';
+-- Scoped to the fixture orgs. Unscoped, this published every draft menu in the
+-- database: run against a project with real data it would announce a menu
+-- nobody had finished writing, and teardown_fixtures only deletes org-a and
+-- org-b rows so it could not undo it.
+update public.menus mu set status = 'published'
+  from public.organizations o
+ where o.id = mu.org_id and o.slug in ('org-a','org-b') and mu.status = 'draft';
