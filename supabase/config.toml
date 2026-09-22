@@ -1,10 +1,11 @@
-# Description: per-function deploy settings, so local, script and CI deploys agree.
+# Description: per-function deploy settings, so a hand deploy and a CI deploy
+# produce the same thing.
 #
-# These used to live as --no-verify-jwt in scripts/deploy-functions.sh, which
-# meant a CI deploy running `supabase functions deploy` over the whole directory
-# would silently re-enable the platform gate on the telegram webhook and reject
-# every update Telegram sent. Declaring it here is what keeps the two paths from
-# disagreeing.
+# These used to be --no-verify-jwt in a deploy script. A CI deploy runs
+# `supabase functions deploy` over the whole directory and has nowhere to put a
+# per-function flag, so it would have re-enabled the platform gate on the
+# telegram webhook and rejected every update Telegram sent, while reporting
+# success. Declaring it here is what keeps the two paths from disagreeing.
 
 project_id = "wvtbstticnactealupph"
 

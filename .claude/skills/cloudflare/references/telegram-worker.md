@@ -1,7 +1,7 @@
 # If a Telegram Worker gets added
 
 Not built today. The Telegram bot and the payment webhook live in Supabase Edge Functions
-(`supabase/functions`, deployed by `scripts/deploy-functions.sh`), and they sit next to the
+(`supabase/functions`, deployed by CI on push to `main`), and they sit next to the
 database they read. A Cloudflare Worker for this needs a reason, such as wanting cron work
 that does not consume Supabase function invocations, or a webhook endpoint on the same
 custom domain as the app.

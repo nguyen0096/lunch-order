@@ -9,16 +9,19 @@ parsing come first, but the schema is multi-tenant from the first migration.
 
 ## Status
 
-Written but not yet verified against a live database. The schema, the web app, the
-scheduled jobs and the Telegram bot are all in the repo and the unit tests pass, but
-the Supabase project they were built against is unreachable, so nothing since
-`20260911210000` has ever been applied or run.
+Running. Every migration is applied, the web app is deployed, all three Edge
+Functions are live, and the Telegram bot has been used end to end: a member with no
+email address joined with a code, was asked their name, and ordered lunch.
 
-Before trusting any of it, stand the project back up and work through
-`supabase/tests/`, starting with `isolation.sql`.
+A push to `main` applies migrations, deploys the SPA and deploys the functions.
+There is no manual step.
 
-Known to be unfinished: no billing UI on the web app, no payment webhook, and only
-three of the outbox's nine `kind` values are ever enqueued.
+Unfinished: the web app is mid-redesign (see [docs](docs/)), there is no billing
+screen, no payment webhook, and only three of the outbox's nine `kind` values are
+ever enqueued.
+
+`supabase/tests/isolation.sql` proves cross-tenant isolation and is worth running
+after any policy change. It is not yet wired into CI, which it should be.
 
 ## Stack
 
@@ -156,7 +159,7 @@ Order matters: registering the webhook before the function exists means every up
 Telegram sends lands on a 404.
 
 ```bash
-./scripts/deploy-functions.sh
+npx supabase functions deploy --project-ref <ref>
 
 curl -sX POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
@@ -278,9 +281,11 @@ supabase secrets set DEEPSEEK_API_KEY=sk-...
 
 Without it the function returns 501 and the button reports that plainly.
 
-Deploy with `scripts/deploy-functions.sh`, never by pasting file contents into an
+Deployed by CI on every push to `main`, never by pasting file contents into an
 API call: the running function drifts from the repo silently and the next person
-debugs code that is not what is executing.
+debugs code that is not what is executing. See
+[Deploy the Edge Functions](docs/how-to/deploy-edge-functions.md) for the manual
+path and what to check when one is deployed but nothing happens.
 
 Three things keep this from being a liability:
 

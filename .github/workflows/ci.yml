@@ -48,9 +48,9 @@ jobs:
 
   # Migrations reach the database through the Supabase GitHub integration, but
   # Edge Functions do not: without this they stay whatever was last pushed by
-  # hand, which is the silent drift scripts/deploy-functions.sh exists to stop
-  # and could not stop on its own. verify_jwt per function comes from
-  # supabase/config.toml, so this deploys the whole directory in one command.
+  # hand. A deploy script could not prevent that, because running it was
+  # optional. verify_jwt per function comes from supabase/config.toml, so this
+  # deploys the whole directory in one command.
   deploy-functions:
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

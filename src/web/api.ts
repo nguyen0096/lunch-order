@@ -98,31 +98,6 @@ export async function fetchMenu(orgId: number, serviceDate: string): Promise<Men
   };
 }
 
-export async function fetchMyOrder(menuId: number, profileId: string): Promise<MyOrder | null> {
-  const { data, error } = await supabase
-    .from("orders")
-    .select(`id, status, source, order_items ( menu_item_id, item_name_snapshot, unit_price_minor )`)
-    .eq("menu_id", menuId)
-    // Not redundant with RLS. orders_select_org makes the whole board readable,
-    // so without this the query returns every colleague's order for the menu and
-    // maybeSingle throws as soon as a second person has ordered.
-    .eq("profile_id", profileId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-
-  type LineRow = { menu_item_id: number; item_name_snapshot: string; unit_price_minor: number };
-  const line = ((data.order_items ?? []) as unknown as LineRow[])[0];
-  return {
-    id: data.id,
-    status: data.status as MyOrder["status"],
-    source: data.source as MyOrder["source"],
-    itemId: line?.menu_item_id ?? null,
-    itemName: line?.item_name_snapshot ?? null,
-    unitPriceMinor: line?.unit_price_minor ?? null,
-  };
-}
-
 /**
  * Place or update today's order. Prices are never sent: the database snapshots
  * them from menu_items, and the column grant means a browser could not write
