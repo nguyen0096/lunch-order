@@ -4,8 +4,12 @@ import { fetchMe } from "./api.js";
 import { signIn, signOut, supabase } from "./supabase.js";
 import { useHashRoute } from "./useHashRoute.js";
 import { AppShell } from "./components/AppShell.js";
+import { BillScreen } from "./components/BillScreen.js";
 import { BoardScreen } from "./components/BoardScreen.js";
 import { ComingSoon } from "./components/ComingSoon.js";
+import { MenuScreen } from "./components/MenuScreen.js";
+import { PeopleScreen } from "./components/PeopleScreen.js";
+import { SettingsScreen } from "./components/SettingsScreen.js";
 import { JoinScreen } from "./components/JoinScreen.js";
 import { NoOfficeScreen, SignInScreen } from "./components/SignInScreen.js";
 import { isAdmin, type Me } from "../shared/types.js";
@@ -89,27 +93,11 @@ type ActiveOrg = Me["orgs"][number];
  * closure, so the caller's narrowing applies and nothing has to be asserted.
  */
 function renderPage(page: string, me: Me, active: ActiveOrg) {
-  if (page === "board") {
-    return <BoardScreen me={me} org={active.org} role={active.role} />;
-  }
+  const props = { me, org: active.org, role: active.role };
 
-  if (page === "bill") {
-    return (
-      <ComingSoon heading="The bill is on its way">
-        What you owe, the payment reference and the QR code land here next. Until then the board
-        shows what you have ordered.
-      </ComingSoon>
-    );
-  }
-
-  if (page === "settings") {
-    return (
-      <ComingSoon heading="Settings are on their way">
-        Standing days, the Telegram connection and your display name move here next. Sign out is in
-        this menu already.
-      </ComingSoon>
-    );
-  }
+  if (page === "board") return <BoardScreen {...props} />;
+  if (page === "bill") return <BillScreen {...props} />;
+  if (page === "settings") return <SettingsScreen {...props} />;
 
   if (page === "menu" || page === "people") {
     // The database refuses admin writes regardless of role, but a member who
@@ -121,15 +109,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
         </ComingSoon>
       );
     }
-    return page === "menu" ? (
-      <ComingSoon heading="The menu editor is on its way">
-        Pasting the caterer's message and publishing the week lands here next.
-      </ComingSoon>
-    ) : (
-      <ComingSoon heading="People are on their way">
-        The join code, recent joins and the member list land here next.
-      </ComingSoon>
-    );
+    return page === "menu" ? <MenuScreen {...props} /> : <PeopleScreen {...props} />;
   }
 
   // Never render an empty main: an unknown route is a wrong link, not a reason
