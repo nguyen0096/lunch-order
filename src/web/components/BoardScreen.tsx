@@ -306,6 +306,45 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
     return out;
   }, [transfers]);
 
+  // On a narrow screen the board opens on Monday and the only day you can act
+  // on is usually off the right edge, so it looks like a week of nothing until
+  // you discover a horizontal scroll. Bring that column into view instead.
+  // Keyed on the week rather than on `days`, which is rebuilt on every fetch,
+  // and on `now`, which changes every render.
+  const gridRef = useRef<HTMLElement>(null);
+  // Once per week shown, and only after the board has arrived: on the first
+  // render there is a skeleton rather than a table, so there is no column to
+  // scroll to yet. Tracking which week has been handled keeps a later optimistic
+  // update, which also replaces `board`, from yanking the grid out from under
+  // somebody who has scrolled it themselves.
+  const scrolledFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (board === null || scrolledFor.current === from) return;
+    const target =
+      days.find(
+        (d) => cellReason({ day: d, isAdminHere: admin, now: appNow(), timeZone: org.timezone }) === null,
+      ) ?? days.find((d) => d.serviceDate === today);
+    if (target === undefined) return;
+
+    // A frame later, not immediately: the table is laid out in this commit but
+    // offsetLeft is only meaningful once it has been painted, and a width read
+    // before that returns the pre-layout value and scrolls to the wrong place.
+    const frame = requestAnimationFrame(() => {
+      const column = gridRef.current?.querySelector<HTMLElement>(
+        `[data-service-date="${target.serviceDate}"]`,
+      );
+      const scroller = column?.closest<HTMLElement>("[data-slot='table-container']");
+      if (!column || !scroller) return;
+      // Not scrollIntoView: the Who column is sticky and sits *over* the scroll
+      // area, so centring the target leaves its left edge underneath it and
+      // clips the dish name. Park it just clear of that column instead.
+      const sticky = gridRef.current?.querySelector<HTMLElement>("thead th:first-child");
+      scroller.scrollLeft = Math.max(0, column.offsetLeft - (sticky?.offsetWidth ?? 0) - 8);
+      scrolledFor.current = from;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [board, days, from, admin, org.timezone, today]);
+
   const nav = (
     <WeekNav
       label={weekRangeLabel(days[0]?.serviceDate ?? from, days[days.length - 1]?.serviceDate ?? to)}
@@ -355,7 +394,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
       : null;
 
   return (
-    <section className="flex flex-col gap-4">
+    <section ref={gridRef} className="flex flex-col gap-4">
       {nav}
 
       <Table containerClassName="bg-surface-raised">
@@ -369,6 +408,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                 <TableHead
                   key={d.serviceDate}
                   scope="col"
+                  data-service-date={d.serviceDate}
                   aria-current={isToday ? "date" : undefined}
                   className={cn("min-w-28 text-center", isToday && "border-l-2 border-l-accent")}
                 >
@@ -622,7 +662,15 @@ function MyCell({
         "h-auto w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
         cell
           ? "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70"
-          : "text-subtle hover:text-text",
+          : reason === null
+            // An empty cell you can use has to outweigh one you cannot. Action
+            // draws unavailable as a dashed border-strong edge, which is right
+            // for a button standing on its own and wrong in a grid: against
+            // cells that are only a glyph, the days you CANNOT order on became
+            // the loudest thing on the screen. Measured before this: disabled
+            // cells bordered #9E8363, the one open day #E6DED0.
+            ? "border border-border-strong text-muted hover:bg-accent-subtle hover:text-text"
+            : "border-border text-subtle",
         projected && !cell && "border border-dashed border-border-strong",
       )}
       onClick={onTap}

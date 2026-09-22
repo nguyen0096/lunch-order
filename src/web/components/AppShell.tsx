@@ -80,7 +80,7 @@ export function AppShell({
               {/* A rule and a label, not a longer list: the chores sit below
                   the daily act rather than beside it. */}
               <hr className="my-3 border-t border-border" />
-              <p className="px-3 pb-1 text-xs font-semibold tracking-wide text-subtle uppercase">
+              <p className="px-3 pb-1 text-xs font-semibold text-subtle">
                 Admin
               </p>
               {ADMIN.map((d) => (

@@ -70,7 +70,7 @@ export function DishDialog(props: DishDialogProps) {
 
         {member.isMe && (
           <section className="flex flex-col gap-2">
-            <h3 className="text-xs font-semibold tracking-wide text-subtle uppercase">
+            <h3 className="text-xs font-semibold text-subtle">
               On the menu
             </h3>
             {day.dishes.map((dish) => {
@@ -123,7 +123,7 @@ export function DishDialog(props: DishDialogProps) {
         )}
 
         <section className="flex flex-col gap-2 border-t border-border pt-4">
-          <h3 className="text-xs font-semibold tracking-wide text-subtle uppercase">
+          <h3 className="text-xs font-semibold text-subtle">
             Pass this meal on
           </h3>
 
