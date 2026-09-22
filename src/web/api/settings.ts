@@ -1,8 +1,11 @@
 /**
- * Things set once and forgotten: display name and the Telegram link.
+ * Things set once and forgotten: display name and the Telegram link, plus the
+ * two org-wide settings an admin sets here -- where the money goes, and which
+ * group chat the bot posts in.
  */
 
 import { supabase } from "../supabase.js";
+import { parsePaymentConfig, type PaymentConfig } from "../../shared/payment.js";
 
 /* -------------------------------------------------- profile and membership */
 
@@ -94,4 +97,73 @@ export async function unlinkTelegram(membershipId: number): Promise<void> {
     .update({ chat_id: null, linked_at: null })
     .eq("membership_id", membershipId);
   if (error) throw error;
+}
+
+/* ------------------------------------------------------------ the office */
+
+export type OrgSettings = {
+  payment: PaymentConfig;
+  /** Where the bot posts. Null means it has no group to post in. */
+  telegramGroupChatId: number | null;
+};
+
+/**
+ * The two org-wide settings the Settings screen edits.
+ *
+ * Readable by any member -- organizations_select covers the whole row -- but
+ * only ever asked for on the admin half of the screen, because a member has
+ * nothing to do with the answer.
+ */
+export async function fetchOrgSettings(orgId: number): Promise<OrgSettings> {
+  const { data, error } = await supabase
+    .from("organizations")
+    .select("payment_config, telegram_group_chat_id")
+    .eq("id", orgId)
+    .single();
+  if (error) throw error;
+  return {
+    payment: parsePaymentConfig(data.payment_config),
+    telegramGroupChatId: data.telegram_group_chat_id,
+  };
+}
+
+/**
+ * An UPDATE that RLS declines to apply is not an error: PostgREST reports it
+ * as zero rows affected, and a screen that does not look would report a save
+ * that never happened. Both writers below ask for the row back and say so when
+ * it does not come.
+ */
+async function updateOrg(orgId: number, patch: Record<string, unknown>): Promise<void> {
+  const { data, error } = await supabase
+    .from("organizations").update(patch).eq("id", orgId).select("id");
+  if (error) throw error;
+  if ((data ?? []).length === 0) {
+    throw new Error("That did not save. You need to be an admin of this office.");
+  }
+}
+
+/**
+ * The account behind the QR on every bill.
+ *
+ * Written in the spelling `parsePaymentConfig` defines, which is also one of
+ * the spellings `vietQrLink` in shared/telegram.ts reads, so the bot's QR and
+ * the web app's agree without either having to know about the other. Plain
+ * UPDATE, no RPC: authenticated holds UPDATE on organizations at table level
+ * and organizations_update_admin is what narrows it to an admin's own orgs.
+ */
+export async function setPaymentConfig(orgId: number, config: PaymentConfig): Promise<void> {
+  await updateOrg(orgId, { payment_config: { vietqr: config.vietqr, note: config.note } });
+}
+
+/**
+ * The group chat id, as a fallback.
+ *
+ * The bot normally discovers this itself from a message in the group, so this
+ * exists for the admin who already knows the number and does not want to wait
+ * for that. Null clears it.
+ */
+export async function setTelegramGroupChatId(
+  orgId: number, chatId: number | null,
+): Promise<void> {
+  await updateOrg(orgId, { telegram_group_chat_id: chatId });
 }
