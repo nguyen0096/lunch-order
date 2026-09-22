@@ -4,6 +4,7 @@ import { App } from "./App.js";
 import { initClock } from "../shared/clock.js";
 import { allParams } from "./useHashRoute.js";
 import { configError } from "./supabase.js";
+import { Button, Toaster, TooltipProvider } from "@/ui";
 import "./styles.css";
 
 /**
@@ -21,15 +22,28 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   override render() {
     if (this.state.error) {
       return (
-        <main className="center">
-          <h1>Something broke</h1>
-          <p className="notice error">{this.state.error.message}</p>
-          <button className="btn" onClick={() => window.location.reload()}>Reload</button>
-        </main>
+        <Centered heading="Something broke">
+          <p className="rounded-md bg-danger-subtle px-3 py-2 text-sm text-danger-subtle-fg">
+            {this.state.error.message}
+          </p>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Reload
+          </Button>
+        </Centered>
       );
     }
     return this.props.children;
   }
+}
+
+/** The prose-shaped screens: a readable measure, not the full width. */
+function Centered({ heading, children }: { heading: string; children: ReactNode }) {
+  return (
+    <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-center justify-center gap-3 px-4 text-center">
+      <h1 className="text-xl font-semibold">{heading}</h1>
+      {children}
+    </main>
+  );
 }
 
 // Accepts ?now= before or inside the hash, since both get typed.
@@ -40,21 +54,27 @@ if (!el) throw new Error("#root missing");
 
 createRoot(el).render(
   configError ? (
-    <main className="center">
-      <h1>Not configured</h1>
-      <p className="notice error">{configError}</p>
-    </main>
+    <Centered heading="Not configured">
+      <p className="rounded-md bg-danger-subtle px-3 py-2 text-sm text-danger-subtle-fg">
+        {configError}
+      </p>
+    </Centered>
   ) : (
     <StrictMode>
-      <ErrorBoundary>
-        {/* A shifted clock must never be mistaken for a bug, so say so loudly. */}
-        {fakeNow && (
-          <div className="clock-banner">
-            Pretending it is {fakeNow}. The database still enforces the real cutoff.
-          </div>
-        )}
-        <App />
-      </ErrorBoundary>
+      {/* One toast surface and one tooltip provider for the whole app. Two of
+          either is how a screen ends up with its own reporting channel. */}
+      <TooltipProvider>
+        <ErrorBoundary>
+          {/* A shifted clock must never be mistaken for a bug, so say so loudly. */}
+          {fakeNow && (
+            <div className="bg-warn-subtle px-4 py-2 text-center text-sm text-warn-subtle-fg">
+              Pretending it is {fakeNow}. The database still enforces the real cutoff.
+            </div>
+          )}
+          <App />
+        </ErrorBoundary>
+        <Toaster />
+      </TooltipProvider>
     </StrictMode>
   ),
 );
