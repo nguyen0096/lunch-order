@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { AppShell, initials } from "../src/web/components/AppShell.js";
+import { AppShell, initials, switchTarget, type Office } from "../src/web/components/AppShell.js";
 import type { Org, Role } from "../src/shared/types.js";
 
 const ORG: Org = {
@@ -13,20 +13,47 @@ const ORG: Org = {
   billingWeekStartsOn: 1,
 };
 
-function shell(role: Role = "member", page = "board", onSignOut = vi.fn()) {
+const OTHER: Org = { ...ORG, id: 8, slug: "other-office", name: "Other Office" };
+
+function shell(
+  role: Role = "member",
+  page = "board",
+  onSignOut = vi.fn(),
+  offices: Office[] = [{ org: ORG, role }],
+) {
+  const onCreated = vi.fn();
   render(
     <AppShell
       org={ORG}
       role={role}
+      offices={offices}
       page={page}
       displayName="Nguyễn Neyu"
       email="neyu@example.com"
       onSignOut={onSignOut}
+      onCreated={onCreated}
     >
       <p>the board</p>
     </AppShell>,
   );
-  return { onSignOut };
+  return { onSignOut, onCreated };
+}
+
+/** Somebody in two offices: an admin here, a plain member over there. */
+function both(role: Role = "member", otherRole: Role = "member"): Office[] {
+  return [
+    { org: ORG, role },
+    { org: OTHER, role: otherRole },
+  ];
+}
+
+const switchers = () => screen.queryAllByRole("button", { name: /Switch office/ });
+
+async function openSwitcher() {
+  await userEvent.click(switchers()[0]!);
+  return within(
+    (await screen.findByText("Your offices")).closest("[data-slot='popover-content']") as HTMLElement,
+  );
 }
 
 /** One destination, rendered once in the sidebar and once in the tab bar. */
@@ -165,5 +192,111 @@ describe("initials", () => {
 
   it("has something to show for a name that is missing", () => {
     expect(initials("   ")).toBe("?");
+  });
+});
+
+describe("AppShell office switcher", () => {
+  it("leaves the name as a name for the one-office majority", () => {
+    shell("member");
+    expect(switchers()).toHaveLength(0);
+    expect(screen.getAllByText("Test Office")[0]).toBeInTheDocument();
+  });
+
+  it("turns the name into the way across in both shapes when there are two", async () => {
+    shell("member", "board", vi.fn(), both());
+    // The sidebar and the phone header, the same rule as every other
+    // destination in this shell.
+    expect(switchers()).toHaveLength(2);
+
+    const menu = await openSwitcher();
+    expect(menu.getByRole("link", { name: /Other Office/ })).toHaveAttribute(
+      "href",
+      "#/o/other-office/board",
+    );
+  });
+
+  it("marks the office you are already in", async () => {
+    shell("member", "board", vi.fn(), both());
+    const menu = await openSwitcher();
+    expect(menu.getByRole("link", { name: /Test Office/ })).toHaveAttribute("aria-current", "true");
+    expect(menu.getByRole("link", { name: /Other Office/ })).not.toHaveAttribute("aria-current");
+  });
+
+  it("keeps the page you are on, so two bills can be compared", async () => {
+    shell("member", "bill", vi.fn(), both());
+    const menu = await openSwitcher();
+    expect(menu.getByRole("link", { name: /Other Office/ })).toHaveAttribute(
+      "href",
+      "#/o/other-office/bill",
+    );
+  });
+
+  it("keeps an admin chore when you are an admin over there too", async () => {
+    shell("admin", "menu", vi.fn(), both("admin", "admin"));
+    const menu = await openSwitcher();
+    expect(menu.getByRole("link", { name: /Other Office/ })).toHaveAttribute(
+      "href",
+      "#/o/other-office/menu",
+    );
+  });
+
+  it("lands a plain member on the board rather than on an explanation", async () => {
+    shell("admin", "people", vi.fn(), both("admin", "member"));
+    const menu = await openSwitcher();
+    expect(menu.getByRole("link", { name: /Other Office/ })).toHaveAttribute(
+      "href",
+      "#/o/other-office/board",
+    );
+  });
+
+  it("opens the create dialog from the switcher", async () => {
+    shell("member", "board", vi.fn(), both());
+    const menu = await openSwitcher();
+
+    await userEvent.click(menu.getByRole("button", { name: "Create an office" }));
+
+    expect(await screen.findByRole("dialog", { name: "Create an office" })).toBeInTheDocument();
+  });
+});
+
+describe("AppShell, where creating an office lives", () => {
+  async function accountMenu() {
+    await userEvent.click(screen.getAllByRole("button", { name: /Account: Nguyễn Neyu/ })[0]!);
+    const email = await screen.findByText("neyu@example.com");
+    return within(email.closest("[data-slot='popover-content']") as HTMLElement);
+  }
+
+  it("offers it in the account menu to somebody who has no switcher", async () => {
+    shell("member");
+    const menu = await accountMenu();
+
+    await userEvent.click(menu.getByRole("button", { name: "Create an office" }));
+
+    expect(await screen.findByRole("dialog", { name: "Create an office" })).toBeInTheDocument();
+  });
+
+  it("does not say it twice once the switcher carries it", async () => {
+    shell("member", "board", vi.fn(), both());
+    const menu = await accountMenu();
+    expect(menu.queryByRole("button", { name: "Create an office" })).not.toBeInTheDocument();
+  });
+});
+
+describe("switchTarget", () => {
+  it("carries the page over where the other office has it", () => {
+    expect(switchTarget("bill", "member")).toBe("bill");
+    expect(switchTarget("settings", "member")).toBe("settings");
+    expect(switchTarget("board", "member")).toBe("board");
+  });
+
+  it("carries an admin chore over only for an admin", () => {
+    expect(switchTarget("menu", "admin")).toBe("menu");
+    expect(switchTarget("people", "owner")).toBe("people");
+    expect(switchTarget("menu", "member")).toBe("board");
+    expect(switchTarget("people", "member")).toBe("board");
+  });
+
+  it("sends a page that does not exist to the board", () => {
+    expect(switchTarget("nonsense", "admin")).toBe("board");
   });
 });

@@ -12,7 +12,7 @@ import { PeopleScreen } from "./components/PeopleScreen.js";
 import { SettingsScreen } from "./components/SettingsScreen.js";
 import { JoinScreen } from "./components/JoinScreen.js";
 import { NoOfficeScreen, SignInScreen } from "./components/SignInScreen.js";
-import { isAdmin, type Me } from "../shared/types.js";
+import { isAdmin, type Me, type Org } from "../shared/types.js";
 
 /**
  * Pinned chat links and bookmarks outlive a rename, so the pages the old
@@ -32,15 +32,31 @@ export function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
   const [route, go] = useHashRoute();
 
-  const reload = useCallback(() => {
-    fetchMe().then(setMe).catch(() => setMe(null));
+  // Awaited by the callers that need `me` to be current before they navigate,
+  // which is why it returns rather than fires and forgets.
+  const reload = useCallback(async () => {
+    try {
+      setMe(await fetchMe());
+    } catch {
+      setMe(null);
+    }
   }, []);
 
   useEffect(() => {
-    reload();
-    const { data } = supabase.auth.onAuthStateChange(() => reload());
+    void reload();
+    const { data } = supabase.auth.onAuthStateChange(() => void reload());
     return () => data.subscription.unsubscribe();
   }, [reload]);
+
+  /**
+   * A new office exists in the database and nowhere in this tab. Refetching
+   * before navigating is the whole point: routing to a slug `me` has not heard
+   * of sends the redirect below straight back to the old office.
+   */
+  async function enter(org: Org) {
+    await reload();
+    go({ slug: org.slug, page: "board" });
+  }
 
   if (me === undefined) {
     return (
@@ -60,7 +76,13 @@ export function App() {
   // Signing in is not the same as belonging anywhere. Say so plainly rather
   // than rendering an empty app.
   if (me.orgs.length === 0) {
-    return <NoOfficeScreen email={me.email} onSignOut={() => void signOut()} />;
+    return (
+      <NoOfficeScreen
+        email={me.email}
+        onSignOut={() => void signOut()}
+        onCreated={(org) => void enter(org)}
+      />
+    );
   }
 
   const active = me.orgs.find((o) => o.org.slug === route.slug) ?? me.orgs[0];
@@ -76,10 +98,12 @@ export function App() {
     <AppShell
       org={active.org}
       role={active.role}
+      offices={me.orgs}
       page={page}
       displayName={active.displayName}
       email={me.email}
       onSignOut={() => void signOut()}
+      onCreated={(org) => void enter(org)}
     >
       {renderPage(page, me, active)}
     </AppShell>

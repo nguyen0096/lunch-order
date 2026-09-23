@@ -1,4 +1,8 @@
+import { useState } from "react";
+import { PlusIcon } from "lucide-react";
 import { Button } from "@/ui";
+import { CreateOfficeDialog } from "./AppShell.js";
+import type { Org } from "../../shared/types.js";
 
 // The texture, not a menu: nothing is readable from the sign-in page before
 // there is a session, so these are the dishes this office orders week in, week
@@ -63,8 +67,26 @@ export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
   );
 }
 
-/** Signed in, but a member of nothing. Not an empty app, an explanation. */
-export function NoOfficeScreen({ email, onSignOut }: { email: string; onSignOut: () => void }) {
+/**
+ * Signed in, but a member of nothing. Not an empty app, an explanation.
+ *
+ * Joining stays the headline because almost everybody here is joining a
+ * colleague's office, not founding one. Founding is offered under it, for the
+ * person who has nobody to ask -- until this screen said so, that person had
+ * nothing to do but sign out.
+ */
+export function NoOfficeScreen({
+  email,
+  onSignOut,
+  onCreated,
+}: {
+  email: string;
+  onSignOut: () => void;
+  /** Refetch and go: the new office is the only one this person has. */
+  onCreated: (org: Org) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+
   return (
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
       <h1 className="text-xl font-semibold">No office yet</h1>
@@ -72,9 +94,22 @@ export function NoOfficeScreen({ email, onSignOut }: { email: string; onSignOut:
         You're signed in as {email}, but you're not a member of an office yet. Ask a colleague for
         the join code, or for an invitation link.
       </p>
-      <Button variant="outline" onClick={onSignOut}>
+
+      <hr className="w-full border-t border-border" />
+
+      <p className="text-sm text-muted">
+        Nobody to ask? Create the office yourself and send colleagues the join code.
+      </p>
+      <Button variant="outline" onClick={() => setCreating(true)}>
+        <PlusIcon />
+        Create an office
+      </Button>
+
+      <Button variant="ghost" onClick={onSignOut}>
         Sign out
       </Button>
+
+      <CreateOfficeDialog open={creating} onOpenChange={setCreating} onCreated={onCreated} />
     </main>
   );
 }

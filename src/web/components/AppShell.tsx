@@ -1,16 +1,38 @@
-import type { ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
+  CheckIcon,
   ChefHatIcon,
+  ChevronsUpDownIcon,
   LogOutIcon,
+  PlusIcon,
   ReceiptTextIcon,
   SettingsIcon,
   UsersIcon,
 } from "lucide-react";
-import { Button, Popover, PopoverContent, PopoverTrigger, ThemeChoice, cn } from "@/ui";
+import {
+  Action,
+  Button,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+  ThemeChoice,
+  cn,
+  useAction,
+} from "@/ui";
+import { createOffice, officeProblem, suggestSlug } from "../api.js";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
 
 export type Page = "board" | "bill" | "menu" | "people" | "settings";
+
+/** One membership as the chrome needs it: which office, and what you are in it. */
+export type Office = { org: Org; role: Role };
 
 type Destination = { page: Page; label: string; icon: ReactNode };
 
@@ -39,22 +61,36 @@ const ADMIN: Destination[] = [
 export function AppShell({
   org,
   role,
+  offices,
   page,
   displayName,
   email,
   onSignOut,
+  onCreated,
   children,
 }: {
   org: Org;
   role: Role;
+  /** Every office this person belongs to, the active one included. */
+  offices: ReadonlyArray<Office>;
   page: string;
   displayName: string;
   email: string;
   onSignOut: () => void;
+  /** Refetch and go: a new office is not in `offices` until somebody reloads. */
+  onCreated: (org: Org) => void;
   children: ReactNode;
 }) {
   const admin = isAdmin(role);
   const href = (p: Page | "settings") => `#/o/${org.slug}/${p}`;
+  const [creating, setCreating] = useState(false);
+  const create = () => setCreating(true);
+
+  // Belonging to two offices is what makes the name a control. Belonging to one
+  // is the ordinary case, and a menu holding a single entry is a promise the
+  // interface cannot keep -- so for that person the way to found a second
+  // office sits in the account menu instead.
+  const switchable = offices.length > 1;
 
   return (
     <div className="min-h-dvh md:grid md:grid-cols-[15rem_1fr]">
@@ -66,8 +102,15 @@ export function AppShell({
       </a>
 
       <aside className="sticky top-0 hidden h-dvh flex-col border-r border-border bg-surface-raised px-3 py-4 md:flex">
-        <div className="px-3 pb-4">
-          <p className="truncate text-lg font-semibold">{org.name}</p>
+        <div className="pb-4">
+          <OfficeName
+            org={org}
+            offices={offices}
+            page={page}
+            align="start"
+            onCreateOffice={create}
+            className="text-lg font-semibold"
+          />
         </div>
 
         <nav aria-label="Main" className="flex flex-1 flex-col gap-1">
@@ -95,18 +138,27 @@ export function AppShell({
           email={email}
           settingsHref={href("settings")}
           onSignOut={onSignOut}
+          onCreateOffice={switchable ? undefined : create}
           align="start"
         />
       </aside>
 
       <div className="flex min-h-dvh flex-col">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-2 md:hidden">
-          <p className="truncate text-base font-semibold">{org.name}</p>
+          <OfficeName
+            org={org}
+            offices={offices}
+            page={page}
+            align="start"
+            onCreateOffice={create}
+            className="w-auto min-w-0 px-2 text-base font-semibold"
+          />
           <AvatarMenu
             displayName={displayName}
             email={email}
             settingsHref={href("settings")}
             onSignOut={onSignOut}
+            onCreateOffice={switchable ? undefined : create}
             align="end"
           />
         </header>
@@ -136,7 +188,111 @@ export function AppShell({
           </ul>
         </nav>
       </div>
+
+      <CreateOfficeDialog open={creating} onOpenChange={setCreating} onCreated={onCreated} />
     </div>
+  );
+}
+
+/**
+ * Where the same person lands in the other office.
+ *
+ * Somebody comparing two bills should not be thrown back to the board on every
+ * switch, so the page carries over. The two admin chores are the exception:
+ * they do not exist for a plain member, and landing on the page that explains
+ * that is a dead end dressed up as a destination.
+ */
+export function switchTarget(page: string, role: Role): Page {
+  if (page === "bill" || page === "settings") return page;
+  if ((page === "menu" || page === "people") && isAdmin(role)) return page;
+  return "board";
+}
+
+/**
+ * The office name, and -- for somebody who belongs to two -- the way across.
+ *
+ * The name is the control because it is already the thing that says which
+ * office you are looking at; a separate switcher beside it would say the same
+ * thing twice.
+ */
+function OfficeName({
+  org,
+  offices,
+  page,
+  align,
+  onCreateOffice,
+  className,
+}: {
+  org: Org;
+  offices: ReadonlyArray<Office>;
+  page: string;
+  align: "start" | "end";
+  onCreateOffice: () => void;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+
+  if (offices.length < 2) {
+    // The span carries the truncation: ellipsis on a flex container does not
+    // apply to the anonymous item inside it.
+    return (
+      <p className={cn("flex h-11 items-center px-3", className)}>
+        <span className="min-w-0 truncate">{org.name}</span>
+      </p>
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={cn(
+          "flex h-11 w-full items-center gap-1.5 rounded-md px-3 text-left transition-colors hover:bg-surface-sunken",
+          className,
+        )}
+      >
+        <span className="min-w-0 truncate">{org.name}</span>
+        <ChevronsUpDownIcon aria-hidden="true" className="size-4 shrink-0 text-muted" />
+        {/* The name alone would label this button "Test Office", which reads as
+            a heading rather than as something to press. */}
+        <span className="sr-only">Switch office</span>
+      </PopoverTrigger>
+
+      <PopoverContent align={align} className="w-64 p-2">
+        <p className="px-2 py-1.5 text-xs font-semibold text-subtle">Your offices</p>
+        {offices.map((o) => {
+          const current = o.org.slug === org.slug;
+          return (
+            <a
+              key={o.org.slug}
+              href={`#/o/${o.org.slug}/${switchTarget(page, o.role)}`}
+              aria-current={current ? "true" : undefined}
+              onClick={() => setOpen(false)}
+              className={cn(
+                "flex h-11 items-center gap-2 rounded-md px-2 text-sm font-medium transition-colors",
+                current
+                  ? "bg-accent-subtle text-accent-subtle-fg"
+                  : "text-muted hover:bg-surface-sunken hover:text-text",
+              )}
+            >
+              <span className="min-w-0 flex-1 truncate">{o.org.name}</span>
+              {current && <CheckIcon aria-hidden="true" className="size-4 shrink-0" />}
+            </a>
+          );
+        })}
+        <hr className="my-1 border-t border-border" />
+        <Button
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={() => {
+            setOpen(false);
+            onCreateOffice();
+          }}
+        >
+          <PlusIcon />
+          Create an office
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -193,16 +349,21 @@ function AvatarMenu({
   email,
   settingsHref,
   onSignOut,
+  onCreateOffice,
   align,
 }: {
   displayName: string;
   email: string;
   settingsHref: string;
   onSignOut: () => void;
+  /** Absent when the switcher already carries it, so it has one home at a time. */
+  onCreateOffice?: () => void;
   align: "start" | "end";
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label={`Account: ${displayName}`}
         className="flex h-11 w-full items-center gap-3 rounded-md px-2 text-left transition-colors hover:bg-surface-sunken md:w-full"
@@ -230,6 +391,19 @@ function AvatarMenu({
             Settings
           </a>
         </Button>
+        {onCreateOffice && (
+          <Button
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={() => {
+              setOpen(false);
+              onCreateOffice();
+            }}
+          >
+            <PlusIcon />
+            Create an office
+          </Button>
+        )}
         {/* Not a `useAction`: there is no write to report, and a toast on
             every tap of a three-state control is noise. */}
         <ThemeChoice />
@@ -239,6 +413,141 @@ function AvatarMenu({
         </Button>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/* One spelling of a text input, matching the fields on Settings so two dialogs
+   cannot be two heights. 16px minimum, or iOS Safari zooms the page on focus. */
+const INPUT =
+  "h-11 w-full min-w-0 rounded-md border border-border bg-surface px-3 text-base text-text placeholder:text-subtle";
+
+/**
+ * Founding an office: a name, and the address it will live at.
+ *
+ * The address is suggested from the name because a name is the only thing the
+ * person actually knows at this point, and asking somebody to invent a URL
+ * fragment before they have an office is how a two-field form loses half the
+ * people who open it. It stays editable, and it stops following the name the
+ * moment they touch it.
+ *
+ * `create_organization` makes the caller the owner in the same transaction, so
+ * there is no membership to write here -- only a refetch, which is `onCreated`.
+ */
+export function CreateOfficeDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onCreated: (org: Org) => void;
+}) {
+  const nameId = useId();
+  const slugId = useId();
+  const [name, setName] = useState("");
+  // null while the address still follows the name. An empty string is a person
+  // who cleared the field, and must not silently refill.
+  const [slug, setSlug] = useState<string | null>(null);
+  const address = slug ?? suggestSlug(name);
+
+  const create = useAction(createOffice, {
+    success: (created) => `Created ${created.name}`,
+    onSuccess: (created) => {
+      onOpenChange(false);
+      onCreated(created);
+    },
+  });
+  const { reset } = create;
+
+  // A dialog that reopens holding the last attempt is a dialog that founds the
+  // wrong office on a stray Enter.
+  useEffect(() => {
+    if (!open) {
+      setName("");
+      setSlug(null);
+      reset();
+    }
+  }, [open, reset]);
+
+  const problem = officeProblem({ name, slug: address });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Create an office</DialogTitle>
+          <DialogDescription>
+            You become its owner. Colleagues join with the code you get afterwards.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="flex flex-col gap-4"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (problem !== null) return;
+            void create.run({ name, slug: address });
+          }}
+        >
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={nameId} className="text-sm font-medium">
+              Office name
+            </label>
+            <input
+              id={nameId}
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Công ty Ăn Trưa"
+              className={INPUT}
+            />
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor={slugId} className="text-sm font-medium">
+              Web address
+            </label>
+            <input
+              id={slugId}
+              value={address}
+              // Lowercased as it is typed, because `create_organization` will
+              // lowercase it anyway and a field that shows one address while
+              // creating another is a small lie.
+              onChange={(e) => setSlug(e.target.value.toLowerCase())}
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              aria-describedby={`${slugId}-hint`}
+              className={INPUT}
+            />
+            <p id={`${slugId}-hint`} className="max-w-prose text-xs text-muted">
+              {`The office lives at #/o/${address || "…"}/board, and the address is what colleagues paste into a chat. Suggested from the name; change it if you like.`}
+            </p>
+          </div>
+
+          <p className="max-w-prose text-xs text-muted">
+            Days and cutoffs run in Asia/Ho_Chi_Minh, and the bill is in dong.
+          </p>
+
+          {create.error && (
+            // The toast has already said it once; the sentence stays here
+            // because the dialog is where the field it concerns is.
+            <p className="rounded-md bg-danger-subtle px-3 py-2 text-sm text-danger-subtle-fg">
+              {create.error}
+            </p>
+          )}
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
+            <Action reason={problem} pending={create.pending} type="submit">
+              Create office
+            </Action>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 
