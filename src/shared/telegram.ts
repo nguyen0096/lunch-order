@@ -269,6 +269,199 @@ export function targetMenu<T extends MenuLike>(
   return { menu: first, closedReason: orderingClosedReason({ ...args, menu: first }) };
 }
 
+/* ------------------------------------------------------- prices in messages */
+
+/**
+ * What the bot writes where a price would go when the caterer has not given
+ * one.
+ *
+ * The same words as PRICE_PENDING in src/shared/money.ts, lower case because
+ * here they always sit inside a sentence. Spelled out rather than imported
+ * because this file must stay import-free (see the header), and the test file
+ * asserts the two surfaces keep the one vocabulary so they cannot drift.
+ */
+export const PRICE_TO_COME = "price to come";
+
+/** Renders a known amount. Injected, so this file imports no money module. */
+export type Money = (minor: number) => string;
+
+/**
+ * An amount, or the words for one nobody has yet.
+ *
+ * Never `money(minor ?? 0)`: zero is a real price, and in a chat message
+ * "0 ₫" is a promise of a free lunch that nobody made.
+ */
+export function priceText(minor: number | null, money: Money): string {
+  return minor === null ? PRICE_TO_COME : money(minor);
+}
+
+/**
+ * How many of the reader's meals are still waiting on a price, in words.
+ *
+ * Null when none are. A statement that quietly left them out would read as the
+ * final word on the week, and the member would budget for a number that is
+ * about to grow.
+ */
+export function unpricedMealsNote(n: number): string | null {
+  if (n <= 0) return null;
+  return n === 1
+    ? "One meal is still waiting on the caterer's price, so it is not counted here. " +
+      "It goes on your bill once the price arrives."
+    : `${n} meals are still waiting on the caterer's price, so they are not counted here. ` +
+      "They go on your bill once the price arrives.";
+}
+
+/* -------------------------------------------------------------- the messages */
+
+/**
+ * The bot's messages are built here, not in the Edge Function, for the same
+ * reason orderingClosedReason() is: Deno code is unreachable from vitest, and
+ * every one of these can meet a price the caterer has not set. Keeping them
+ * pure puts each sentence under test. Only the keyboards stay with the
+ * function, because a keyboard is plumbing rather than words.
+ *
+ * Everything goes out as parse_mode HTML, so each value that came from a person
+ * or a caterer is escaped on the way in.
+ */
+
+/** `<b>Office</b>` and a newline, or nothing for a member with one office. */
+export function orgHeading(orgName: string | null): string {
+  return orgName === null ? "" : `<b>${escapeHtml(orgName)}</b>\n`;
+}
+
+export type DayMessage = {
+  /** The office's name, for a member who belongs to more than one. */
+  orgName: string | null;
+  serviceDate: string;
+  /** Why ordering is shut, or null when it is open. */
+  closedReason: string | null;
+  orderCutoffAt: string;
+  timeZone: string;
+  dishes: Array<{ name: string; priceMinor: number | null }>;
+  /** Null when this member has nothing on the day. */
+  order: {
+    status: string;
+    /** The dish as it was snapshotted; null when they are down but undecided. */
+    dishName: string | null;
+    /** Null when the dish carried no price at the moment they chose it. */
+    amountMinor: number | null;
+  } | null;
+};
+
+/** The day's menu, and where this member stands on it. */
+export function renderDayText(m: DayMessage, money: Money): string {
+  const lines = [`${orgHeading(m.orgName)}<b>${formatServiceDate(m.serviceDate)}</b>`];
+  lines.push(
+    m.closedReason !== null
+      ? escapeHtml(m.closedReason)
+      : `Orders close ${formatCutoffIn(m.orderCutoffAt, m.timeZone)}.`,
+  );
+  lines.push("");
+
+  if (m.dishes.length === 0) {
+    lines.push("No dishes on this menu.");
+  } else {
+    for (const d of m.dishes) {
+      lines.push(`- ${escapeHtml(d.name)}  ${escapeHtml(priceText(d.priceMinor, money))}`);
+    }
+  }
+
+  lines.push("");
+  const order = m.order;
+  if (order === null || order.status === "cancelled") {
+    lines.push("You're <b>not</b> down as eating.");
+  } else if (order.dishName === null) {
+    lines.push("You're down as eating, but haven't picked a dish yet.");
+  } else {
+    lines.push(
+      `You: <b>${escapeHtml(order.dishName)}</b> ` +
+      `(${escapeHtml(priceText(order.amountMinor, money))})`,
+    );
+    // Answered where the question is asked. On its own the bracket says what
+    // the bot does not know and nothing about what the member will owe.
+    if (order.amountMinor === null) {
+      lines.push("It goes on your bill once the caterer prices it.");
+    }
+  }
+
+  return lines.join("\n");
+}
+
+export type OfferMessage = {
+  /** The colleague handing the meal over, null when they cannot be named. */
+  fromName: string | null;
+  serviceDate: string;
+  dishName: string | null;
+  amountMinor: number | null;
+};
+
+/** A colleague's meal, offered to this member. */
+export function renderOfferText(o: OfferMessage, money: Money): string {
+  const who = escapeHtml(o.fromName ?? "A colleague");
+  const what = o.dishName === null
+    ? "their lunch"
+    : `${escapeHtml(o.dishName)} (${escapeHtml(priceText(o.amountMinor, money))})`;
+  const consequence = o.dishName !== null && o.amountMinor === null
+    ? "If you accept, it goes on your bill once the caterer prices it."
+    : "If you accept, the cost moves to your bill.";
+  return `${who} is offering you ${what} on <b>${formatServiceDate(o.serviceDate)}</b>.\n` +
+    consequence;
+}
+
+export type StatementMessage = {
+  periodStart: string | null;
+  periodEnd: string | null;
+  mealCount: number;
+  mealsMinor: number;
+  carriedInMinor: number;
+  totalDueMinor: number;
+  paidMinor: number;
+  status: string;
+  paymentRef: string;
+  /**
+   * Meals of this member's that run_billing() could not cost, so they are in
+   * no line and in no total below.
+   */
+  unpricedMeals: number;
+};
+
+/** What the member owes, and what is not in that number yet. */
+export function renderStatementText(
+  s: StatementMessage, money: Money, qrUrl: string | null,
+): string {
+  const lines = [
+    `<b>${
+      s.periodStart !== null && s.periodEnd !== null
+        ? `${formatServiceDate(s.periodStart)} to ${formatServiceDate(s.periodEnd)}`
+        : "Latest week"
+    }</b>`,
+    `${s.mealCount} meals: ${escapeHtml(money(s.mealsMinor))}`,
+  ];
+  if (s.carriedInMinor > 0) {
+    lines.push(`Owed from before: ${escapeHtml(money(s.carriedInMinor))}`);
+  }
+  lines.push(`<b>Total due: ${escapeHtml(money(s.totalDueMinor))}</b>`);
+
+  // Directly under the total it qualifies, so the two are never read apart.
+  const waiting = unpricedMealsNote(s.unpricedMeals);
+  if (waiting !== null) lines.push(waiting);
+
+  if (s.paidMinor > 0) lines.push(`Paid so far: ${escapeHtml(money(s.paidMinor))}`);
+  lines.push(`Status: ${escapeHtml(s.status)}`);
+  lines.push("");
+  lines.push(`Put <code>${escapeHtml(s.paymentRef)}</code> in the transfer message.`);
+  if (qrUrl !== null) lines.push(`<a href="${escapeHtml(qrUrl)}">Pay by QR</a>`);
+
+  return lines.join("\n");
+}
+
+/** Nothing billed, which is not the same as nothing owing. */
+export function renderNothingBilledText(orgName: string | null, unpricedMeals: number): string {
+  const waiting = unpricedMealsNote(unpricedMeals);
+  return `${orgHeading(orgName)}Nothing billed to you yet.` +
+    (waiting === null ? "" : `\n${waiting}`);
+}
+
 /* ------------------------------------------------------------------ payment */
 
 /**

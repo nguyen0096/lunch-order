@@ -760,3 +760,125 @@ describe("Read with AI", () => {
     await waitFor(() => expect(failure).toHaveBeenCalledWith("DEEPSEEK_API_KEY is not set"));
   });
 });
+
+/* ------------------------------------------- a dish the caterer has not priced */
+
+describe("Leaving a price to the caterer", () => {
+  /** Publish and confirm, returning the dialog so the sentence can be read. */
+  async function openConfirm(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(publishButton());
+    return await screen.findByRole("dialog");
+  }
+
+  it("says empty is allowed where the price is typed, not in a help page", async () => {
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.getByText(/Leave a price empty when the caterer has not said yet/),
+    ).toBeInTheDocument();
+  });
+
+  it("does not call an empty box a mistake", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    await user.clear(screen.getByLabelText("Price of Cơm gà"));
+
+    expect(screen.queryByText(/No price read here/)).not.toBeInTheDocument();
+    expect(screen.getByText("Price to come")).toBeInTheDocument();
+    expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("publishes a whole menu nobody has priced yet, and says what that costs", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    await user.clear(screen.getByLabelText("Price of Cơm gà"));
+    await user.clear(screen.getByLabelText("Price of Bún bò"));
+
+    const dialog = await openConfirm(user);
+    expect(
+      within(dialog).getByText(
+        /2 dishes have no price yet\. People can order as usual, but a meal with no price is not billed until you set one, and the week stays open until then\./,
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(publishMenu).toHaveBeenCalled());
+    expect(publishMenu.mock.calls[0]?.[0].dishes).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: null },
+      { id: 102, name: "Bún bò", priceMinor: null },
+    ]);
+  });
+
+  it("publishes a half-priced menu and counts only what is unpriced", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    await user.clear(screen.getByLabelText("Price of Bún bò"));
+
+    const dialog = await openConfirm(user);
+    expect(within(dialog).getByText(/^One dish has no price yet\./)).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(publishMenu).toHaveBeenCalled());
+    expect(publishMenu.mock.calls[0]?.[0].dishes).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 45_000 },
+      { id: 102, name: "Bún bò", priceMinor: null },
+    ]);
+  });
+
+  it("says nothing about prices when the caterer has priced everything", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    const dialog = await openConfirm(user);
+    expect(within(dialog).queryByText(/no price yet/)).not.toBeInTheDocument();
+  });
+
+  it("reopens a published unpriced dish as unpriced, not as a blank box", async () => {
+    serve({
+      menu: menu({
+        status: "published",
+        items: [
+          { id: 101, name: "Cơm gà", priceMinor: null, position: 0 },
+          { id: 102, name: "Bún bò", priceMinor: 50_000, position: 1 },
+        ],
+      }),
+    });
+    renderMenu();
+    await ready();
+
+    expect(screen.getByLabelText("Price of Cơm gà")).toHaveValue("");
+    expect(screen.getByText("Price to come")).toBeInTheDocument();
+    // The mistake this exists to prevent: an unpriced dish reading as free.
+    expect(screen.queryByText("0 ₫")).not.toBeInTheDocument();
+    expect(screen.getByText("50.000 ₫")).toBeInTheDocument();
+  });
+
+  it("shows a frozen menu's unpriced dish as unpriced rather than as zero", async () => {
+    serve({
+      menu: menu({
+        status: "locked",
+        items: [{ id: 101, name: "Cơm gà", priceMinor: null, position: 0 }],
+      }),
+    });
+    renderMenu();
+    await ready();
+
+    expect(screen.queryByLabelText("Price of Cơm gà")).not.toBeInTheDocument();
+    expect(screen.getByText("Cơm gà")).toBeInTheDocument();
+    expect(screen.getByText("Price to come")).toBeInTheDocument();
+    expect(screen.queryByText("0 ₫")).not.toBeInTheDocument();
+  });
+});

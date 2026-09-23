@@ -11,6 +11,7 @@ import {
 import {
   cutoffLabel,
   dishes as dishCount,
+  dishesHave,
   longDay,
   people,
   peopleHave,
@@ -36,6 +37,7 @@ export function PublishDialog({
   serviceDate,
   status,
   dishes,
+  unpriced,
   impact,
   cutoffAt,
   pending,
@@ -48,6 +50,8 @@ export function PublishDialog({
   /** The menu's status now, null when the date has no menu yet. */
   status: MenuStatus | null;
   dishes: number;
+  /** How many of those the caterer has not priced. Normal, and consequential. */
+  unpriced: number;
   impact: PublishImpact | null;
   cutoffAt: string;
   pending: boolean;
@@ -92,6 +96,16 @@ export function PublishDialog({
           {chosen > 0 && (
             <p className="text-muted">
               {`${peopleHave(chosen)} already chosen a dish. Removing a dish somebody chose will be refused.`}
+            </p>
+          )}
+
+          {/* Not styled as a warning: a caterer who prices at the weekend is an
+              ordinary Saturday. It is here because not billing somebody for a
+              meal they ate is a real consequence of this button, and the admin
+              is the only person who can see it coming. */}
+          {unpriced > 0 && (
+            <p className="text-muted">
+              {`${dishesHave(unpriced)} no price yet. People can order as usual, but a meal with no price is not billed until you set one, and the week stays open until then.`}
             </p>
           )}
 

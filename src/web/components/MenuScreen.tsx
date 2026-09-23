@@ -584,6 +584,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
           serviceDate={serviceDate}
           status={status}
           dishes={rows.length}
+          unpriced={drafts.filter((d) => d.priceMinor === null).length}
           impact={impact}
           cutoffAt={cutoffAt}
           pending={publish.pending}

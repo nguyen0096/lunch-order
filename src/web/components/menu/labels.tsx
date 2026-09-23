@@ -65,6 +65,11 @@ export function dishes(n: number): string {
   return n === 1 ? "1 dish" : `${n} dishes`;
 }
 
+/** `One dish has` / `3 dishes have`, so a sentence about a count can agree. */
+export function dishesHave(n: number): string {
+  return n === 1 ? "One dish has" : `${n} dishes have`;
+}
+
 /**
  * Null when the menu can be edited, otherwise why not.
  *

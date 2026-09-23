@@ -50,9 +50,10 @@ import {
   answerCallbackQuery, editMessageText, sendMessage, type InlineKeyboard,
 } from "../_shared/telegramApi.ts";
 import {
-  addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatCutoffIn, formatServiceDate,
+  addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
   humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, normalizeJoinCode,
-  orderingClosedReason, parseCommand, targetMenu, todayIn, vietQrLink,
+  orderingClosedReason, orgHeading, parseCommand, renderDayText, renderNothingBilledText,
+  renderOfferText, renderStatementText, targetMenu, todayIn, vietQrLink, type Money,
 } from "../_shared/telegram.ts";
 import { formatMoney, type Currency } from "../_shared/money.ts";
 
@@ -454,7 +455,7 @@ type MenuRow = {
   service_date: string;
   status: string;
   order_cutoff_at: string;
-  items: Array<{ id: number; name: string; price_minor: number }>;
+  items: Array<{ id: number; name: string; price_minor: number | null }>;
 };
 
 /** A menu and why ordering from it is shut, or null when it is open. */
@@ -574,42 +575,30 @@ async function menuView(
 
 /** A member belonging to two offices needs to be told which one is speaking. */
 function orgHeader(link: Link, showOrgName: boolean): string {
-  return showOrgName ? `<b>${escapeHtml(link.org.name)}</b>\n` : "";
+  return orgHeading(showOrgName ? link.org.name : null);
 }
 
 function renderDay(
   link: Link, showOrgName: boolean, target: Target, order: OrderRow | null,
 ): Rendered {
   const { menu, closedReason } = target;
-  const currency = currencyOf(link.org);
 
-  const lines = [`${orgHeader(link, showOrgName)}<b>${formatServiceDate(menu.service_date)}</b>`];
-  lines.push(closedReason !== null
-    ? escapeHtml(closedReason)
-    : `Orders close ${formatCutoffIn(menu.order_cutoff_at, link.org.timezone)}.`);
-  lines.push("");
-
-  if (menu.items.length === 0) {
-    lines.push("No dishes on this menu.");
-  } else {
-    for (const d of menu.items) {
-      lines.push(`- ${escapeHtml(d.name)}  ${escapeHtml(formatMoney(d.price_minor, currency))}`);
-    }
-  }
-
-  lines.push("");
-  if (!order || order.status === "cancelled") {
-    lines.push("You're <b>not</b> down as eating.");
-  } else if (order.item_name_snapshot === null) {
-    lines.push("You're down as eating, but haven't picked a dish yet.");
-  } else {
-    lines.push(
-      `You: <b>${escapeHtml(order.item_name_snapshot)}</b>` +
-      (order.line_total_minor === null
-        ? ""
-        : ` (${escapeHtml(formatMoney(order.line_total_minor, currency))})`),
-    );
-  }
+  // The words are renderDayText()'s, in src/shared, so a price the caterer has
+  // not set is one sentence the whole app over and vitest can reach it. This
+  // function is the adapter from database rows and the keyboard.
+  const text = renderDayText({
+    orgName: showOrgName ? link.org.name : null,
+    serviceDate: menu.service_date,
+    closedReason,
+    orderCutoffAt: menu.order_cutoff_at,
+    timeZone: link.org.timezone,
+    dishes: menu.items.map((d) => ({ name: d.name, priceMinor: d.price_minor })),
+    order: order === null ? null : {
+      status: order.status,
+      dishName: order.item_name_snapshot,
+      amountMinor: order.line_total_minor,
+    },
+  }, moneyIn(link.org));
 
   const keyboard: InlineKeyboard = closedReason !== null ? [] : menu.items.map((d) => [{
     text: d.name.length > 40 ? `${d.name.slice(0, 39)}…` : d.name,
@@ -622,7 +611,7 @@ function renderDay(
     }]);
   }
 
-  return { text: lines.join("\n"), keyboard };
+  return { text, keyboard };
 }
 
 type OrderRow = {
@@ -658,7 +647,7 @@ type OfferRow = {
 };
 
 async function offerViews(tx: Tx, link: Link): Promise<Rendered[]> {
-  const currency = currencyOf(link.org);
+  const money = moneyIn(link.org);
   const rows = await tx<OfferRow[]>`
     select t.id,
            o.service_date::text as service_date,
@@ -678,29 +667,24 @@ async function offerViews(tx: Tx, link: Link): Promise<Rendered[]> {
        and t.status = 'pending'
      order by o.service_date, t.id`;
 
-  return rows.map((t) => {
-    const who = escapeHtml(t.from_name ?? "A colleague");
-    const what = t.item_name_snapshot === null ? "their lunch" : (
-      escapeHtml(t.item_name_snapshot) +
-      (t.line_total_minor === null
-        ? ""
-        : ` (${escapeHtml(formatMoney(t.line_total_minor, currency))})`)
-    );
-    return {
-      text: `${who} is offering you ${what} on <b>${formatServiceDate(t.service_date)}</b>.\n` +
-        "If you accept, the cost moves to your bill.",
-      keyboard: [[
-        {
-          text: "Accept",
-          callback_data: encodeCallback({ kind: "transfer", transferId: t.id, decision: "accepted" }),
-        },
-        {
-          text: "Decline",
-          callback_data: encodeCallback({ kind: "transfer", transferId: t.id, decision: "declined" }),
-        },
-      ]],
-    };
-  });
+  return rows.map((t) => ({
+    text: renderOfferText({
+      fromName: t.from_name,
+      serviceDate: t.service_date,
+      dishName: t.item_name_snapshot,
+      amountMinor: t.line_total_minor,
+    }, money),
+    keyboard: [[
+      {
+        text: "Accept",
+        callback_data: encodeCallback({ kind: "transfer", transferId: t.id, decision: "accepted" }),
+      },
+      {
+        text: "Decline",
+        callback_data: encodeCallback({ kind: "transfer", transferId: t.id, decision: "declined" }),
+      },
+    ]],
+  }));
 }
 
 /* ---------------------------------------------------------------------- /me */
@@ -719,13 +703,18 @@ type StatementRow = {
 
 async function onMe(chatId: number, links: Link[]): Promise<void> {
   for (const link of links) {
-    const head = links.length > 1 ? `<b>${escapeHtml(link.org.name)}</b>\n` : "";
+    const orgName = links.length > 1 ? link.org.name : null;
 
     // billing_statements is own-row under RLS and the profile_id filter says so
     // out loud. Nobody ever sees anybody else's balance through this bot.
+    //
+    // The unpriced count rides along in the same transaction, because the
+    // statement and what the statement had to leave out have to describe one
+    // moment. run_billing() skips an order whose dish has no price, so without
+    // this the total reads as the final word on a week that is still growing.
     const outcome = await attempt(() =>
-      asMember(link.profileId, (tx) =>
-        tx<StatementRow[]>`
+      asMember(link.profileId, async (tx) => ({
+        statement: (await tx<StatementRow[]>`
           select s.meal_count, s.meals_minor, s.carried_in_minor, s.total_due_minor,
                  s.paid_minor, s.payment_ref, s.status,
                  bp.period_start::text as period_start,
@@ -734,54 +723,63 @@ async function onMe(chatId: number, links: Link[]): Promise<void> {
             left join public.billing_periods bp on bp.id = s.billing_period_id
            where s.org_id = ${link.org.id} and s.profile_id = ${link.profileId}::uuid
            order by s.billing_period_id desc
-           limit 1`)
+           limit 1`)[0] ?? null,
+        // Read straight off the member's own rows rather than through
+        // v_order_charges: order_items.profile_id is the person who PLACED the
+        // order, so those are the rows order_items_own actually shows them.
+        // Not bounded by the statement's week, deliberately -- a member with no
+        // statement at all still has meals waiting on a price, and that is the
+        // case the old "Nothing billed to you yet." read most wrongly.
+        unpriced: (await tx<Array<{ n: number }>>`
+          select count(*)::int as n
+            from public.orders o
+            join public.order_items oi on oi.order_id = o.id
+           where o.org_id = ${link.org.id}
+             and o.profile_id = ${link.profileId}::uuid
+             and o.status = 'placed'
+             and oi.unit_price_minor is null`)[0]?.n ?? 0,
+      }))
     );
 
     if (!outcome.ok) {
-      await say(chatId, head + escapeHtml(outcome.reason));
+      await say(chatId, orgHeading(orgName) + escapeHtml(outcome.reason));
       continue;
     }
-    const statement = outcome.value[0];
-    if (!statement) {
-      await say(chatId, `${head}Nothing billed to you yet.`);
+    const { statement, unpriced } = outcome.value;
+    if (statement === null) {
+      await say(chatId, renderNothingBilledText(orgName, unpriced));
       continue;
     }
 
-    await say(chatId, head + renderStatement(statement, link));
+    await say(chatId, renderStatement(statement, link, orgName, unpriced));
   }
 }
 
-function renderStatement(s: StatementRow, link: Link): string {
-  const currency = currencyOf(link.org);
+function renderStatement(
+  s: StatementRow, link: Link, orgName: string | null, unpricedMeals: number,
+): string {
   const outstanding = s.total_due_minor - s.paid_minor;
 
-  const lines = [
-    `<b>${
-      s.period_start !== null && s.period_end !== null
-        ? `${formatServiceDate(s.period_start)} to ${formatServiceDate(s.period_end)}`
-        : "Latest week"
-    }</b>`,
-    `${s.meal_count} meals: ${escapeHtml(formatMoney(s.meals_minor, currency))}`,
-  ];
-  if (s.carried_in_minor > 0) {
-    lines.push(`Owed from before: ${escapeHtml(formatMoney(s.carried_in_minor, currency))}`);
-  }
-  lines.push(`<b>Total due: ${escapeHtml(formatMoney(s.total_due_minor, currency))}</b>`);
-  if (s.paid_minor > 0) {
-    lines.push(`Paid so far: ${escapeHtml(formatMoney(s.paid_minor, currency))}`);
-  }
-  lines.push(`Status: ${escapeHtml(s.status)}`);
-  lines.push("");
-  lines.push(`Put <code>${escapeHtml(s.payment_ref)}</code> in the transfer message.`);
-
+  // The QR is built here because vietQrLink() needs the org's payment_config,
+  // which is a database row rather than a sentence.
   const qr = vietQrLink(link.org.payment_config, {
     amountMinor: Math.max(outstanding, 0),
     minorUnits: link.org.currency_minor_units,
     addInfo: s.payment_ref,
   });
-  if (qr) lines.push(`<a href="${escapeHtml(qr)}">Pay by QR</a>`);
 
-  return lines.join("\n");
+  return orgHeading(orgName) + renderStatementText({
+    periodStart: s.period_start,
+    periodEnd: s.period_end,
+    mealCount: s.meal_count,
+    mealsMinor: s.meals_minor,
+    carriedInMinor: s.carried_in_minor,
+    totalDueMinor: s.total_due_minor,
+    paidMinor: s.paid_minor,
+    status: s.status,
+    paymentRef: s.payment_ref,
+    unpricedMeals,
+  }, moneyIn(link.org), qr);
 }
 
 /* ------------------------------------------------------------------ /cancel */
@@ -1093,8 +1091,18 @@ async function linksForChat(chatId: number): Promise<Link[]> {
   }));
 }
 
-function currencyOf(org: Org): Currency {
-  return { code: org.currency, minorUnits: org.currency_minor_units, locale: org.locale };
+/**
+ * The one amount formatter the messages are handed.
+ *
+ * It takes a number, never a nullable one: a missing price is words, and
+ * priceText() in src/shared/telegram.ts is where that decision is made. An
+ * `?? 0` here is what would put "0 ₫" on somebody's bill.
+ */
+function moneyIn(org: Org): Money {
+  const currency: Currency = {
+    code: org.currency, minorUnits: org.currency_minor_units, locale: org.locale,
+  };
+  return (minor: number) => formatMoney(minor, currency);
 }
 
 async function say(chatId: number, text: string, keyboard?: InlineKeyboard): Promise<void> {

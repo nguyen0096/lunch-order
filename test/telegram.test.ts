@@ -15,12 +15,22 @@ import {
   normalizeJoinCode,
   orderingClosedReason,
   parseCommand,
+  priceText,
+  renderDayText,
+  renderNothingBilledText,
+  renderOfferText,
+  renderStatementText,
   targetMenu,
   todayIn,
+  unpricedMealsNote,
   vietQrLink,
+  PRICE_TO_COME,
   type CallbackAction,
+  type DayMessage,
+  type StatementMessage,
 } from "../src/shared/telegram.js";
 import { orderDisabledReason } from "../src/shared/gating.js";
+import { PRICE_PENDING, VND, formatMoney } from "../src/shared/money.js";
 import type { Menu, MenuStatus } from "../src/shared/types.js";
 import { humanError as webHumanError } from "../src/web/api.js";
 
@@ -334,5 +344,209 @@ describe("escaping and VietQR", () => {
       { bank_bin: "970415", account_number: "1" },
       { amountMinor: 1, minorUnits: 2, addInfo: "X" },
     )).toBeNull();
+  });
+});
+
+/* ------------------------------------------------- a price nobody has yet */
+
+const money = (minor: number) => formatMoney(minor, VND);
+
+function day(over: Partial<DayMessage> = {}): DayMessage {
+  return {
+    orgName: null,
+    serviceDate: "2026-09-23",
+    closedReason: null,
+    orderCutoffAt: CUTOFF,
+    timeZone: TZ,
+    dishes: [{ name: "Cơm gà", priceMinor: 45_000 }],
+    order: null,
+    ...over,
+  };
+}
+
+function statement(over: Partial<StatementMessage> = {}): StatementMessage {
+  return {
+    periodStart: "2026-09-21",
+    periodEnd: "2026-09-25",
+    mealCount: 2,
+    mealsMinor: 95_000,
+    carriedInMinor: 0,
+    totalDueMinor: 95_000,
+    paidMinor: 0,
+    status: "open",
+    paymentRef: "L39NEIL",
+    unpricedMeals: 0,
+    ...over,
+  };
+}
+
+describe("a price the caterer has not given", () => {
+  it("is the same words the app uses, so the two surfaces do not drift", () => {
+    expect(PRICE_TO_COME.toLowerCase()).toBe(PRICE_PENDING.toLowerCase());
+  });
+
+  it("reads as words, and zero still reads as zero", () => {
+    expect(priceText(null, money)).toBe(PRICE_TO_COME);
+    // The whole point: a free meal and an unknown price are different claims.
+    expect(priceText(0, money)).toBe(formatMoney(0, VND));
+    expect(priceText(45_000, money)).toBe(money(45_000));
+  });
+});
+
+describe("the day's menu message", () => {
+  it("prices a dish the caterer has priced", () => {
+    expect(renderDayText(day(), money)).toContain(`- Cơm gà  ${money(45_000)}`);
+  });
+
+  it("does not quote 0 ₫ for a dish with no price, and does not throw", () => {
+    const text = renderDayText(
+      day({ dishes: [{ name: "Cơm gà", priceMinor: null }] }),
+      money,
+    );
+    expect(text).toContain(`- Cơm gà  ${PRICE_TO_COME}`);
+    expect(text).not.toContain("₫");
+  });
+
+  it("prices what it can on a half-priced menu and says so for the rest", () => {
+    const text = renderDayText(
+      day({
+        dishes: [
+          { name: "Cơm gà", priceMinor: null },
+          { name: "Bún bò", priceMinor: 50_000 },
+        ],
+      }),
+      money,
+    );
+    expect(text).toContain(`- Cơm gà  ${PRICE_TO_COME}`);
+    expect(text).toContain(`- Bún bò  ${money(50_000)}`);
+  });
+
+  it("escapes a dish name, priced or not", () => {
+    const text = renderDayText(
+      day({ dishes: [{ name: "Cơm <b>gà</b>", priceMinor: null }] }),
+      money,
+    );
+    expect(text).toContain("Cơm &lt;b&gt;gà&lt;/b&gt;");
+    expect(text).not.toContain("<b>gà</b>");
+  });
+
+  it("shows what a member's own priced order cost", () => {
+    const text = renderDayText(
+      day({ order: { status: "placed", dishName: "Cơm gà", amountMinor: 45_000 } }),
+      money,
+    );
+    expect(text).toContain(`You: <b>Cơm gà</b> (${money(45_000)})`);
+  });
+
+  it("says what an unpriced order will do rather than going quiet about it", () => {
+    const text = renderDayText(
+      day({
+        dishes: [{ name: "Cơm gà", priceMinor: null }],
+        order: { status: "placed", dishName: "Cơm gà", amountMinor: null },
+      }),
+      money,
+    );
+    expect(text).toContain(`You: <b>Cơm gà</b> (${PRICE_TO_COME})`);
+    expect(text).toContain("It goes on your bill once the caterer prices it.");
+    expect(text).not.toContain("₫");
+  });
+
+  it("leaves the rest of the message exactly as it was", () => {
+    expect(renderDayText(day({ orgName: "Test Office" }), money)).toBe(
+      [
+        "<b>Test Office</b>",
+        "<b>Wed 23/09</b>",
+        "Orders close 21:00 22/09.",
+        "",
+        `- Cơm gà  ${money(45_000)}`,
+        "",
+        "You're <b>not</b> down as eating.",
+      ].join("\n"),
+    );
+  });
+
+  it("still says why ordering is shut, and lists no dish twice", () => {
+    const text = renderDayText(day({ closedReason: "Lunch on Wed 23/09 is cancelled." }), money);
+    expect(text).toContain("Lunch on Wed 23/09 is cancelled.");
+    expect(text).not.toContain("Orders close");
+  });
+});
+
+describe("a meal a colleague is handing over", () => {
+  it("names the cost when there is one", () => {
+    expect(
+      renderOfferText(
+        { fromName: "Chi Le", serviceDate: "2026-09-23", dishName: "Cơm gà", amountMinor: 45_000 },
+        money,
+      ),
+    ).toBe(
+      `Chi Le is offering you Cơm gà (${money(45_000)}) on <b>Wed 23/09</b>.\n` +
+        "If you accept, the cost moves to your bill.",
+    );
+  });
+
+  it("does not hide an unpriced meal behind a bare dish name", () => {
+    const text = renderOfferText(
+      { fromName: "Chi Le", serviceDate: "2026-09-23", dishName: "Cơm gà", amountMinor: null },
+      money,
+    );
+    expect(text).toContain(`Cơm gà (${PRICE_TO_COME})`);
+    expect(text).toContain("If you accept, it goes on your bill once the caterer prices it.");
+    expect(text).not.toContain("₫");
+  });
+});
+
+describe("what /me owes", () => {
+  it("says nothing about prices when every meal has one", () => {
+    const text = renderStatementText(statement(), money, null);
+    expect(text).toContain(`2 meals: ${money(95_000)}`);
+    expect(text).toContain(`<b>Total due: ${money(95_000)}</b>`);
+    expect(text).not.toMatch(/waiting on the caterer/);
+  });
+
+  it("says a total is incomplete rather than letting it read as the final word", () => {
+    const text = renderStatementText(statement({ unpricedMeals: 1 }), money, null);
+    expect(text).toContain(
+      "One meal is still waiting on the caterer's price, so it is not counted here. " +
+        "It goes on your bill once the price arrives.",
+    );
+    // Directly under the total it qualifies.
+    const lines = text.split("\n");
+    expect(lines[lines.findIndex((l) => l.startsWith("<b>Total due:")) + 1]).toMatch(
+      /^One meal is still waiting/,
+    );
+  });
+
+  it("agrees with the count when more than one meal is waiting", () => {
+    expect(renderStatementText(statement({ unpricedMeals: 3 }), money, null)).toContain(
+      "3 meals are still waiting on the caterer's price, so they are not counted here. " +
+        "They go on your bill once the price arrives.",
+    );
+  });
+
+  it("keeps the payment reference and the QR link", () => {
+    const text = renderStatementText(
+      statement({ paidMinor: 20_000, carriedInMinor: 5_000, unpricedMeals: 1 }),
+      money,
+      "https://img.vietqr.io/image/970415-1-compact2.png?amount=75000",
+    );
+    expect(text).toContain(`Owed from before: ${money(5_000)}`);
+    expect(text).toContain(`Paid so far: ${money(20_000)}`);
+    expect(text).toContain("Put <code>L39NEIL</code> in the transfer message.");
+    expect(text).toContain('<a href="https://img.vietqr.io/image/970415-1-compact2.png?amount=75000">Pay by QR</a>');
+  });
+
+  it("does not call an unbilled week nothing when a meal is waiting on a price", () => {
+    expect(renderNothingBilledText(null, 0)).toBe("Nothing billed to you yet.");
+
+    const waiting = renderNothingBilledText("Test Office", 2);
+    expect(waiting).toContain("<b>Test Office</b>");
+    expect(waiting).toContain("Nothing billed to you yet.");
+    expect(waiting).toContain("2 meals are still waiting on the caterer's price");
+  });
+
+  it("has nothing to say about zero meals waiting", () => {
+    expect(unpricedMealsNote(0)).toBeNull();
+    expect(unpricedMealsNote(-1)).toBeNull();
   });
 });

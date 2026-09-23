@@ -3,6 +3,7 @@ import { Button, cn } from "@/ui";
 import type { DraftDish } from "../../api.js";
 import type { ItemWarning, ParsedItem } from "../../../shared/menuParser.js";
 import {
+  PRICE_PENDING,
   formatAmount,
   formatMoney,
   parseVietnamesePrice,
@@ -93,6 +94,18 @@ export function reading(row: DishRow): PriceReading | null {
 }
 
 /**
+ * An empty box, which is how "the caterer has not said yet" is written.
+ *
+ * The distinction `reading()` alone cannot draw: it returns null both for a box
+ * left empty on purpose and for one holding `abc`. Those are the two different
+ * states toDrafts() encodes, and telling them apart is what stops a deliberate
+ * choice being reported as a mistake.
+ */
+export function unpriced(row: DishRow): boolean {
+  return row.price.trim() === "";
+}
+
+/**
  * Mirrors `menu_items_name_uk`, which is unique on `lower(btrim(name))`. NFC
  * first for the same reason the parser normalises: chat apps on iOS emit
  * decomposed Vietnamese, and two spellings of `Cơm` would otherwise look
@@ -136,6 +149,10 @@ export function flagsFor(row: DishRow, rows: DishRow[], c: Currency): Flag[] {
   } else if (rows.some((other) => other.key !== row.key && sameName(other.name, row.name))) {
     out.push({ level: "error", text: "Another row has this name, and a menu cannot hold two." });
   }
+
+  // Not a flag at all. An empty box publishes, the dish reads as unpriced
+  // everywhere, and the row already says so under the box.
+  if (unpriced(row)) return out;
 
   const read = reading(row);
   if (read === null) {
@@ -232,8 +249,14 @@ export function DishRows({
               className="flex items-baseline justify-between gap-4 bg-surface-raised px-4 py-3"
             >
               <span className="font-medium">{row.name}</span>
-              <span className="tabular text-muted">
-                {read === null ? "No price" : formatMoney(read.minor, currency)}
+              {/* Not `formatMoney(x ?? 0)`: on a frozen menu a zero would read
+                  as a meal the office got for nothing. */}
+              <span className={cn("text-muted", read !== null && "tabular")}>
+                {unpriced(row)
+                  ? PRICE_PENDING
+                  : read === null
+                    ? "No price read"
+                    : formatMoney(read.minor, currency)}
               </span>
             </li>
           );
@@ -244,6 +267,15 @@ export function DishRows({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Where the decision is made, not in a help page. Without it the only
+          way to find out that empty is allowed is to clear a box and notice
+          Publish stayed enabled, so a careful admin invents a number instead
+          -- which is the mistake nullable prices exist to prevent. */}
+      <p className="text-sm text-muted">
+        Leave a price empty when the caterer has not said yet. The dish still publishes and people
+        can order it; it is billed once you set the price.
+      </p>
+
       <div
         aria-hidden="true"
         className="hidden gap-3 px-1 text-xs font-semibold text-subtle sm:grid sm:grid-cols-[minmax(0,1fr)_10rem_2.75rem]"
@@ -257,6 +289,7 @@ export function DishRows({
         {rows.map((row, i) => {
           const flags = flagsFor(row, rows, currency);
           const read = reading(row);
+          const pending = unpriced(row);
           const label = rowLabel(row, i);
           return (
             <li
@@ -292,14 +325,22 @@ export function DishRows({
                 <input
                   id={`${row.key}-price`}
                   aria-label={`Price of ${label}`}
+                  aria-describedby={pending ? `${row.key}-pending` : undefined}
                   value={row.price}
                   inputMode="numeric"
                   onChange={(e) => onChange(row.key, { price: e.target.value })}
                   className="h-11 w-full rounded-md border border-border bg-surface-raised px-3 text-base tabular"
                 />
-                {read !== null && (
+                {/* The slot the amount occupies, occupied either way, so a dish
+                    reopened with an empty box reads as unpriced rather than as
+                    a blank nobody can tell from a price of zero. */}
+                {pending ? (
+                  <p id={`${row.key}-pending`} className="text-xs text-muted">
+                    {PRICE_PENDING}
+                  </p>
+                ) : read !== null ? (
                   <p className="tabular text-xs text-muted">{formatMoney(read.minor, currency)}</p>
-                )}
+                ) : null}
               </div>
 
               <div className="flex justify-end sm:block">
