@@ -163,6 +163,47 @@ weeks collapsed below.
 | partial | amount remaining, and what was received |
 | paid | receipt, quiet, no call to action |
 
+## Payments (admin)
+
+**Job.** Answer "who still owes", "record what arrived" and "what do we pay the
+caterer" — and catch the money that arrived and matched nobody.
+
+**Unmatched payments lead the screen**, above the week and outside it, because a
+payment whose memo matched no reference belongs to no period, changes nothing
+anywhere and tells nobody. Each carries the amount, the arrival in the office's
+zone, the provider, and the memo *verbatim and monospaced*: the typo is the clue
+to whose it was.
+
+**All money goes in through `payments`.** Marking somebody paid records a
+payment rather than updating the statement, so one trigger decides the status
+whether the bank or an admin reported it. A hand-recorded payment sets
+`provider` to `manual`, since the column defaults to `sepay`, and generates a
+unique `provider_txn_id` or the second cash payment of the day collides.
+
+**A payment cannot be undone.** The trigger is AFTER INSERT only, nothing
+decrements `paid_minor`, and `amount_minor > 0` forbids a corrective row. So
+recording confirms in two steps, names the amount, the person and the week, and
+says plainly that nothing takes it back. There is no delete. Waiving is not
+money: `status = 'waived'`, `paid_at` null, `paid_minor` untouched.
+
+**Two totals, deliberately different.** What people owe carries last week's
+unpaid remainder forward. What the caterer is owed is the sum of `billing_lines`
+and carries no debt, because nobody cooked one. The screen says which is which
+rather than leaving them looking inconsistent.
+
+| State | |
+| --- | --- |
+| loading | skeleton shaped like the screen |
+| no week billed | "No week has been billed yet" |
+| week not billed yet | said plainly, with when it will be. Not an error |
+| week nobody ate in | "Nobody ate this week" |
+| nothing unmatched | "Every payment found its person": the reassurance, not an absence |
+| settled row | the control stays and says recording more would credit money nobody owes |
+| memo lost its reference | warned at the confirm step, before the write |
+
+On a phone the table keeps person, still to pay, status and the control; meals,
+billed and received drop out rather than scroll sideways.
+
 ## Menu (admin)
 
 **Job.** Turn the caterer's chat message into a published menu without retyping it.
