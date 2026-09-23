@@ -14,6 +14,7 @@ mixing them is what makes documentation that nobody finds anything in.
 - [Deploy the Edge Functions](how-to/deploy-edge-functions.md)
 - [Rotate the Telegram join code](how-to/rotate-the-join-code.md)
 - [Set up where the money goes](how-to/set-up-payment.md)
+- [Lọc giao dịch SePay theo từ khóa](how-to/loc-giao-dich-sepay.md) — in Vietnamese, because its reader does this in SePay's Vietnamese interface
 
 ## Reference
 
