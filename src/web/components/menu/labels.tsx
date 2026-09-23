@@ -61,6 +61,18 @@ export function peopleHave(n: number): string {
   return n === 1 ? "One person has" : `${n} people have`;
 }
 
+/**
+ * `One order already exists` / `4 orders already exist`.
+ *
+ * Counted as orders rather than as people on purpose: it is the noun the
+ * trigger's own refusal uses -- "orders already exist for this menu" -- so the
+ * sentence the button carries and the sentence the database sends back when the
+ * count moved underneath read as one voice rather than two.
+ */
+export function ordersExist(n: number): string {
+  return n === 1 ? "One order already exists" : `${n} orders already exist`;
+}
+
 export function dishes(n: number): string {
   return n === 1 ? "1 dish" : `${n} dishes`;
 }
@@ -91,4 +103,22 @@ export function statusWord(status: MenuStatus): string {
       : status === "locked"
         ? "Locked"
         : "Cancelled";
+}
+
+/**
+ * The whole sentence a frozen menu's notice carries.
+ *
+ * Not `readOnlyReason` with a full stop after it: what a frozen day can still
+ * become differs by status, and that is the half the old copy got wrong. A
+ * locked day is exactly the day reopening exists for; a cancelled one has no
+ * transition out of it at all.
+ */
+export function frozenNotice(status: MenuStatus): string | null {
+  if (status === "locked") {
+    return "Orders are closed and have gone to the caterer. Reopen ordering to change dishes or prices again.";
+  }
+  if (status === "cancelled") {
+    return "Lunch is cancelled for this day. Dishes and prices can no longer be changed, and a cancelled day cannot be reopened.";
+  }
+  return null;
 }

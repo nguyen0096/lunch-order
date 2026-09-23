@@ -1,0 +1,237 @@
+import { useState } from "react";
+import {
+  Action,
+  Button,
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  useAction,
+  type ActionHandle,
+} from "@/ui";
+import { cutoffLabel, longDay, ordersExist, peopleHave, weekdayName } from "./labels.js";
+import { setMenuStatus } from "../../api.js";
+import { now as appNow } from "../../../shared/clock.js";
+import type { MenuStatus } from "../../../shared/types.js";
+
+/**
+ * The status changes the screen never offered, standing beside the status they
+ * change.
+ *
+ * `enforce_menu_lifecycle` has permitted every one of these since the first
+ * migration and nothing here re-implements it: each control sends a status and
+ * lets the trigger answer. The order count gates un-publishing as an affordance
+ * only -- the trigger sees the count and the write in the same instant and this
+ * screen cannot -- so its refusal still has to land, and does.
+ *
+ * Reopening comes first because it is what an admin reaches for when the cutoff
+ * closed a day by mistake. Cancelling comes last and is the only one behind a
+ * typed confirmation: no transition leaves `cancelled`, so nothing in this app
+ * takes it back, and the day strip above makes it one tap to be looking at a
+ * date you did not mean.
+ */
+export function StatusActions({
+  status,
+  menuId,
+  serviceDate,
+  orders,
+  cutoffAt,
+  timeZone,
+  onSettled,
+}: {
+  status: MenuStatus;
+  menuId: number;
+  serviceDate: string;
+  /** Orders already on this menu, from `fetchPublishImpact`; null until it lands. */
+  orders: number | null;
+  /** The menu's STORED cutoff, not the one being edited: this is about the day as it is. */
+  cutoffAt: string;
+  timeZone: string;
+  /** The status the database accepted, or null when it refused. Either way, reload. */
+  onSettled: (applied: MenuStatus | null) => void;
+}) {
+  const [reopening, setReopening] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [typed, setTyped] = useState("");
+
+  const unpublish = useAction(async () => setMenuStatus({ menuId, status: "draft" }), {
+    success: "Un-published · this day is a draft again",
+  });
+
+  const reopen = useAction(async () => setMenuStatus({ menuId, status: "published" }), {
+    success: "Reopened · people can order again",
+    onSuccess: () => setReopening(false),
+  });
+
+  const cancel = useAction(async () => setMenuStatus({ menuId, status: "cancelled" }), {
+    success: "Cancelled · lunch is off for this day",
+    onSuccess: () => openCancel(false),
+  });
+
+  // Every attempt reports back, refused ones included: a refusal here almost
+  // always means the day is no longer what this screen thinks it is, and the
+  // screen is the last place that should go on insisting otherwise.
+  async function apply(action: ActionHandle<[], void>, next: MenuStatus) {
+    const result = await action.run();
+    onSettled(result.ok ? next : null);
+  }
+
+  function openCancel(next: boolean) {
+    setCancelling(next);
+    // A half-typed day left behind is a confirmation already half passed.
+    if (!next) setTyped("");
+  }
+
+  const day = weekdayName(serviceDate);
+  // Exact, not case-folded: typing the day is the whole confirmation, and its
+  // job is to prove you know which day, not that you can reach the keyboard.
+  const confirmed = typed === day;
+
+  const unpublishReason =
+    orders === null
+      ? "The order count has not loaded yet"
+      : orders > 0
+        ? `${ordersExist(orders)} on this day. Un-publishing needs a menu nobody has ordered from`
+        : null;
+
+  // A locked menu got there from the hourly check, so this is all but always
+  // true; it is asked rather than assumed because the answer changes the sentence.
+  const cutoffPassed = Date.parse(cutoffAt) <= appNow().getTime();
+
+  return (
+    <>
+      {status === "locked" && (
+        <Action
+          reason={null}
+          pending={reopen.pending}
+          variant="outline"
+          size="sm"
+          onClick={() => setReopening(true)}
+        >
+          Reopen ordering
+        </Action>
+      )}
+
+      {status === "published" && (
+        <Action
+          reason={unpublishReason}
+          pending={unpublish.pending}
+          variant="outline"
+          size="sm"
+          onClick={() => void apply(unpublish, "draft")}
+        >
+          {unpublish.pending ? "Un-publishing…" : "Un-publish"}
+        </Action>
+      )}
+
+      {(status === "published" || status === "locked") && (
+        <Action
+          reason={null}
+          pending={cancel.pending}
+          variant="danger"
+          size="sm"
+          onClick={() => openCancel(true)}
+        >
+          Cancel lunch
+        </Action>
+      )}
+
+      <Dialog open={reopening} onOpenChange={setReopening}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{`Reopen ordering for ${longDay(serviceDate)}?`}</DialogTitle>
+            <DialogDescription>
+              This day goes back to published, and everybody can order from it again.
+            </DialogDescription>
+          </DialogHeader>
+
+          {cutoffPassed ? (
+            <p className="rounded-md bg-warn-subtle px-3 py-2 text-sm text-warn-subtle-fg">
+              {`Orders closed ${cutoffLabel(
+                cutoffAt,
+                timeZone,
+              )}. The hourly check locks every published day whose cutoff has gone, so move the cutoff later once this reopens, or it closes itself again within the hour.`}
+            </p>
+          ) : (
+            <p className="text-sm text-muted">
+              {`Anybody with a standing ${day} and no order yet is ordered for again.`}
+            </p>
+          )}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Leave it closed</Button>
+            </DialogClose>
+            <Action
+              reason={null}
+              pending={reopen.pending}
+              onClick={() => void apply(reopen, "published")}
+            >
+              {reopen.pending ? "Reopening…" : "Reopen ordering"}
+            </Action>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={cancelling} onOpenChange={openCancel}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>{`Cancel lunch on ${longDay(serviceDate)}?`}</DialogTitle>
+            <DialogDescription>
+              Nobody can order for this day, and nothing here takes it back: no status leaves
+              cancelled.
+            </DialogDescription>
+          </DialogHeader>
+
+          {orders !== null && (
+            <p
+              className={
+                orders > 0
+                  ? "rounded-md bg-danger-subtle px-3 py-2 text-sm text-danger-subtle-fg"
+                  : "text-sm text-muted"
+              }
+            >
+              {orders > 0
+                ? `${peopleHave(
+                    orders,
+                  )} already ordered. Cancelling does not cancel their orders: a meal already priced stays on the bill, and a dish the caterer never priced can no longer be priced for this day.`
+                : "Nobody has ordered for this day yet."}
+            </p>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="confirm-cancel-day" className="text-sm font-medium">
+              {`Type ${day} to confirm`}
+            </label>
+            <input
+              id="confirm-cancel-day"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              placeholder={day}
+              maxLength={20}
+              autoComplete="off"
+              className="h-11 rounded-md border border-border bg-surface-raised px-3 text-base"
+            />
+          </div>
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Keep lunch on</Button>
+            </DialogClose>
+            <Action
+              reason={confirmed ? null : `Type ${day} exactly to confirm`}
+              pending={cancel.pending}
+              variant="danger"
+              onClick={() => void apply(cancel, "cancelled")}
+            >
+              {cancel.pending ? "Cancelling…" : "Cancel lunch"}
+            </Action>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

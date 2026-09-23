@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { MenuScreen } from "../src/web/components/MenuScreen.js";
 import * as api from "../src/web/api.js";
 import type { EditableMenu, PublishImpact } from "../src/web/api.js";
-import { cutoffLabel, longDay, shortDay } from "../src/web/components/menu/labels.js";
+import { cutoffLabel, longDay, shortDay, weekdayName } from "../src/web/components/menu/labels.js";
 import { addDays, isoWeekday, todayIn, zonedTimeToInstant } from "../src/shared/dates.js";
 import type { Me, Org } from "../src/shared/types.js";
 
@@ -25,6 +25,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchPublishImpact: vi.fn(),
     publishMenu: vi.fn(),
     assistParse: vi.fn(),
+    setMenuStatus: vi.fn(),
   };
 });
 
@@ -32,6 +33,7 @@ const fetchMenuEditor = vi.mocked(api.fetchMenuEditor);
 const fetchMenuCalendar = vi.mocked(api.fetchMenuCalendar);
 const fetchPublishImpact = vi.mocked(api.fetchPublishImpact);
 const publishMenu = vi.mocked(api.publishMenu);
+const setMenuStatus = vi.mocked(api.setMenuStatus);
 const assistParse = vi.mocked(api.assistParse);
 const success = vi.mocked(toast.success);
 const failure = vi.mocked(toast.error);
@@ -132,6 +134,7 @@ function workingDayAfter(from: string): string {
 beforeEach(() => {
   vi.clearAllMocks();
   publishMenu.mockResolvedValue({ menuId: 11, dishes: 3, standingOrders: 3, wasUpdate: false });
+  setMenuStatus.mockResolvedValue(undefined);
 });
 
 /* --------------------------------------------------------- loading, failure */
@@ -738,6 +741,356 @@ describe("Every state the menu can be in", () => {
     expect(
       screen.getAllByText("Lunch is cancelled for this day").length,
     ).toBeGreaterThan(0);
+  });
+});
+
+/* ----------------------------------------------------- changing the status */
+
+describe("Changing the menu's status", () => {
+  const DAY = weekdayName(DATE);
+  const past = () => new Date(Date.now() - 3_600_000).toISOString();
+  const future = () => new Date(Date.now() + 3_600_000).toISOString();
+
+  /** The first load lands on `first`, every load after it on `then`. */
+  function serveChange(first: EditableMenu, then: EditableMenu, over: Partial<PublishImpact> = {}) {
+    fetchMenuEditor.mockResolvedValueOnce(first).mockResolvedValue(then);
+    fetchMenuCalendar.mockResolvedValue(new Map());
+    fetchPublishImpact.mockResolvedValue(impact(over));
+  }
+
+  const reopenButton = () => screen.getByRole("button", { name: "Reopen ordering" });
+  const unpublishButton = () => screen.getByRole("button", { name: "Un-publish" });
+  const cancelButton = () => screen.getByRole("button", { name: "Cancel lunch" });
+
+  /* ------------------------------------------------------------- reopening */
+
+  it("reopens a locked day, and the badge stops saying Locked", async () => {
+    const user = userEvent.setup();
+    serveChange(
+      menu({ status: "locked", orderCutoffAt: past() }),
+      menu({ status: "published", orderCutoffAt: past() }),
+    );
+    renderMenu();
+    await ready();
+
+    expect(screen.getByText("Locked")).toBeInTheDocument();
+    await user.click(reopenButton());
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByRole("heading")).toHaveTextContent(
+      /^Reopen ordering for \w+ \d+ \w+\?$/,
+    );
+    expect(setMenuStatus).not.toHaveBeenCalled();
+
+    await user.click(within(dialog).getByRole("button", { name: "Reopen ordering" }));
+
+    await waitFor(() =>
+      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "published" }),
+    );
+    expect(await screen.findByText("Published")).toBeInTheDocument();
+    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
+    expect(success).toHaveBeenCalledWith("Reopened · people can order again");
+  });
+
+  it("shows the new status at once rather than a stale badge while the reload runs", async () => {
+    const user = userEvent.setup();
+    fetchMenuEditor
+      .mockResolvedValueOnce(menu({ status: "locked", orderCutoffAt: past() }))
+      .mockReturnValue(new Promise(() => {}));
+    fetchMenuCalendar.mockResolvedValue(new Map());
+    fetchPublishImpact.mockResolvedValue(impact());
+    renderMenu();
+    await ready();
+
+    await user.click(reopenButton());
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Reopen ordering" }),
+    );
+
+    // The reload has not landed and never will here. A badge still reading
+    // Locked over a menu the database has already published is the lie.
+    expect(await screen.findByText("Published")).toBeInTheDocument();
+    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
+  });
+
+  it("says the hourly check will close the day again unless the cutoff moves", async () => {
+    const user = userEvent.setup();
+    serveChange(
+      menu({ status: "locked", orderCutoffAt: past() }),
+      menu({ status: "published", orderCutoffAt: past() }),
+    );
+    renderMenu();
+    await ready();
+
+    await user.click(reopenButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/locks every published day whose cutoff has gone/),
+    ).toBeInTheDocument();
+  });
+
+  it("names the standing orders instead when the cutoff has not passed", async () => {
+    const user = userEvent.setup();
+    serveChange(
+      menu({ status: "locked", orderCutoffAt: future() }),
+      menu({ status: "published", orderCutoffAt: future() }),
+    );
+    renderMenu();
+    await ready();
+
+    await user.click(reopenButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(`Anybody with a standing ${DAY} and no order yet is ordered for again.`),
+    ).toBeInTheDocument();
+    expect(within(dialog).queryByText(/hourly check/)).not.toBeInTheDocument();
+  });
+
+  it("writes nothing when the reopen confirmation is refused", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    await user.click(reopenButton());
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Leave it closed" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(setMenuStatus).not.toHaveBeenCalled();
+  });
+
+  it("locked: the read-only notice points at reopening rather than calling it final", async () => {
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.getByText(
+        "Orders are closed and have gone to the caterer. Reopen ordering to change dishes or prices again.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/can no longer be changed/)).not.toBeInTheDocument();
+  });
+
+  /* ----------------------------------------------------------- un-publishing */
+
+  it("un-publishes a day nobody has ordered for, and the badge says Draft", async () => {
+    const user = userEvent.setup();
+    serveChange(menu({ status: "published" }), menu({ status: "draft" }), { orders: 0 });
+    renderMenu();
+    await ready();
+
+    expect(unpublishButton()).not.toHaveAttribute("aria-disabled");
+    await user.click(unpublishButton());
+
+    await waitFor(() => expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "draft" }));
+    expect(await screen.findByText("Draft")).toBeInTheDocument();
+    expect(screen.queryByText("Published")).not.toBeInTheDocument();
+    expect(success).toHaveBeenCalledWith("Un-published · this day is a draft again");
+  });
+
+  it("says the order count before the button is pressed, and refuses the press", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 4 }) });
+    renderMenu();
+    await ready();
+
+    expect(unpublishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText(
+        "4 orders already exist on this day. Un-publishing needs a menu nobody has ordered from",
+      ).length,
+    ).toBeGreaterThan(0);
+
+    await user.click(unpublishButton());
+    expect(setMenuStatus).not.toHaveBeenCalled();
+  });
+
+  it("agrees with a count of one", async () => {
+    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 1 }) });
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.getAllByText(
+        "One order already exists on this day. Un-publishing needs a menu nobody has ordered from",
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("surfaces the trigger's refusal when somebody ordered after the count was read", async () => {
+    const user = userEvent.setup();
+    fetchMenuEditor.mockResolvedValue(menu({ status: "published" }));
+    fetchMenuCalendar.mockResolvedValue(new Map());
+    fetchPublishImpact
+      .mockResolvedValueOnce(impact({ orders: 0 }))
+      .mockResolvedValue(impact({ orders: 1 }));
+    setMenuStatus.mockRejectedValue(
+      new Error("cannot un-publish: orders already exist for this menu"),
+    );
+    renderMenu();
+    await ready();
+
+    expect(unpublishButton()).not.toHaveAttribute("aria-disabled");
+    await user.click(unpublishButton());
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith("cannot un-publish: orders already exist for this menu"),
+    );
+    // The screen catches up rather than going on offering what was just refused.
+    await waitFor(() => expect(unpublishButton()).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.getByText("Published")).toBeInTheDocument();
+  });
+
+  /* ------------------------------------------------------------- cancelling */
+
+  it("will not cancel until the day is typed, because nothing leaves cancelled", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 2 }) });
+    renderMenu();
+    await ready();
+
+    await user.click(cancelButton());
+    const dialog = await screen.findByRole("dialog");
+
+    expect(within(dialog).getByRole("button", { name: "Cancel lunch" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
+    expect(setMenuStatus).not.toHaveBeenCalled();
+
+    await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
+
+    await waitFor(() =>
+      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "cancelled" }),
+    );
+  });
+
+  it("refuses a near miss on the typed day", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await user.click(cancelButton());
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY.toLowerCase());
+    await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
+
+    expect(setMenuStatus).not.toHaveBeenCalled();
+    expect(
+      within(dialog).getAllByText(`Type ${DAY} exactly to confirm`).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("names what cancelling does to orders already placed", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 3 }) });
+    renderMenu();
+    await ready();
+
+    await user.click(cancelButton());
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(/3 people have already ordered\. Cancelling does not cancel their orders/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(/no status leaves\s+cancelled/)).toBeInTheDocument();
+  });
+
+  it("cancels a locked day too, and the badge says Cancelled", async () => {
+    const user = userEvent.setup();
+    serveChange(menu({ status: "locked" }), menu({ status: "cancelled" }));
+    renderMenu();
+    await ready();
+
+    await user.click(cancelButton());
+    const dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY);
+    await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
+
+    await waitFor(() =>
+      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "cancelled" }),
+    );
+    expect(await screen.findByText("Cancelled")).toBeInTheDocument();
+    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
+  });
+
+  it("forgets a half-typed day when the dialog is dismissed", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await user.click(cancelButton());
+    let dialog = await screen.findByRole("dialog");
+    await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY);
+    await user.click(within(dialog).getByRole("button", { name: "Keep lunch on" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    await user.click(cancelButton());
+    dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText(`Type ${DAY} to confirm`)).toHaveValue("");
+    expect(setMenuStatus).not.toHaveBeenCalled();
+  });
+
+  /* ------------------------------------------- which states offer which ways */
+
+  it("draft: nothing to un-publish, reopen or cancel", async () => {
+    serve({ menu: menu({ status: "draft" }) });
+    renderMenu();
+    await ready();
+
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
+  });
+
+  it("published: un-publish and cancel, but nothing to reopen", async () => {
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    expect(unpublishButton()).toBeInTheDocument();
+    expect(cancelButton()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
+  });
+
+  it("locked: reopen and cancel, but nothing to un-publish", async () => {
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    expect(reopenButton()).toBeInTheDocument();
+    expect(cancelButton()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+  });
+
+  it("cancelled: no way out, and the copy says so instead of implying one", async () => {
+    serve({ menu: menu({ status: "cancelled" }) });
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.getByText(
+        "Lunch is cancelled for this day. Dishes and prices can no longer be changed, and a cancelled day cannot be reopened.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
+  });
+
+  it("offers nothing on a date with no menu at all", async () => {
+    serve();
+    renderMenu();
+    await ready();
+
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
   });
 });
 

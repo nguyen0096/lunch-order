@@ -24,11 +24,13 @@ import {
   type DishRow,
 } from "./menu/DishRows.js";
 import { PublishDialog } from "./menu/PublishDialog.js";
+import { StatusActions } from "./menu/StatusActions.js";
 import { CutoffFields } from "./menu/CutoffFields.js";
 import { cutoffInstant, cutoffProblem, localCutoff, type LocalCutoff } from "./menu/cutoff.js";
 import {
   cutoffLabel,
   dishes as dishCount,
+  frozenNotice,
   longDay,
   people,
   peopleHave,
@@ -160,6 +162,31 @@ export function MenuScreen({ me, org }: ScreenProps) {
     void load();
   }, [load]);
 
+  /**
+   * Take the status the database just accepted, then reload.
+   *
+   * Not optimism: the write has already succeeded, and this is the only thing
+   * standing between it and a badge that goes on saying "Published" over a
+   * draft for as long as the reload takes. The day strip says the same word
+   * about the same day, so it moves too. `applied` is null when the write was
+   * refused, which still reloads: a refusal here usually means the day is no
+   * longer what this screen thinks it is.
+   */
+  const statusSettled = useCallback(
+    (applied: MenuStatus | null) => {
+      if (applied !== null) {
+        setMenu((m) => (m === null ? m : { ...m, status: applied }));
+        setCalendar((c) => {
+          const entry = c.get(serviceDate);
+          if (entry === undefined) return c;
+          return new Map(c).set(serviceDate, { ...entry, status: applied });
+        });
+      }
+      void load();
+    },
+    [load, serviceDate],
+  );
+
   // Moves with the service date at once, rather than waiting for that day's
   // load to land, so the sentence under Publish is never briefly about the day
   // that was on screen a moment ago.
@@ -170,6 +197,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const status: MenuStatus | null = menu?.status ?? null;
   const frozen = readOnlyReason(status);
+  const frozenSentence = status === null ? null : frozenNotice(status);
 
   const cutoffAt = useMemo(
     () => cutoffInstant(cutoff, org.timezone),
@@ -332,21 +360,34 @@ export function MenuScreen({ me, org }: ScreenProps) {
           onChange={(next) => setCutoff({ ...next, pinned: true })}
         />
 
-        {status !== null && (
-          <Badge
-            variant={
-              status === "published"
-                ? "success"
-                : status === "draft"
-                  ? "accent"
-                  : status === "locked"
-                    ? "neutral"
-                    : "danger"
-            }
-            className="mb-3"
-          >
-            {statusWord(status)}
-          </Badge>
+        {/* The status and the controls that change it, together: the status is
+            already described here beside the date and the cutoff, and an action
+            that changes it belongs with the thing it changes. */}
+        {status !== null && menu !== null && (
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Badge
+              variant={
+                status === "published"
+                  ? "success"
+                  : status === "draft"
+                    ? "accent"
+                    : status === "locked"
+                      ? "neutral"
+                      : "danger"
+              }
+            >
+              {statusWord(status)}
+            </Badge>
+            <StatusActions
+              status={status}
+              menuId={menu.id}
+              serviceDate={serviceDate}
+              orders={impact?.orders ?? null}
+              cutoffAt={menu.orderCutoffAt}
+              timeZone={org.timezone}
+              onSettled={statusSettled}
+            />
+          </div>
         )}
       </div>
 
@@ -485,9 +526,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
             Dishes and prices
           </h2>
 
-          {frozen !== null && (
-            <Notice level="info">{`${frozen}. Dishes and prices can no longer be changed.`}</Notice>
-          )}
+          {frozenSentence !== null && <Notice level="info">{frozenSentence}</Notice>}
 
           {frozen === null && status === "draft" && (
             <Notice level="info">
