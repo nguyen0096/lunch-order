@@ -24,6 +24,8 @@ import {
   type DishRow,
 } from "./menu/DishRows.js";
 import { PublishDialog } from "./menu/PublishDialog.js";
+import { CutoffFields } from "./menu/CutoffFields.js";
+import { cutoffInstant, cutoffProblem, localCutoff, type LocalCutoff } from "./menu/cutoff.js";
 import {
   cutoffLabel,
   dishes as dishCount,
@@ -37,7 +39,7 @@ import {
 import type { ScreenProps } from "./screenProps.js";
 import { parseMenu, type ParsedMenu } from "../../shared/menuParser.js";
 import { publishDisabledReason } from "../../shared/gating.js";
-import { addDays, isoWeekday, todayIn, zonedTimeToInstant } from "../../shared/dates.js";
+import { addDays, isoWeekday, todayIn } from "../../shared/dates.js";
 import { now as appNow } from "../../shared/clock.js";
 import type { MenuStatus } from "../../shared/types.js";
 
@@ -63,6 +65,18 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
 
   const [serviceDate, setServiceDate] = useState(() => nextServiceDay(today));
+
+  // The evening before at the org's own time, until either the day's stored
+  // menu says otherwise or the admin does. `pinned` records the admin's hand:
+  // without it, picking another service date would silently keep a cutoff that
+  // belongs to the day they just left.
+  const defaultCutoffTime = org.defaultCutoffLocalTime.slice(0, 5);
+  const [cutoff, setCutoff] = useState<LocalCutoff & { pinned: boolean }>(() => ({
+    date: addDays(nextServiceDay(today), -1),
+    time: defaultCutoffTime,
+    pinned: false,
+  }));
+
   const [menu, setMenu] = useState<EditableMenu | null>(null);
   const [impact, setImpact] = useState<PublishImpact | null>(null);
   const [calendar, setCalendar] = useState<Map<string, { status: string; dishes: number }>>(
@@ -101,6 +115,18 @@ export function MenuScreen({ me, org }: ScreenProps) {
       setText((current) => (current === loadedText.current ? incoming : current));
       loadedText.current = incoming;
 
+      // The menu's STORED cutoff, never a default derived a second time:
+      // re-deriving it would move, on the next republish, a cutoff nobody
+      // touched. A day with no menu falls back to the evening before, which is
+      // also what drops a pin left over from a day the admin did set by hand.
+      setCutoff((c) => {
+        if (editable !== null) {
+          return { ...localCutoff(editable.orderCutoffAt, org.timezone), pinned: false };
+        }
+        const evening = addDays(serviceDate, -1);
+        return c.pinned || c.date === evening ? c : { ...c, date: evening };
+      });
+
       setMenu(editable);
       setCalendar(cal);
       setImpact(next);
@@ -115,25 +141,35 @@ export function MenuScreen({ me, org }: ScreenProps) {
     } finally {
       setLoading(false);
     }
-  }, [org.id, org.currency, serviceDate, today]);
+  }, [org.id, org.currency, org.timezone, serviceDate, today]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
+  // Moves with the service date at once, rather than waiting for that day's
+  // load to land, so the sentence under Publish is never briefly about the day
+  // that was on screen a moment ago.
+  useEffect(() => {
+    const evening = addDays(serviceDate, -1);
+    setCutoff((c) => (c.pinned || c.date === evening ? c : { ...c, date: evening }));
+  }, [serviceDate]);
+
   const status: MenuStatus | null = menu?.status ?? null;
   const frozen = readOnlyReason(status);
 
   const cutoffAt = useMemo(
-    () =>
-      menu?.orderCutoffAt ??
-      zonedTimeToInstant(
-        addDays(serviceDate, -1),
-        org.defaultCutoffLocalTime.slice(0, 5),
-        org.timezone,
-      ).toISOString(),
-    [menu, serviceDate, org.defaultCutoffLocalTime, org.timezone],
+    () => cutoffInstant(cutoff, org.timezone),
+    [cutoff, org.timezone],
   );
+
+  const cutoffIssue = cutoffProblem({
+    cutoff,
+    serviceDate,
+    storedAt: menu?.orderCutoffAt ?? null,
+    timeZone: org.timezone,
+    now: appNow(),
+  });
 
   /* ------------------------------------------------------------- mutations */
 
@@ -239,7 +275,8 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const publishReason =
     frozen ??
     publishDisabledReason(drafts, serviceDate) ??
-    (duplicate === null ? null : `Two rows are called "${duplicate}". Rename one`);
+    (duplicate === null ? null : `Two rows are called "${duplicate}". Rename one`) ??
+    cutoffIssue;
 
   const parseReason = frozen ?? (text.trim() === "" ? "Paste the caterer's message first" : null);
 
@@ -267,6 +304,17 @@ export function MenuScreen({ me, org }: ScreenProps) {
           />
         </div>
         <p className="pb-3 text-sm text-muted">{longDay(serviceDate)}</p>
+
+        {/* Beside the service date, because when orders close is one of the
+            things that describes the day, not a detail of publishing it. */}
+        <CutoffFields
+          value={cutoff}
+          label={cutoffLabel(cutoffAt, org.timezone)}
+          problem={cutoffIssue}
+          readOnlyReason={frozen}
+          onChange={(next) => setCutoff({ ...next, pinned: true })}
+        />
+
         {status !== null && (
           <Badge
             variant={

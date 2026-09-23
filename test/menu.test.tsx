@@ -1,11 +1,11 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { MenuScreen } from "../src/web/components/MenuScreen.js";
 import * as api from "../src/web/api.js";
 import type { EditableMenu, PublishImpact } from "../src/web/api.js";
-import { shortDay } from "../src/web/components/menu/labels.js";
-import { addDays, isoWeekday, todayIn } from "../src/shared/dates.js";
+import { cutoffLabel, longDay, shortDay } from "../src/web/components/menu/labels.js";
+import { addDays, isoWeekday, todayIn, zonedTimeToInstant } from "../src/shared/dates.js";
 import type { Me, Org } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -111,6 +111,23 @@ async function ready() {
 }
 
 const publishButton = () => screen.getByRole("button", { name: "Publish" });
+const cutoffDate = () => screen.getByLabelText("Orders close");
+const cutoffTime = () => screen.getByLabelText("Orders close at");
+
+/**
+ * Date and time inputs take a value, not keystrokes: `userEvent.type` drives a
+ * browser's segmented editor, which jsdom does not implement.
+ */
+function set(field: HTMLElement, value: string) {
+  fireEvent.change(field, { target: { value } });
+}
+
+/** The next working day after `from`, which is where the day strip goes next. */
+function workingDayAfter(from: string): string {
+  let day = addDays(from, 1);
+  while (isoWeekday(day) > 5) day = addDays(day, 1);
+  return day;
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -373,6 +390,160 @@ describe("Changing the service date", () => {
     expect(screen.getByLabelText("Service date")).toHaveValue(other);
     // The pasted message is the one thing on this screen a click cannot recreate.
     expect(screen.getByLabelText("The caterer\u2019s message")).toHaveValue(MESSAGE);
+  });
+});
+
+/* ---------------------------------------------------------------- cutoff */
+
+describe("When orders close", () => {
+  it("defaults to the evening before at the org's own time, and says so in words", async () => {
+    serve();
+    renderMenu();
+    await ready();
+
+    expect(cutoffDate()).toHaveValue(addDays(DATE, -1));
+    expect(cutoffTime()).toHaveValue("21:00");
+
+    const expected = cutoffLabel(
+      zonedTimeToInstant(addDays(DATE, -1), "21:00", TZ).toISOString(),
+      TZ,
+    );
+    expect(screen.getByText(`Orders close ${expected}.`)).toBeInTheDocument();
+  });
+
+  it("follows the service date to the evening before that day", async () => {
+    const user = userEvent.setup();
+    serve();
+    renderMenu();
+    await ready();
+
+    const other = workingDayAfter(DATE);
+    await user.click(screen.getByRole("button", { name: `${shortDay(other)}, no menu` }));
+
+    await waitFor(() => expect(screen.getByLabelText("Service date")).toHaveValue(other));
+    expect(cutoffDate()).toHaveValue(addDays(other, -1));
+  });
+
+  it("leaves a cutoff the admin set alone when the service date moves", async () => {
+    const user = userEvent.setup();
+    serve();
+    renderMenu();
+    await ready();
+
+    // The morning of, rather than the evening before: a deliberate choice, and
+    // still earlier than either service date, so nothing else objects to it.
+    set(cutoffDate(), DATE);
+
+    // Held open, so the two things that could move the cutoff are separated:
+    // the change of date, and then the new day's load landing on no menu.
+    let landed: (menu: EditableMenu | null) => void = () => {};
+    fetchMenuEditor.mockReturnValueOnce(new Promise((resolve) => { landed = resolve; }));
+
+    // Two days on, not one: the evening before the very next day IS the pinned
+    // date, and a test that cannot tell the two apart proves nothing.
+    const other = workingDayAfter(workingDayAfter(DATE));
+    await user.click(screen.getByRole("button", { name: `${shortDay(other)}, no menu` }));
+
+    expect(screen.getByLabelText("Service date")).toHaveValue(other);
+    expect(cutoffDate()).toHaveValue(DATE);
+
+    landed(null);
+    await ready();
+    expect(cutoffDate()).toHaveValue(DATE);
+    expect(publishMenu).not.toHaveBeenCalled();
+  });
+
+  it("loads an existing menu's stored cutoff rather than deriving one", async () => {
+    const user = userEvent.setup();
+    // 09:00 on the service day itself, which no default would produce.
+    const stored = new Date(`${DATE}T02:00:00Z`).toISOString();
+    serve({ menu: menu({ orderCutoffAt: stored }) });
+    renderMenu();
+    await ready();
+
+    expect(cutoffDate()).toHaveValue(DATE);
+    expect(cutoffTime()).toHaveValue("09:00");
+
+    // And republishing without touching it must not move it.
+    await user.click(publishButton());
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }),
+    );
+
+    await waitFor(() => expect(publishMenu).toHaveBeenCalledTimes(1));
+    expect(publishMenu.mock.calls[0]?.[0].cutoffAt).toBe(stored);
+  });
+
+  it("publishes the cutoff the admin typed", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    set(cutoffDate(), addDays(DATE, -1));
+    set(cutoffTime(), "12:00");
+
+    expect(screen.getByText(/^Orders close 12:00 /)).toBeInTheDocument();
+
+    await user.click(publishButton());
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Publish" }),
+    );
+
+    await waitFor(() => expect(publishMenu).toHaveBeenCalledTimes(1));
+    expect(publishMenu.mock.calls[0]?.[0].cutoffAt).toBe(
+      zonedTimeToInstant(addDays(DATE, -1), "12:00", TZ).toISOString(),
+    );
+  });
+
+  it("refuses a cutoff after the meal, which nothing else would refuse", async () => {
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    set(cutoffDate(), addDays(DATE, 1));
+
+    expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText(
+        `Orders would close after lunch on ${longDay(DATE)}. Move the cutoff earlier`,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("refuses a cutoff already in the past, which only an admin could order past", async () => {
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    set(cutoffDate(), addDays(TODAY, -1));
+
+    expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText("That cutoff has already passed. Nobody but an admin could order").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not call a stored cutoff that has simply elapsed a mistake", async () => {
+    // Correcting a price after ordering closed goes through this same Publish.
+    const elapsed = new Date(Date.now() - 3_600_000).toISOString();
+    serve({ menu: menu({ status: "published", orderCutoffAt: elapsed }) });
+    renderMenu();
+    await ready();
+
+    expect(publishButton()).not.toHaveAttribute("aria-disabled");
+    expect(
+      screen.queryByText("That cutoff has already passed. Nobody but an admin could order"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows a frozen menu's cutoff as words, with no box to change it in", async () => {
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    expect(screen.queryByLabelText("Orders close")).not.toBeInTheDocument();
+    expect(screen.getByText("Orders closed")).toBeInTheDocument();
   });
 });
 
