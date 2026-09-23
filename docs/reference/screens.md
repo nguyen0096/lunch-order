@@ -158,6 +158,12 @@ Two parse paths: the offline regex parser, which is free, instant and usually
 right, and "Read with AI", which calls `parse-assist`. Nothing is written until
 Publish, and a human sets every price that reaches a bill.
 
+When orders close sits beside the service date, as a date and a time in the
+office's zone. It defaults to the evening before at the org's default cutoff and
+follows the service date until the admin sets it themselves; opening an existing
+menu loads that menu's stored cutoff, so republishing to fix a price never moves
+it silently. The default itself is set once in Settings.
+
 Publishing is the highest-consequence action in the app, so it confirms, naming
 the date and how many people it will notify.
 
@@ -168,6 +174,7 @@ the date and how many people it will notify.
 | published | editable with a warning that orders exist |
 | locked | read only, with the reason: orders have gone to the caterer |
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |
+| cutoff after the meal, or being moved into the past | Publish unavailable, carrying the reason. The database refuses neither |
 
 ## People (admin)
 
