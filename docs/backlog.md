@@ -6,6 +6,35 @@ nobody re-derives it. Ordered by when they were raised, not by priority.
 Everything here waits until the app is in daily use and the known defects are
 closed.
 
+## Cancelling lunch does not cancel the charge
+
+**Decide what "cancelled" is supposed to mean, then make it mean that.**
+
+Reproduced against production. A published menu with one 45.000 order bills
+45.000. Set the menu to `cancelled` and re-run billing: the order is still
+`placed`, `v_order_charges` still returns 45.000, and the week still totals
+45.000.
+
+That is what the schema says, consistently: `v_order_charges` selects from
+`orders` with no join to `menus` and no status predicate, `run_billing` filters
+only on `order_status` and the date window, and no trigger on `menus` touches
+orders. So this is a gap in the design rather than a broken implementation.
+
+It matters because an admin pressing **Cancel lunch** is telling people lunch is
+off, and will reasonably assume nobody pays for it. Today they still do. The
+Menu screen now says so in the confirmation rather than pretending otherwise,
+which is honest but is not an answer.
+
+Three possible meanings, and they are genuinely different products:
+
+- *The caterer did not deliver.* Nobody is charged, so cancelling should void
+  the orders -- and it must refuse once a week is closed, like every other
+  retroactive change.
+- *The day was recorded by mistake.* Same outcome, different audit trail: the
+  orders should be retracted rather than voided.
+- *Lunch happened but is not on this menu.* Nothing should change, which is
+  today's behaviour and probably not what the word means to anybody.
+
 ## Known defect: a skipped week strands its debt
 
 **Not a presentation problem. The bill can understate what somebody owes.**
