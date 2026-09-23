@@ -8,6 +8,7 @@ import { BillScreen } from "./components/BillScreen.js";
 import { BoardScreen } from "./components/BoardScreen.js";
 import { ComingSoon } from "./components/ComingSoon.js";
 import { MenuScreen } from "./components/MenuScreen.js";
+import { PaymentsScreen } from "./components/PaymentsScreen.js";
 import { PeopleScreen } from "./components/PeopleScreen.js";
 import { SettingsScreen } from "./components/SettingsScreen.js";
 import { JoinScreen } from "./components/JoinScreen.js";
@@ -123,7 +124,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
   if (page === "bill") return <BillScreen {...props} />;
   if (page === "settings") return <SettingsScreen {...props} />;
 
-  if (page === "menu" || page === "people") {
+  if (page === "menu" || page === "people" || page === "payments") {
     // The database refuses admin writes regardless of role, but a member who
     // follows an admin link deserves an explanation rather than a dead page.
     if (!isAdmin(active.role)) {
@@ -133,7 +134,9 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
         </ComingSoon>
       );
     }
-    return page === "menu" ? <MenuScreen {...props} /> : <PeopleScreen {...props} />;
+    if (page === "menu") return <MenuScreen {...props} />;
+    if (page === "payments") return <PaymentsScreen {...props} />;
+    return <PeopleScreen {...props} />;
   }
 
   // Never render an empty main: an unknown route is a wrong link, not a reason

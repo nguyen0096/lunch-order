@@ -66,12 +66,14 @@ describe("AppShell navigation", () => {
     expect(links("Bill")).toHaveLength(2);
     expect(links("Menu")).toHaveLength(0);
     expect(links("People")).toHaveLength(0);
+    expect(links("Payments")).toHaveLength(0);
   });
 
   it("adds the admin chores under their own heading, not into the same list", () => {
     shell("admin");
     expect(links("Menu")).toHaveLength(2);
     expect(links("People")).toHaveLength(2);
+    expect(links("Payments")).toHaveLength(2);
     expect(screen.getByText("Admin")).toBeInTheDocument();
   });
 

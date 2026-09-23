@@ -2,6 +2,7 @@ import { useState, type ReactNode } from "react";
 import {
   CalendarDaysIcon,
   CheckIcon,
+  BanknoteIcon,
   ChefHatIcon,
   ChevronsUpDownIcon,
   LogOutIcon,
@@ -21,7 +22,7 @@ import {
 import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
 
-export type Page = "board" | "bill" | "menu" | "people" | "settings";
+export type Page = "board" | "bill" | "menu" | "people" | "payments" | "settings";
 
 /** One membership as the chrome needs it: which office, and what you are in it. */
 export type Office = { org: Org; role: Role };
@@ -36,6 +37,7 @@ const MEMBER: Destination[] = [
 const ADMIN: Destination[] = [
   { page: "menu", label: "Menu", icon: <ChefHatIcon /> },
   { page: "people", label: "People", icon: <UsersIcon /> },
+  { page: "payments", label: "Payments", icon: <BanknoteIcon /> },
 ];
 
 /**
@@ -196,7 +198,9 @@ export function AppShell({
  */
 export function switchTarget(page: string, role: Role): Page {
   if (page === "bill" || page === "settings") return page;
-  if ((page === "menu" || page === "people") && isAdmin(role)) return page;
+  if ((page === "menu" || page === "people" || page === "payments") && isAdmin(role)) {
+    return page;
+  }
   return "board";
 }
 
