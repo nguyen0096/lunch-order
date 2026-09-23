@@ -29,7 +29,12 @@ export type Me = {
 export type MenuItem = {
   id: number;
   name: string;
-  priceMinor: number;
+  /**
+   * Null when the caterer has not said yet, which is most of the week when
+   * they price on Saturday. An order for an unpriced dish is held out of the
+   * bill entirely rather than billed as zero, so this is never coalesced.
+   */
+  priceMinor: number | null;
   position: number;
   isAvailable: boolean;
 };

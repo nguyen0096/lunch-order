@@ -10,7 +10,8 @@ import type { MenuStatus } from "../../shared/types.js";
 /* ------------------------------------------------------- admin: publishing */
 
 /** `id` is the menu_items row this stands for; absent means a dish being added. */
-export type DraftDish = { id?: number; name: string; priceMinor: number };
+/** `priceMinor` null means the caterer has not priced it yet. */
+export type DraftDish = { id?: number; name: string; priceMinor: number | null };
 
 export type PublishResult = {
   menuId: number;
@@ -158,7 +159,7 @@ export type EditableMenu = {
   /** The caterer's message as pasted, so re-opening a day shows its evidence. */
   sourceText: string;
   orderCutoffAt: string;
-  items: Array<{ id: number; name: string; priceMinor: number; position: number }>;
+  items: Array<{ id: number; name: string; priceMinor: number | null; position: number }>;
 };
 
 /** `fetchMenuForEdit` in the shape the editor works in, dishes in display order. */

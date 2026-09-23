@@ -11,7 +11,7 @@ import {
 } from "@/ui";
 import type { BoardCell, BoardDay, TransferRow } from "../api.js";
 import { cutoffLabel } from "./boardModel.js";
-import { formatMoney } from "../../shared/money.js";
+import { formatPrice } from "../../shared/money.js";
 import { formatDay } from "../../shared/dates.js";
 import type { Org } from "../../shared/types.js";
 
@@ -90,7 +90,7 @@ export function DishDialog(props: DishDialogProps) {
               >
                 <span className="truncate font-medium">{dish.name}</span>
                 <span className="tabular text-sm text-muted">
-                  {formatMoney(dish.priceMinor, org.currency)}
+                  {formatPrice(dish.priceMinor, org.currency)}
                 </span>
               </Action>
             );

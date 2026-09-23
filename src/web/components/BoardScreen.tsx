@@ -47,7 +47,7 @@ import {
   type Mark,
 } from "./boardModel.js";
 import { now as appNow } from "../../shared/clock.js";
-import { formatMoney } from "../../shared/money.js";
+import { formatPrice } from "../../shared/money.js";
 import { addDays, formatDay, todayIn, weekStart } from "../../shared/dates.js";
 import { isAdmin, type Me, type MyOrder, type Org, type Role } from "../../shared/types.js";
 
@@ -823,7 +823,7 @@ function MenuPanel({ day, org, reason }: { day: BoardDay; org: Org; reason: stri
             >
               <span className="min-w-0 truncate font-medium">{dish.name}</span>
               <span className="shrink-0 text-sm text-muted tabular">
-                {formatMoney(dish.priceMinor, org.currency)}
+                {formatPrice(dish.priceMinor, org.currency)}
               </span>
             </li>
           ))}

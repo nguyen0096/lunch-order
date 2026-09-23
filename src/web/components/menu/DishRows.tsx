@@ -47,10 +47,12 @@ export function blankRow(): DishRow {
 
 /** A dish already on the menu. It carries its id, so publishing updates in place. */
 export function rowFromMenu(
-  item: { id: number; name: string; priceMinor: number },
+  item: { id: number; name: string; priceMinor: number | null },
   c: Currency,
 ): DishRow {
-  const price = formatAmount(item.priceMinor, c);
+  // An empty box is how "the caterer has not said" looks in a text field, and
+  // it is the same shape a brand new row arrives in.
+  const price = item.priceMinor === null ? "" : formatAmount(item.priceMinor, c);
   return { key: nextKey(), id: item.id, name: item.name, price, source: null, seeded: [], seededPrice: price };
 }
 
@@ -178,10 +180,16 @@ export function flagsFor(row: DishRow, rows: DishRow[], c: Currency): Flag[] {
 export function toDrafts(rows: DishRow[]): DraftDish[] {
   return rows.map((r) => {
     const read = reading(r);
+    // Three states, not two. Empty means the caterer has not priced it and the
+    // menu publishes anyway; unreadable means somebody typed something that is
+    // not money, which NaN carries into publishDisabledReason; otherwise the
+    // number. Collapsing the first two would either block a whole week on a
+    // price nobody has, or let "abc" reach a bill as zero.
+    const blank = r.price.trim() === "";
     return {
       id: r.id ?? undefined,
       name: r.name.trim(),
-      priceMinor: read === null ? Number.NaN : read.minor,
+      priceMinor: blank ? null : read === null ? Number.NaN : read.minor,
     };
   });
 }

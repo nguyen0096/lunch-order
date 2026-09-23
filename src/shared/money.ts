@@ -8,6 +8,19 @@ export type Currency = { code: string; minorUnits: number; locale: string };
 export const VND: Currency = { code: "VND", minorUnits: 0, locale: "vi-VN" };
 
 /** 45000 -> "45.000 ₫" for vi-VN. */
+/** How a dish the caterer has not priced yet reads, everywhere it is shown. */
+export const PRICE_PENDING = "Price to come";
+
+/**
+ * A price, or the fact that there is not one yet.
+ *
+ * Never `formatMoney(x ?? 0)`: zero is a real price and on a bill it reads as
+ * a free meal, which is the mistake this whole feature exists to stop.
+ */
+export function formatPrice(minor: number | null, c: Currency): string {
+  return minor === null ? PRICE_PENDING : formatMoney(minor, c);
+}
+
 export function formatMoney(minor: number, c: Currency): string {
   assertMinor(minor);
   return new Intl.NumberFormat(c.locale, {

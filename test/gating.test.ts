@@ -197,12 +197,17 @@ describe("publishDisabledReason", () => {
   });
 
   it("requires integer, non-negative prices", () => {
-    expect(publishDisabledReason([{ name: "A", priceMinor: 45_000.5 }], "2026-09-23")).toBe(
-      "Every dish needs a valid price",
-    );
-    expect(publishDisabledReason([{ name: "A", priceMinor: -1 }], "2026-09-23")).toBe(
-      "Every dish needs a valid price",
-    );
+    const reason = "A price must be a whole number of dong, or left for the caterer";
+    expect(publishDisabledReason([{ name: "A", priceMinor: 45_000.5 }], "2026-09-23")).toBe(reason);
+    expect(publishDisabledReason([{ name: "A", priceMinor: -1 }], "2026-09-23")).toBe(reason);
+    // Typed, and not money. Distinct from "nobody has priced it", below.
+    expect(publishDisabledReason([{ name: "A", priceMinor: Number.NaN }], "2026-09-23")).toBe(reason);
+  });
+
+  it("publishes a dish the caterer has not priced yet", () => {
+    // The caterer prices at the weekend. Demanding a number here forced admins
+    // to invent one, and 0 reads on a bill as a free meal.
+    expect(publishDisabledReason([{ name: "A", priceMinor: null }], "2026-09-23")).toBeNull();
   });
 
   it("allows a free dish", () => {

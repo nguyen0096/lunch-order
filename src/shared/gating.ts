@@ -70,16 +70,30 @@ export function notices(menu: Menu | null, order: MyOrder | null, now: Date): No
   return out;
 }
 
-/** Null when the admin can publish; otherwise why not. */
+/**
+ * Null when the admin can publish; otherwise why not.
+ *
+ * A missing price is not a reason. The caterer often prices the week at the
+ * weekend, so demanding a number here forced admins to invent one, and `0` is a
+ * real price that reads on a bill as a free meal. An unpriced dish publishes,
+ * people order it, and it is held out of billing until the price arrives.
+ *
+ * A price that is present and nonsense is still refused: `null` means "not
+ * said yet", and that is the only absence this accepts.
+ */
 export function publishDisabledReason(
-  items: Array<{ name: string; priceMinor: number }>,
+  items: Array<{ name: string; priceMinor: number | null }>,
   serviceDate: string | null,
 ): string | null {
   if (serviceDate === null) return "Pick the service date first";
   if (items.length === 0) return "Add at least one dish";
   if (items.some((i) => i.name.trim() === "")) return "Every dish needs a name";
-  if (items.some((i) => !Number.isInteger(i.priceMinor) || i.priceMinor < 0)) {
-    return "Every dish needs a valid price";
+  if (
+    items.some(
+      (i) => i.priceMinor !== null && (!Number.isInteger(i.priceMinor) || i.priceMinor < 0),
+    )
+  ) {
+    return "A price must be a whole number of dong, or left for the caterer";
   }
   return null;
 }

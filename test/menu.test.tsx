@@ -328,9 +328,24 @@ describe("Checking the list", () => {
     renderMenu();
     await ready();
 
+    // Typed and unreadable, which is a mistake. Clearing the box is not: that
+    // is how an unpriced dish looks, and it publishes (see the test below).
     await user.clear(screen.getByLabelText("Price of Cơm gà"));
+    await user.type(screen.getByLabelText("Price of Cơm gà"), "abc");
     expect(publishButton()).toHaveAttribute("aria-disabled", "true");
-    expect(screen.getAllByText("Every dish needs a valid price").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("A price must be a whole number of dong, or left for the caterer").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("publishes a dish the caterer has not priced yet", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    renderMenu();
+    await ready();
+
+    await user.clear(screen.getByLabelText("Price of Cơm gà"));
+    expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
   });
 
   it("blocks Publish, with the reason, when two rows share a name", async () => {

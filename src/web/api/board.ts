@@ -139,7 +139,8 @@ export type BoardDay = {
   menuId: number | null;
   status: Menu["status"] | null;
   orderCutoffAt: string | null;
-  dishes: Array<{ id: number; name: string; priceMinor: number }>;
+  /** `priceMinor` is null until the caterer says; never coalesce it to 0. */
+  dishes: Array<{ id: number; name: string; priceMinor: number | null }>;
 };
 
 export type BoardCell = {

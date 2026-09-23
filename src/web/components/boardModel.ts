@@ -10,7 +10,7 @@
 import type { BoardCell, BoardDay } from "../api.js";
 import { formatDay, isoWeekday } from "../../shared/dates.js";
 
-export type Dish = { id: number; name: string; priceMinor: number };
+export type Dish = { id: number; name: string; priceMinor: number | null };
 
 /**
  * Which days get a column.
