@@ -6,6 +6,67 @@ nobody re-derives it. Ordered by when they were raised, not by priority.
 Everything here waits until the app is in daily use and the known defects are
 closed.
 
+## Known defect: a skipped week strands its debt
+
+**Not a presentation problem. The bill can understate what somebody owes.**
+
+`run_billing` step 3 builds statements `from billing_lines ... group by
+payer_profile_id`, so a statement exists only for a week you ate in.
+Carry-forward then reads the immediately preceding period, finds no statement
+for you, and rolls forward nothing.
+
+Reproduced against production in a rolled-back transaction. One member eats in
+week 1 (45.000, unpaid), eats nothing in week 2, eats in week 3 (50.000):
+
+| | result |
+| --- | --- |
+| week 2 statement | none created |
+| week 3 `carried_in_minor` | 0, not 45.000 |
+| week 3 `total_due_minor` | 50.000, not 95.000 |
+| actually outstanding | 140.000 |
+
+So no single statement is the truth, which is why people end up paying week by
+week. Summing the unsettled ones is *also* wrong: it double-counts every week
+where carry-forward did work, and it does work whenever somebody eats in
+consecutive weeks.
+
+The fix is in the database, not the screen: carry an unpaid remainder into the
+next period whether or not the person ate, which restores the invariant the Bill
+screen already assumes -- that the newest statement carries everything. The
+`delete` that prunes zero-line statements has to learn the same exception.
+
+Only then does the screen work follow: one outstanding total at the top with one
+QR, amount and reference, and the weeks below as history with per-week status,
+each saying whether its remainder was rolled into the total above rather than
+offering itself as separately payable.
+
+Two smaller things on the same screen:
+
+- A copy button for the **amount**, digits only with no currency glyph, because
+  that is what gets pasted into a banking app's amount field. The reference
+  already has one.
+- `BillScreen`'s block comment claims it leads with "the oldest thing still
+  unsettled" while the code takes the newest. The code is right.
+
+## Paying in advance
+
+Somebody wants to top up before they have eaten.
+
+The schema is most of the way there and it is worth not inventing a second
+mechanism: `carried_in_minor` has **no non-negative constraint**,
+`total_due_minor` is generated as `meals_minor + carried_in_minor`, and
+`outstandingMinor` in `api/billing.ts` already clamps at zero. So credit is
+simply a negative carry-forward -- money rolls into next week exactly the way
+debt does, with no new table and no second sum to keep consistent.
+
+What is missing is a way to record money that arrives against no statement,
+which is the same webhook the SePay entry needs. Do them together or the credit
+has no way in.
+
+Decide one thing first: whether a credit is refundable. "Roll it forward
+forever" and "give it back when somebody leaves" are different products, and the
+second needs a payout path this app has never had.
+
 ## SePay: prove a payment arrived
 
 Two halves, and the first is mostly done.
