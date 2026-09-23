@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { App } from "../src/web/App.js";
-import { CreateOfficeDialog } from "../src/web/components/AppShell.js";
+import { CreateOfficeDialog } from "../src/web/components/CreateOfficeDialog.js";
 import { NoOfficeScreen } from "../src/web/components/SignInScreen.js";
 import * as api from "../src/web/api.js";
 import { officeProblem, suggestSlug } from "../src/web/api.js";

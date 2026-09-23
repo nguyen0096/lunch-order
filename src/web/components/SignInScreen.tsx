@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/ui";
-import { CreateOfficeDialog } from "./AppShell.js";
+import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
 import type { Org } from "../../shared/types.js";
 
 // The texture, not a menu: nothing is readable from the sign-in page before
