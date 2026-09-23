@@ -28,7 +28,8 @@ insert into expected (name, anon_may) values
   -- whether this particular signed-in browser gets an answer.
   ('settle_period',       false),
   ('leave_office',        false),
-  ('delete_office',       false);
+  ('delete_office',       false),
+  ('ensure_period',       false);
 
 create temp table found as
 select p.proname::text as name,
