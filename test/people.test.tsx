@@ -371,27 +371,32 @@ describe("People, the role rules", () => {
     expect(makeMember).toHaveAttribute("aria-disabled", "true");
     // Still focusable and hoverable, which is the point of aria-disabled here.
     expect(makeMember).not.toBeDisabled();
+    // One, not two: this viewer is an admin, so `Make owner` is not offered on
+    // any row at all, own row included. The reason belongs to each control
+    // that IS offered.
     expect(
       within(mine).getAllByText("You cannot change your own role. Ask another admin or the owner."),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
 
     await userEvent.click(makeMember);
     expect(updateMembership).not.toHaveBeenCalled();
   });
 
-  it("will not let an admin appoint an owner, and says so on the control", async () => {
+  it("does not offer an admin a control only an owner could ever use", async () => {
     serve();
     renderPeople("admin");
     await settled();
 
-    const makeOwner = control("Tèo", "Make owner");
-    expect(makeOwner).toHaveAttribute("aria-disabled", "true");
+    // Absent, not disabled. An admin cannot appoint an owner on any row, so a
+    // permanently dead button on every row is noise rather than an
+    // explanation. The row-dependent refusals below are still shown and still
+    // say why.
+    for (const name of ["Neyu", "Sếp", "Tèo", "Dinh"]) {
+      expect(within(memberRow(name)).queryByText("Make owner")).toBeNull();
+    }
     expect(
-      within(memberRow("Tèo")).getByText("Only an owner can appoint another owner."),
-    ).toBeInTheDocument();
-
-    await userEvent.click(makeOwner);
-    expect(updateMembership).not.toHaveBeenCalled();
+      screen.queryByText("Only an owner can appoint another owner."),
+    ).toBeNull();
   });
 
   it("will not let an admin stand the owner down, and says so on the control", async () => {

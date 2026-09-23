@@ -658,7 +658,15 @@ function MemberRow({
   onRole: (role: Role) => void;
   onStatus: (status: "active" | "inactive") => void;
 }) {
-  const others = ROLES.filter((r) => r !== member.role);
+  // Two different kinds of "you cannot do that", and they want different
+  // treatment. Whether you may stand THIS person down depends on the row --
+  // your own, or the owner's -- so the control stays and states its reason,
+  // because hiding it on some rows and not others reads as arbitrary.
+  // Appointing an owner depends on nothing but your own role: an admin can
+  // never do it, on any row, ever. That is not a disabled control, it is a
+  // control that is not theirs, and we already handle those by absence -- a
+  // member sees no Menu tab rather than a greyed one.
+  const others = ROLES.filter((r) => r !== member.role && (iAmOwner || r !== "owner"));
   const deactivating = member.status === "active";
 
   return (
@@ -728,6 +736,9 @@ function roleReason({
 }): string | null {
   if (member.isMe) return "You cannot change your own role. Ask another admin or the owner.";
   if (iAmOwner) return null;
+  // Unreachable from the row above, which no longer offers `owner` to a
+  // non-owner. Kept because this function is where the trigger's rules are
+  // written down, and the filter is an affordance, not the enforcement.
   if (target === "owner") return "Only an owner can appoint another owner.";
   if (member.role === "owner") return "Only an owner can stand down an owner.";
   return null;
