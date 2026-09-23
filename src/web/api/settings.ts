@@ -1,7 +1,7 @@
 /**
  * Things set once and forgotten: display name and the Telegram link, plus the
- * two org-wide settings an admin sets here -- where the money goes, and which
- * group chat the bot posts in.
+ * org-wide settings an admin sets here -- where the money goes, which group
+ * chat the bot posts in, and when ordering closes by default.
  */
 
 import { supabase } from "../supabase.js";
@@ -105,10 +105,12 @@ export type OrgSettings = {
   payment: PaymentConfig;
   /** Where the bot posts. Null means it has no group to post in. */
   telegramGroupChatId: number | null;
+  /** `HH:MM:SS`, the spelling a Postgres `time` column reads back as. */
+  defaultCutoffLocalTime: string;
 };
 
 /**
- * The two org-wide settings the Settings screen edits.
+ * The org-wide settings the Settings screen edits.
  *
  * Readable by any member -- organizations_select covers the whole row -- but
  * only ever asked for on the admin half of the screen, because a member has
@@ -117,21 +119,22 @@ export type OrgSettings = {
 export async function fetchOrgSettings(orgId: number): Promise<OrgSettings> {
   const { data, error } = await supabase
     .from("organizations")
-    .select("payment_config, telegram_group_chat_id")
+    .select("payment_config, telegram_group_chat_id, default_cutoff_local_time")
     .eq("id", orgId)
     .single();
   if (error) throw error;
   return {
     payment: parsePaymentConfig(data.payment_config),
     telegramGroupChatId: data.telegram_group_chat_id,
+    defaultCutoffLocalTime: data.default_cutoff_local_time,
   };
 }
 
 /**
  * An UPDATE that RLS declines to apply is not an error: PostgREST reports it
  * as zero rows affected, and a screen that does not look would report a save
- * that never happened. Both writers below ask for the row back and say so when
- * it does not come.
+ * that never happened. Every writer below asks for the row back and says so
+ * when it does not come.
  */
 async function updateOrg(orgId: number, patch: Record<string, unknown>): Promise<void> {
   const { data, error } = await supabase
@@ -166,4 +169,21 @@ export async function setTelegramGroupChatId(
   orgId: number, chatId: number | null,
 ): Promise<void> {
   await updateOrg(orgId, { telegram_group_chat_id: chatId });
+}
+
+/**
+ * The time a newly published menu closes at, in the office's own zone.
+ *
+ * Takes the `HH:MM:SS` the column reads back as, so what goes in and what comes
+ * back on the next read are the same string and "Nothing to save" can be
+ * decided without waiting for a refetch. The column is NOT NULL: no clearing.
+ *
+ * Only ever a starting point. `menus.order_cutoff_at` is fixed when a menu is
+ * published and is what the ordering trigger enforces, so a menu that is
+ * already out is untouched by a change here.
+ */
+export async function setDefaultCutoffLocalTime(
+  orgId: number, localTime: string,
+): Promise<void> {
+  await updateOrg(orgId, { default_cutoff_local_time: localTime });
 }

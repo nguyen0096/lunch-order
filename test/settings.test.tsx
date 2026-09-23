@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { SettingsScreen } from "../src/web/components/SettingsScreen.js";
@@ -26,6 +26,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchOrgSettings: vi.fn(),
     setPaymentConfig: vi.fn(),
     setTelegramGroupChatId: vi.fn(),
+    setDefaultCutoffLocalTime: vi.fn(),
   };
 });
 
@@ -38,6 +39,7 @@ const setDisplayName = vi.mocked(api.setDisplayName);
 const fetchOrgSettings = vi.mocked(api.fetchOrgSettings);
 const setPaymentConfig = vi.mocked(api.setPaymentConfig);
 const setTelegramGroupChatId = vi.mocked(api.setTelegramGroupChatId);
+const setDefaultCutoffLocalTime = vi.mocked(api.setDefaultCutoffLocalTime);
 const success = vi.mocked(toast.success);
 const failure = vi.mocked(toast.error);
 
@@ -82,6 +84,7 @@ beforeEach(() => {
   fetchOrgSettings.mockResolvedValue({
     payment: EMPTY_PAYMENT_CONFIG,
     telegramGroupChatId: null,
+    defaultCutoffLocalTime: "21:00:00",
   });
   setStandingOrder.mockResolvedValue(undefined);
   createTelegramLink.mockResolvedValue({ ...LINK });
@@ -89,6 +92,7 @@ beforeEach(() => {
   setDisplayName.mockResolvedValue(undefined);
   setPaymentConfig.mockResolvedValue(undefined);
   setTelegramGroupChatId.mockResolvedValue(undefined);
+  setDefaultCutoffLocalTime.mockResolvedValue(undefined);
 });
 
 /* ---------------------------------------------------- who sees what, and why */
@@ -103,6 +107,8 @@ describe("the two audiences", () => {
     // Not greyed out: absent. A member cannot read a refusal off a dead control.
     expect(screen.queryByRole("heading", { name: "Where the money goes" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Telegram group chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "When ordering closes" })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Default cutoff")).not.toBeInTheDocument();
     expect(fetchOrgSettings).not.toHaveBeenCalled();
 
     // And the absence is explained rather than silent.
@@ -122,6 +128,7 @@ describe("the two audiences", () => {
     await renderSettings("admin");
     expect(await screen.findByRole("heading", { name: "Where the money goes" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Telegram group chat" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "When ordering closes" })).toBeInTheDocument();
     expect(fetchOrgSettings).toHaveBeenCalledWith(7);
     expect(screen.queryByText(/set by an admin of/)).not.toBeInTheDocument();
   });
@@ -349,6 +356,7 @@ describe("the office's bank account", () => {
         note: null,
       },
       telegramGroupChatId: null,
+      defaultCutoffLocalTime: "21:00:00",
     });
     await renderSettings("admin");
     const money = card("Where the money goes");
@@ -401,6 +409,7 @@ describe("the group chat id", () => {
     fetchOrgSettings.mockResolvedValue({
       payment: EMPTY_PAYMENT_CONFIG,
       telegramGroupChatId: -1001234567890,
+      defaultCutoffLocalTime: "21:00:00",
     });
     await renderSettings("admin");
     const chat = card("Telegram group chat");
@@ -419,6 +428,105 @@ describe("the group chat id", () => {
       within(card("Telegram group chat")).getByRole("button", { name: "Save" }),
     ).toHaveAccessibleDescription("A chat id is a whole number, like -1001234567890");
     expect(setTelegramGroupChatId).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------ order cutoff */
+
+describe("the office's default cutoff", () => {
+  /**
+   * A native time input commits a whole `HH:MM` at once -- the OS wheel and the
+   * spinner both do -- and it refuses selection, so it is changed here the way
+   * the browser changes it rather than keystroke by keystroke.
+   */
+  function setCutoff(value: string): HTMLElement {
+    const field = screen.getByLabelText("Default cutoff");
+    fireEvent.change(field, { target: { value } });
+    return field;
+  }
+
+  const saveButton = () => within(card("When ordering closes")).getByRole("button", { name: "Save" });
+
+  it("opens on the time the column holds, with its seconds dropped", async () => {
+    fetchOrgSettings.mockResolvedValue({
+      payment: EMPTY_PAYMENT_CONFIG,
+      telegramGroupChatId: null,
+      defaultCutoffLocalTime: "16:00:00",
+    });
+    await renderSettings("admin");
+
+    // `time without time zone` reads back as HH:MM:SS; the control takes HH:MM.
+    expect(screen.getByLabelText("Default cutoff")).toHaveValue("16:00");
+    expect(saveButton()).toHaveAccessibleDescription("Nothing to save");
+  });
+
+  it("writes a changed time back in the column's own spelling", async () => {
+    await renderSettings("admin");
+    expect(screen.getByLabelText("Default cutoff")).toHaveValue("21:00");
+
+    setCutoff("16:30");
+    await userEvent.click(saveButton());
+
+    await waitFor(() => expect(setDefaultCutoffLocalTime).toHaveBeenCalledWith(7, "16:30:00"));
+    expect(success).toHaveBeenCalledWith("Saved");
+    // And the card now agrees with the database, without waiting for a refetch.
+    await waitFor(() => expect(saveButton()).toHaveAccessibleDescription("Nothing to save"));
+  });
+
+  it("will not save a blank cutoff, and says why on the control", async () => {
+    await renderSettings("admin");
+    setCutoff("");
+
+    expect(saveButton()).toHaveAccessibleDescription("A cutoff cannot be blank");
+    await userEvent.click(saveButton());
+    expect(setDefaultCutoffLocalTime).not.toHaveBeenCalled();
+  });
+
+  it("says a day closes the evening before, and follows the time being typed", async () => {
+    await renderSettings("admin");
+    const cutoff = card("When ordering closes");
+    expect(within(cutoff).getByText(/closes the evening before/)).toBeInTheDocument();
+    expect(within(cutoff).getByText("21:00 on Monday")).toBeInTheDocument();
+
+    setCutoff("16:30");
+    expect(within(cutoff).getByText("16:30 on Monday")).toBeInTheDocument();
+  });
+
+  it("warns that a menu already published does not move, and where that is done", async () => {
+    await renderSettings("admin");
+    const cutoff = card("When ordering closes");
+    expect(
+      within(cutoff).getByText(/does not move a menu that is already published/),
+    ).toBeInTheDocument();
+    expect(within(cutoff).getByText(/on the Menu screen/)).toBeInTheDocument();
+  });
+
+  it("names the timezone the time is read in, which is not set here", async () => {
+    await renderSettings("admin");
+    expect(
+      within(card("When ordering closes")).getByText(/Asia\/Ho_Chi_Minh/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a save RLS declined rather than looking like it worked", async () => {
+    // Zero rows affected is not an error: this is the sentence updateOrg throws
+    // in its place, and a demoted admin has to see it.
+    setDefaultCutoffLocalTime.mockRejectedValue(
+      new Error("That did not save. You need to be an admin of this office."),
+    );
+    await renderSettings("admin");
+    setCutoff("16:30");
+    await userEvent.click(saveButton());
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "That did not save. You need to be an admin of this office.",
+      ),
+    );
+    expect(success).not.toHaveBeenCalled();
+    // Still unsaved work, and the control still offers to save it.
+    expect(screen.getByLabelText("Default cutoff")).toHaveValue("16:30");
+    expect(saveButton()).not.toHaveAccessibleDescription();
   });
 });
 

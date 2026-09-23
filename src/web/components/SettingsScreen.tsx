@@ -4,6 +4,7 @@ import { Action, Badge, Button, EmptyState, Skeleton, cn, useAction } from "@/ui
 import { Section, TextField } from "./settings/Section.js";
 import { PaymentAccount } from "./settings/PaymentAccount.js";
 import { GroupChat } from "./settings/GroupChat.js";
+import { OrderCutoff } from "./settings/OrderCutoff.js";
 import type { ScreenProps } from "./screenProps.js";
 import {
   createTelegramLink,
@@ -43,7 +44,7 @@ type Loaded = {
  *
  * Yours is everything a member sets once and forgets: which days they eat by
  * default, how the bot reaches them, what the office calls them. Your office is
- * the admin's two org-wide settings, and a member does not see it at all --
+ * the admin's org-wide settings, and a member does not see it at all --
  * rather than seeing it greyed out, which is what made the People screen look
  * broken while it was working correctly. An absent section with a sentence
  * naming who does set it beats a row of controls nobody can explain.
@@ -108,7 +109,7 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         {heading}
-        <SettingsSkeleton count={admin ? 5 : 3} />
+        <SettingsSkeleton count={admin ? 6 : 3} />
       </div>
     );
   }
@@ -145,6 +146,12 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
           <h2 id="office" className="text-xs font-semibold text-subtle">
             Your office
           </h2>
+          <OrderCutoff
+            orgId={org.id}
+            timezone={org.timezone}
+            initial={data.office.defaultCutoffLocalTime}
+            onSaved={() => void load()}
+          />
           <PaymentAccount
             orgId={org.id}
             initial={data.office.payment}
@@ -158,7 +165,7 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
         </section>
       ) : (
         <p className="max-w-prose text-sm text-muted">
-          {`The bank account bills are paid into, and the group chat the bot posts in, are set by an admin of ${org.name}.`}
+          {`The time ordering closes, the bank account bills are paid into, and the group chat the bot posts in, are set by an admin of ${org.name}.`}
         </p>
       )}
     </div>

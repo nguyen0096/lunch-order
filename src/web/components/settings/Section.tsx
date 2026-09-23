@@ -38,6 +38,53 @@ export function Section({
 const INPUT =
   "h-11 w-full min-w-0 rounded-md border border-border bg-surface-raised px-3 text-base text-text placeholder:text-subtle";
 
+/**
+ * A time of day, in the browser's own time control.
+ *
+ * Native rather than three selects: it is already localised, already has a
+ * keyboard story, and on a phone it opens the OS time wheel. Its value is
+ * always `HH:MM` or empty -- a half-typed time never reaches the caller -- so
+ * the only state to handle beyond a valid time is blank.
+ */
+export function TimeField({
+  id,
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  hint?: ReactNode;
+  /** `HH:MM`, or "" for unset. */
+  value: string;
+  onChange: (next: string) => void;
+}) {
+  const hintId = hint ? `${id}-hint` : undefined;
+  return (
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium">
+        {label}
+      </label>
+      <input
+        id={id}
+        type="time"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-describedby={hintId}
+        // Capped rather than full width: a field that accepts five characters
+        // and stretches to 1440px reads as an unfinished layout.
+        className={cn(INPUT, "max-w-44")}
+      />
+      {hint && (
+        <p id={hintId} className="max-w-prose text-xs text-muted">
+          {hint}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function TextField({
   id,
   label,
