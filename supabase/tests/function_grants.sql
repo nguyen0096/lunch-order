@@ -22,7 +22,11 @@ create temp table expected (name text primary key, anon_may boolean);
 insert into expected (name, anon_may) values
   ('create_organization', false),
   ('accept_invitation',   false),
-  ('join_with_code',      false);
+  ('join_with_code',      false),
+  -- Admin-only, and it checks that itself rather than relying on this grant:
+  -- the grant says "a signed-in browser may call it", the function decides
+  -- whether this particular signed-in browser gets an answer.
+  ('settle_period',       false);
 
 create temp table found as
 select p.proname::text as name,
