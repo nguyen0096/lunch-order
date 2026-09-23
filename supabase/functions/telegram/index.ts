@@ -52,8 +52,11 @@ import {
 import {
   addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
   humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, normalizeJoinCode,
-  orderingClosedReason, orgHeading, parseCommand, renderDayText, renderNothingBilledText,
-  renderOfferText, renderStatementText, targetMenu, todayIn, vietQrLink, type Money,
+  NOTHING_TO_LEAVE, orderingClosedReason, orgHeading, parseCommand, renderDayText,
+  renderExitCancelledText, renderExitRefusedText, renderLeaveConfirmText, renderLeftText,
+  renderNothingBilledText, renderOfferText, renderStatementText, renderUnlinkConfirmText,
+  renderUnlinkedText, targetMenu, todayIn, vietQrLink,
+  type CallbackAction, type ExitKind, type Money,
 } from "../_shared/telegram.ts";
 import { formatMoney, type Currency } from "../_shared/money.ts";
 
@@ -65,6 +68,8 @@ const HELP = [
   "/order - the next menu, and order from it",
   "/cancel - cancel your next order",
   "/me - what you owe this week",
+  "/unlink - disconnect this chat, and stay a member",
+  "/leave - leave your office",
   "/help - this message",
 ].join("\n");
 
@@ -94,6 +99,8 @@ type Org = {
 
 type Link = {
   profileId: string;
+  /** telegram_links' own key, which is what /unlink clears. */
+  membershipId: number;
   /** profiles.full_name, not the per-org display name: join_with_code writes it. */
   fullName: string;
   isAdmin: boolean;
@@ -231,7 +238,13 @@ async function onMessage(message: Message): Promise<void> {
     if (pending !== null) return await onName(chatId, links, pending, text);
   }
 
-  if (links.length === 0) return await say(chatId, NOT_CONNECTED);
+  if (links.length === 0) {
+    // Somebody asking to be let out of a chat that is already out hears that
+    // it has happened, not "I don't know who you are yet", which reads as a
+    // refusal of the thing they asked for.
+    const exiting = command?.name === "leave" || command?.name === "unlink";
+    return await say(chatId, exiting ? NOTHING_TO_LEAVE : NOT_CONNECTED);
+  }
 
   switch (command?.name) {
     // "today" is the name this command shipped under and is deliberately absent
@@ -241,6 +254,8 @@ async function onMessage(message: Message): Promise<void> {
     case "today": return await onOrder(chatId, links);
     case "me": return await onMe(chatId, links);
     case "cancel": return await onCancel(chatId, links);
+    case "leave": return await onExitCommand(chatId, links, "leave");
+    case "unlink": return await onExitCommand(chatId, links, "unlink");
     case "start":
     case "help": {
       const name = escapeHtml(message.from?.first_name ?? "there");
@@ -334,10 +349,45 @@ async function onJoinCode(chatId: number, links: Link[], raw: string): Promise<v
       `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n${HELP}`);
   }
 
+  const returning = await dormantLink(chatId, org.id);
+  if (returning !== null) return await join(chatId, code, returning.profileId, returning.fullName);
+
   const known = soleProfile(links);
   if (known !== null) return await join(chatId, code, known.profileId, known.fullName);
 
   await sayPrompt(chatId, namePrompt(org.name, code));
+}
+
+/**
+ * The membership this chat already has in that office, now deactivated.
+ *
+ * What /leave promises: the same join code brings you back to the same
+ * membership, short code and history. It only holds if the bot recognises the
+ * person coming back, and linksForChat cannot -- it answers with active
+ * memberships, and theirs is not one. telegram_links still binds this chat to
+ * them, and join_with_code() reactivates the very membership that row points at.
+ *
+ * Without this they are signed up as a second, separate person, and
+ * join_with_code then refuses that with "This Telegram chat is already linked
+ * to somebody else", where somebody else is them.
+ *
+ * Read with the connection's own role for linksForChat's reason: an inactive
+ * membership resolves to nobody, so there is nobody to act as yet. It grants
+ * nothing -- join_with_code decides, and it hands back the lowest role whatever
+ * they were before, so a deactivation that removed authority is not undone here.
+ */
+async function dormantLink(
+  chatId: number, orgId: number,
+): Promise<{ profileId: string; fullName: string } | null> {
+  const [row] = await asSystem((tx) =>
+    tx<Array<{ profile_id: string; full_name: string }>>`
+      select m.profile_id, p.full_name
+        from public.telegram_links tl
+        join public.memberships m on m.id = tl.membership_id
+        join public.profiles p on p.id = m.profile_id
+       where tl.chat_id = ${chatId} and tl.org_id = ${orgId}`
+  );
+  return row ? { profileId: row.profile_id, fullName: row.full_name } : null;
 }
 
 /** Step two: the reply to that prompt, which is the first time a name exists. */
@@ -356,6 +406,12 @@ async function onName(
     return await say(chatId,
       `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n${HELP}`);
   }
+
+  // Asked again here for the reason the two checks above are: a step that
+  // decides who somebody is must decide it against the moment they answered,
+  // not the moment they were asked.
+  const returning = await dormantLink(chatId, org.id);
+  if (returning !== null) return await join(chatId, code, returning.profileId, returning.fullName);
 
   const known = soleProfile(links);
   if (known !== null) return await join(chatId, code, known.profileId, known.fullName);
@@ -840,6 +896,143 @@ async function onCancel(chatId: number, links: Link[]): Promise<void> {
   }
 }
 
+/* --------------------------------------------------------- /leave, /unlink */
+
+/**
+ * Both ways out, asked before either is taken.
+ *
+ * Neither command acts on the message that names it. A mistyped /leave that
+ * removed somebody from their office would be unrecoverable by them alone --
+ * a member who joined through Telegram has no web session to undo it with --
+ * so the message is a question, and the answer is a tap that onExitCallback
+ * re-checks against this chat's links and against RLS.
+ *
+ * One question per office, because a chat can belong to several and each has
+ * its own membership, its own bill and its own join code. The heading names
+ * which is being asked about whenever there is more than one.
+ */
+async function onExitCommand(chatId: number, links: Link[], kind: ExitKind): Promise<void> {
+  for (const link of links) {
+    const orgName = links.length > 1 ? link.org.name : null;
+
+    // Read as the member, so it is their own sight of their own office: the
+    // join code is the one way back and belongs in the question, not in a
+    // message they get only once the door has shut behind them.
+    const outcome = await attempt(() => asMember(link.profileId, (tx) => joinCodeOf(tx, link)));
+    if (!outcome.ok) {
+      await say(chatId, orgHeading(orgName) + escapeHtml(outcome.reason));
+      continue;
+    }
+
+    const message = { orgName, joinCode: outcome.value };
+    await say(
+      chatId,
+      kind === "leave" ? renderLeaveConfirmText(message) : renderUnlinkConfirmText(message),
+      [[
+        {
+          text: exitLabel(kind === "leave" ? "Leave" : "Disconnect", link, links.length > 1),
+          callback_data: encodeCallback(exitAction(kind, link.org.id, true)),
+        },
+        {
+          text: kind === "leave" ? "Stay" : "Keep connected",
+          callback_data: encodeCallback(exitAction(kind, link.org.id, false)),
+        },
+      ]],
+    );
+  }
+}
+
+function exitAction(kind: ExitKind, orgId: number, confirmed: boolean): CallbackAction {
+  return kind === "leave"
+    ? { kind: "leave", orgId, confirmed }
+    : { kind: "unlink", orgId, confirmed };
+}
+
+/**
+ * Button text, which Telegram renders literally: not HTML, so not escaped, and
+ * escaping it would print &amp; on the button of an office called A & B.
+ */
+function exitLabel(verb: string, link: Link, showOrgName: boolean): string {
+  if (!showOrgName) return verb;
+  const name = link.org.name;
+  return `${verb} ${name.length > 40 ? `${name.slice(0, 39)}…` : name}`;
+}
+
+/** The office's shared join code, read as the member: the way back in. */
+async function joinCodeOf(tx: Tx, link: Link): Promise<string | null> {
+  const [org] = await tx<Array<{ telegram_join_code: string | null }>>`
+    select o.telegram_join_code from public.organizations o where o.id = ${link.org.id}`;
+  return org?.telegram_join_code ?? null;
+}
+
+/**
+ * The tap, which is where either thing actually happens.
+ *
+ * leave_office() is called rather than reimplemented: it refuses for somebody
+ * who still owes money and for the only owner, in sentences written for people,
+ * and attempt() brings those back as they were written. Rewriting either rule
+ * here would be a second copy of it, and the copy would drift.
+ */
+async function onExitCallback(
+  cb: CallbackQuery, chatId: number, messageId: number,
+  link: Link, showOrgName: boolean,
+  action: { kind: ExitKind; confirmed: boolean },
+): Promise<void> {
+  const orgName = showOrgName ? link.org.name : null;
+
+  if (!action.confirmed) {
+    await answerCallbackQuery(BOT_TOKEN, cb.id, "Nothing changed.");
+    return await edit(chatId, messageId, renderExitCancelledText(orgName, action.kind));
+  }
+
+  const outcome = await attempt(() =>
+    asMember(link.profileId, async (tx) => {
+      // Before the write, not after: leaving deactivates the membership, and
+      // organizations_select then stops showing the office at all, so the code
+      // that brings them back would be unreadable a statement too late.
+      const joinCode = await joinCodeOf(tx, link);
+
+      if (action.kind === "leave") {
+        await tx`select public.leave_office(${link.org.id})`;
+        return { joinCode, changed: true };
+      }
+
+      // The membership and the link_token stay. chat_id is the whole of what
+      // makes this chat this member, so clearing it is what stops the bot
+      // asking and stops it telling; the token means reconnecting from the web
+      // app is still one tap. Narrowed to this chat so a link redeemed from
+      // another one in the meantime is not cleared by a stale button.
+      const rows = await tx`update public.telegram_links
+                               set chat_id = null, linked_at = null
+                             where membership_id = ${link.membershipId}
+                               and chat_id = ${chatId}
+                         returning membership_id`;
+      return { joinCode, changed: rows.length > 0 };
+    })
+  );
+
+  if (!outcome.ok) {
+    await answerCallbackQuery(BOT_TOKEN, cb.id, outcome.reason, true);
+    // The alert is gone the moment it is dismissed, and "settle up before you
+    // leave" is an instruction somebody needs to still be able to read.
+    return await say(chatId, renderExitRefusedText(orgName, action.kind, outcome.reason));
+  }
+
+  const { joinCode, changed } = outcome.value;
+  if (!changed) {
+    // An UPDATE that matches nothing is silent, so this is the one outcome that
+    // would otherwise be reported as a success that never happened.
+    await answerCallbackQuery(BOT_TOKEN, cb.id, "That didn't go through. Try again.", true);
+    return;
+  }
+
+  await answerCallbackQuery(
+    BOT_TOKEN, cb.id, action.kind === "leave" ? "You've left." : "Disconnected.");
+  await edit(chatId, messageId, action.kind === "leave"
+    ? renderLeftText({ orgName, joinCode })
+    : renderUnlinkedText({ orgName, joinCode }));
+}
+
 /* ------------------------------------------------------------- button taps */
 
 async function onCallback(cb: CallbackQuery): Promise<void> {
@@ -874,6 +1067,12 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
   if (!link) {
     await answerCallbackQuery(BOT_TOKEN, cb.id, "That button isn't for this chat.", true);
     return;
+  }
+
+  if (action.kind === "leave" || action.kind === "unlink") {
+    return await onExitCallback(
+      cb, chat.id, messageId, link, links.length > 1,
+      { kind: action.kind, confirmed: action.confirmed });
   }
 
   if (action.kind === "transfer") {
@@ -955,15 +1154,24 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
  * because the chat has not been narrowed to one member yet, and it returns only
  * an org id, which the caller must still match against this chat's own links.
  */
-async function orgOfCallback(
-  action: { kind: string; menuId?: number; transferId?: number },
-): Promise<number | null> {
+async function orgOfCallback(action: CallbackAction): Promise<number | null> {
+  // /leave and /unlink name their org in the payload, because there is no row
+  // to look it up from -- the button IS about the membership. That is no
+  // weaker: the answer is matched against this chat's own links either way,
+  // which is the check that matters, and the id is a claim until it is.
+  if (action.kind === "leave" || action.kind === "unlink") return action.orgId;
+
+  // Picked apart out here rather than inside the callback, where a union this
+  // wide is no longer narrowed to the two shapes that carry a row id.
+  const transferId = action.kind === "transfer" ? action.transferId : null;
+  const menuId = action.kind === "transfer" ? 0 : action.menuId;
+
   const [row] = await asSystem((tx) =>
-    action.kind === "transfer"
+    transferId !== null
       ? tx<Array<{ org_id: number }>>`
-          select t.org_id from public.meal_transfers t where t.id = ${action.transferId ?? 0}`
+          select t.org_id from public.meal_transfers t where t.id = ${transferId}`
       : tx<Array<{ org_id: number }>>`
-          select m.org_id from public.menus m where m.id = ${action.menuId ?? 0}`
+          select m.org_id from public.menus m where m.id = ${menuId}`
   );
   return row?.org_id ?? null;
 }
@@ -1060,11 +1268,11 @@ async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<Written> 
 async function linksForChat(chatId: number): Promise<Link[]> {
   const rows = await asSystem((tx) =>
     tx<Array<{
-      profile_id: string; full_name: string; role: string;
+      profile_id: string; membership_id: number; full_name: string; role: string;
       org_id: number; org_name: string; timezone: string; currency: string;
       currency_minor_units: number; locale: string; payment_config: unknown;
     }>>`
-      select m.profile_id, p.full_name, m.role,
+      select m.profile_id, tl.membership_id, p.full_name, m.role,
              o.id as org_id, o.name as org_name, o.timezone, o.currency,
              o.currency_minor_units, o.locale, o.payment_config
         from public.telegram_links tl
@@ -1077,6 +1285,7 @@ async function linksForChat(chatId: number): Promise<Link[]> {
 
   return rows.map((r) => ({
     profileId: r.profile_id,
+    membershipId: r.membership_id,
     fullName: r.full_name,
     isAdmin: r.role === "admin" || r.role === "owner",
     org: {

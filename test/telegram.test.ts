@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   addDaysIso,
@@ -17,13 +19,20 @@ import {
   parseCommand,
   priceText,
   renderDayText,
+  renderExitCancelledText,
+  renderExitRefusedText,
+  renderLeaveConfirmText,
+  renderLeftText,
   renderNothingBilledText,
   renderOfferText,
   renderStatementText,
+  renderUnlinkConfirmText,
+  renderUnlinkedText,
   targetMenu,
   todayIn,
   unpricedMealsNote,
   vietQrLink,
+  NOTHING_TO_LEAVE,
   PRICE_TO_COME,
   type CallbackAction,
   type DayMessage,
@@ -115,6 +124,10 @@ describe("callback payloads", () => {
     { kind: "clear", menuId: 42 },
     { kind: "transfer", transferId: 9, decision: "accepted" },
     { kind: "transfer", transferId: 9, decision: "declined" },
+    { kind: "leave", orgId: 7, confirmed: true },
+    { kind: "leave", orgId: 987654321, confirmed: false },
+    { kind: "unlink", orgId: 7, confirmed: true },
+    { kind: "unlink", orgId: 987654321, confirmed: false },
   ];
 
   it("round-trips and stays inside Telegram's 64-byte limit", () => {
@@ -123,6 +136,16 @@ describe("callback payloads", () => {
       expect(new TextEncoder().encode(encoded).length).toBeLessThanOrEqual(64);
       expect(decodeCallback(encoded)).toEqual(a);
     }
+  });
+
+  // Leaving and disconnecting are the two taps nothing undoes, so a payload
+  // that is nearly one of them is not read as one.
+  it("never turns a malformed leave or unlink into a yes", () => {
+    for (const bad of ["l:7", "l:7:", "l:7:x", "l:7:y:y", "l:0:y", "l:-1:y", "l:a:y", "u:7:x", "u::y"]) {
+      expect(decodeCallback(bad)).toBeNull();
+    }
+    expect(decodeCallback("l:7:n")).toEqual({ kind: "leave", orgId: 7, confirmed: false });
+    expect(decodeCallback("u:7:n")).toEqual({ kind: "unlink", orgId: 7, confirmed: false });
   });
 
   it("rejects anything it did not write", () => {
@@ -548,5 +571,157 @@ describe("what /me owes", () => {
   it("has nothing to say about zero meals waiting", () => {
     expect(unpricedMealsNote(0)).toBeNull();
     expect(unpricedMealsNote(-1)).toBeNull();
+  });
+});
+
+/* ------------------------------------------------- leaving and disconnecting */
+
+/**
+ * A member who joined through Telegram has no web session anywhere, so these
+ * two messages are the whole of their Settings screen: what is said here is
+ * everything they are ever told about either decision.
+ */
+describe("/leave and /unlink", () => {
+  const CODE = "LUNCH7";
+
+  describe("the questions asked before anything happens", () => {
+    it("asks rather than acts, and says leaving deletes nothing", () => {
+      const text = renderLeaveConfirmText({ orgName: null, joinCode: CODE });
+      expect(text).toContain("<b>Leave this office?</b>");
+      expect(text).toContain("Nothing is deleted");
+      expect(text).toContain("same membership rather than a new one");
+      expect(text).toContain(`send me the join code <code>${CODE}</code>`);
+    });
+
+    it("says what /unlink stops and what it leaves alone", () => {
+      const text = renderUnlinkConfirmText({ orgName: null, joinCode: CODE });
+      expect(text).toContain("<b>Disconnect this chat?</b>");
+      expect(text).toContain("stop asking what you want for lunch");
+      expect(text).toContain("stay a member");
+      expect(text).toContain("anything you owe are untouched");
+      expect(text).toContain(`send me the join code <code>${CODE}</code>`);
+    });
+
+    it("names the way back even when the office has no join code to give", () => {
+      for (const text of [
+        renderLeaveConfirmText({ orgName: null, joinCode: null }),
+        renderUnlinkConfirmText({ orgName: null, joinCode: null }),
+      ]) {
+        expect(text).toContain("ask your office for its join code");
+        expect(text).not.toContain("<code>");
+      }
+    });
+  });
+
+  describe("which office it is talking about", () => {
+    // The heading is how every other message in this file tells two offices
+    // apart, and these are the two messages where being wrong about which
+    // office is meant costs the most.
+    it("names the office when the chat has two", () => {
+      const m = { orgName: "Test Office", joinCode: CODE };
+      for (const text of [
+        renderLeaveConfirmText(m),
+        renderUnlinkConfirmText(m),
+        renderLeftText(m),
+        renderUnlinkedText(m),
+        renderExitCancelledText(m.orgName, "leave"),
+        renderExitRefusedText(m.orgName, "leave", "you are the only owner"),
+      ]) {
+        expect(text).toContain("<b>Test Office</b>\n");
+      }
+    });
+
+    it("says nothing about an office when the chat has only one", () => {
+      const m = { orgName: null, joinCode: CODE };
+      for (const text of [
+        renderLeaveConfirmText(m),
+        renderUnlinkConfirmText(m),
+        renderLeftText(m),
+        renderUnlinkedText(m),
+        renderExitCancelledText(null, "unlink"),
+        renderExitRefusedText(null, "unlink", "nope"),
+      ]) {
+        expect(text).not.toContain("Test Office");
+      }
+    });
+
+    it("escapes an office name, which reaches Telegram as HTML", () => {
+      expect(renderLeaveConfirmText({ orgName: "A & <b>B</b>", joinCode: CODE }))
+        .toContain("<b>A &amp; &lt;b&gt;B&lt;/b&gt;</b>");
+    });
+  });
+
+  describe("what is true afterwards", () => {
+    it("says leaving kept the record, and how to come back", () => {
+      const text = renderLeftText({ orgName: null, joinCode: CODE });
+      expect(text).toContain("<b>You've left this office.</b>");
+      expect(text).toContain("Nothing was deleted");
+      expect(text).toContain("deactivated rather than removed");
+      expect(text).toContain(`send me the join code <code>${CODE}</code>`);
+    });
+
+    it("says disconnecting kept the membership, and how to come back", () => {
+      const text = renderUnlinkedText({ orgName: null, joinCode: CODE });
+      expect(text).toContain("<b>Disconnected.</b>");
+      expect(text).toContain("You're still a member");
+      expect(text).toContain("anything you owe are unchanged");
+      expect(text).toContain(`send me the join code <code>${CODE}</code>`);
+    });
+
+    it("says what is still true when the question is answered with no", () => {
+      expect(renderExitCancelledText(null, "leave"))
+        .toBe("Nothing changed, so you're still a member of this office.");
+      expect(renderExitCancelledText(null, "unlink"))
+        .toBe("Nothing changed, so this chat is still connected.");
+    });
+  });
+
+  /**
+   * leave_office() refuses in sentences written for people. Both surfaces show
+   * them unchanged, so the test reads them out of the migration rather than
+   * trusting a copy: a rule reworded in SQL and not in the bot is exactly the
+   * drift this is here to catch.
+   */
+  describe("a refusal from leave_office", () => {
+    const sql = readFileSync(
+      join(import.meta.dirname, "..", "supabase", "migrations",
+        "20260929100000_leaving_and_deleting_an_office.sql"),
+      "utf8",
+    );
+    const OWES = "you still owe this office money; settle up before you leave";
+    const SOLE_OWNER =
+      "you are the only owner; make somebody else an owner first, or delete the office";
+
+    it("is still the sentence the function raises", () => {
+      expect(sql).toContain(`raise exception '${OWES}'`);
+      expect(sql).toContain(`raise exception '${SOLE_OWNER}'`);
+    });
+
+    it.each([OWES, SOLE_OWNER])("reaches the member as written: %s", (reason) => {
+      // 55000 is object_not_in_prerequisite_state, which is what the function
+      // raises with. humanError must pass a refusal like this through whole.
+      const surfaced = botHumanError({ message: reason, code: "55000" });
+      expect(surfaced).toBe(reason);
+      expect(webHumanError({ message: reason, code: "55000" })).toBe(reason);
+
+      const text = renderExitRefusedText(null, "leave", surfaced);
+      expect(text).toContain(reason);
+      // And says the refusal left them where they were, which the database
+      // sentence on its own does not.
+      expect(text).toContain("Nothing changed, so you're still a member of this office.");
+    });
+
+    it("escapes a refusal before it reaches Telegram's HTML parser", () => {
+      expect(renderExitRefusedText(null, "leave", "you owe 1 & 2 <b>now</b>"))
+        .toContain("you owe 1 &amp; 2 &lt;b&gt;now&lt;/b&gt;");
+    });
+  });
+
+  it("answers /unlink from a chat that is already disconnected", () => {
+    // NOT_CONNECTED's "I don't know who you are yet" reads as a refusal of what
+    // was asked for, when in fact it has already happened.
+    expect(NOTHING_TO_LEAVE).toContain("nothing to leave or disconnect");
+    expect(NOTHING_TO_LEAVE).toContain("<b>join code</b>");
+    expect(NOTHING_TO_LEAVE).not.toContain("I don't know who you are");
   });
 });

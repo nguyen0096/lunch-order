@@ -117,7 +117,15 @@ export function parseCommand(text: string): Command | null {
 export type CallbackAction =
   | { kind: "pick"; menuId: number; itemId: number }
   | { kind: "clear"; menuId: number }
-  | { kind: "transfer"; transferId: number; decision: "accepted" | "declined" };
+  | { kind: "transfer"; transferId: number; decision: "accepted" | "declined" }
+  // The org id rides along for the same reason menu_id does: it is a routing
+  // key, matched against the chat's own links before anything happens, never
+  // taken as proof of membership. `confirmed` carries the answer too, so
+  // declining is a tap rather than an ignored message -- the handler then
+  // redraws without the keyboard, and a button that can remove somebody from
+  // their office stops existing rather than waiting in the chat for a thumb.
+  | { kind: "leave"; orgId: number; confirmed: boolean }
+  | { kind: "unlink"; orgId: number; confirmed: boolean };
 
 /**
  * Telegram caps callback_data at 64 bytes and returns it to us verbatim, so it
@@ -129,6 +137,8 @@ export function encodeCallback(a: CallbackAction): string {
     case "pick": return `p:${a.menuId}:${a.itemId}`;
     case "clear": return `c:${a.menuId}`;
     case "transfer": return `t:${a.transferId}:${a.decision === "accepted" ? "a" : "d"}`;
+    case "leave": return `l:${a.orgId}:${a.confirmed ? "y" : "n"}`;
+    case "unlink": return `u:${a.orgId}:${a.confirmed ? "y" : "n"}`;
   }
 }
 
@@ -149,6 +159,17 @@ export function decodeCallback(data: string): CallbackAction | null {
     if (transferId === null) return null;
     if (parts[2] === "a") return { kind: "transfer", transferId, decision: "accepted" };
     if (parts[2] === "d") return { kind: "transfer", transferId, decision: "declined" };
+  }
+  if ((tag === "l" || tag === "u") && parts.length === 3) {
+    const orgId = toId(parts[1]);
+    // Anything but the two letters we wrote is refused rather than read as a
+    // no: a payload we do not recognise is one we cannot claim to understand,
+    // and this pair of buttons is the wrong place to guess.
+    if (orgId === null || (parts[2] !== "y" && parts[2] !== "n")) return null;
+    const confirmed = parts[2] === "y";
+    return tag === "l"
+      ? { kind: "leave", orgId, confirmed }
+      : { kind: "unlink", orgId, confirmed };
   }
   return null;
 }
@@ -461,6 +482,124 @@ export function renderNothingBilledText(orgName: string | null, unpricedMeals: n
   return `${orgHeading(orgName)}Nothing billed to you yet.` +
     (waiting === null ? "" : `\n${waiting}`);
 }
+
+/* ----------------------------------------------- leaving and disconnecting */
+
+/**
+ * The two ways out, and why they are worded as carefully as anything here.
+ *
+ * A member who joined through Telegram has no browser session anywhere -- these
+ * two commands are the whole of their Settings screen. So each message says
+ * what stops AND what stays, and each names the way back in, which is the
+ * office's join code and nothing else: signing in with Google would mint a
+ * different account with no membership at all.
+ */
+export type ExitMessage = {
+  /** The office's name, for a member who belongs to more than one. */
+  orgName: string | null;
+  /** The office's join code, or null when the office has none to hand out. */
+  joinCode: string | null;
+};
+
+export type ExitKind = "leave" | "unlink";
+
+/** The door they came in by, which is the same door back. */
+function comeBackLine(joinCode: string | null): string {
+  return joinCode === null
+    ? "To come back, ask your office for its join code and send it to me."
+    : `To come back, send me the join code <code>${escapeHtml(joinCode)}</code>.`;
+}
+
+/** What the tap would cost, said before the tap rather than after it. */
+export function renderLeaveConfirmText(m: ExitMessage): string {
+  return [
+    `${orgHeading(m.orgName)}<b>Leave this office?</b>`,
+    "",
+    "You'd stop ordering lunch here, and I'd stop messaging you about it.",
+    "",
+    "Nothing is deleted: your orders, your bill and your short code stay as " +
+    "they are, so you'd come back to the same membership rather than a new one.",
+    "",
+    comeBackLine(m.joinCode),
+  ].join("\n");
+}
+
+/** Left, and still on record: the two halves somebody needs in one message. */
+export function renderLeftText(m: ExitMessage): string {
+  return [
+    `${orgHeading(m.orgName)}<b>You've left this office.</b>`,
+    "",
+    "Nothing was deleted. Your orders and your bill stay on record, and the " +
+    "membership is deactivated rather than removed.",
+    "",
+    comeBackLine(m.joinCode),
+  ].join("\n");
+}
+
+export function renderUnlinkConfirmText(m: ExitMessage): string {
+  return [
+    `${orgHeading(m.orgName)}<b>Disconnect this chat?</b>`,
+    "",
+    "I'd stop asking what you want for lunch, and stop telling you when the " +
+    "menu or your bill changes.",
+    "",
+    "You'd stay a member either way: your orders and anything you owe are " +
+    "untouched. This only stops me talking to you here.",
+    "",
+    comeBackLine(m.joinCode),
+  ].join("\n");
+}
+
+export function renderUnlinkedText(m: ExitMessage): string {
+  return [
+    `${orgHeading(m.orgName)}<b>Disconnected.</b>`,
+    "",
+    "I won't message you about lunch here any more. You're still a member, " +
+    "and your orders and anything you owe are unchanged.",
+    "",
+    comeBackLine(m.joinCode),
+  ].join("\n");
+}
+
+/** What is still true after a decision that changed nothing. */
+function unchanged(kind: ExitKind): string {
+  return kind === "leave"
+    ? "Nothing changed, so you're still a member of this office."
+    : "Nothing changed, so this chat is still connected.";
+}
+
+export function renderExitCancelledText(orgName: string | null, kind: ExitKind): string {
+  return orgHeading(orgName) + unchanged(kind);
+}
+
+/**
+ * leave_office()'s refusal, as it wrote it.
+ *
+ * "you still owe this office money; settle up before you leave" and "you are
+ * the only owner; make somebody else an owner first, or delete the office" are
+ * sentences written for people, and both pass through humanError() untouched.
+ * Nothing here recases or repunctuates them: a second, prettier copy of a rule
+ * is how the bot and the database start disagreeing about what the rule is.
+ */
+export function renderExitRefusedText(
+  orgName: string | null, kind: ExitKind, reason: string,
+): string {
+  return `${orgHeading(orgName)}${escapeHtml(reason)}\n\n${unchanged(kind)}`;
+}
+
+/**
+ * `/leave` or `/unlink` from a chat that is connected to nothing.
+ *
+ * NOT_CONNECTED answers "I don't know who you are yet", which is right for a
+ * bare hello and wrong here: it reads as a refusal of what was asked for, when
+ * in fact it has already happened. Says so, then names both doors back.
+ */
+export const NOTHING_TO_LEAVE = [
+  "This chat isn't connected to an office, so there's nothing to leave or disconnect.",
+  "",
+  "To connect it, send me your office's <b>join code</b>. If you use the lunch app, " +
+  "you can also open it, go to <b>Preferences</b> and tap <b>Connect Telegram</b>.",
+].join("\n");
 
 /* ------------------------------------------------------------------ payment */
 
