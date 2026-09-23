@@ -490,7 +490,14 @@ describe("When orders close", () => {
   });
 
   it("publishes the cutoff the admin typed", async () => {
-    const user = userEvent.setup();
+    // The clock is pinned, and it has to be. DATE is tomorrow, so the cutoff
+    // day below is today -- and once the wall clock passed 12:00 in the office's
+    // zone, cutoffProblem correctly called this cutoff elapsed, Publish went
+    // unavailable and the test failed. It was green all morning and red every
+    // afternoon: a test that reports the time of day rather than the code.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(zonedTimeToInstant(addDays(DATE, -1), "08:00", TZ));
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -509,6 +516,7 @@ describe("When orders close", () => {
     expect(publishMenu.mock.calls[0]?.[0].cutoffAt).toBe(
       zonedTimeToInstant(addDays(DATE, -1), "12:00", TZ).toISOString(),
     );
+    vi.useRealTimers();
   });
 
   it("refuses a cutoff after the meal, which nothing else would refuse", async () => {
