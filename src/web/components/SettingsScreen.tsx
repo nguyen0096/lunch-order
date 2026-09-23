@@ -5,6 +5,7 @@ import { Section, TextField } from "./settings/Section.js";
 import { PaymentAccount } from "./settings/PaymentAccount.js";
 import { GroupChat } from "./settings/GroupChat.js";
 import { OrderCutoff } from "./settings/OrderCutoff.js";
+import { LeaveAndDelete } from "./settings/LeaveAndDelete.js";
 import type { ScreenProps } from "./screenProps.js";
 import {
   createTelegramLink,
@@ -13,8 +14,11 @@ import {
   fetchTelegramLink,
   humanError,
   setDisplayName,
+  setShortCode,
   setStandingOrder,
+  shortCodeProblem,
   unlinkTelegram,
+  SHORT_CODE_MAX,
   type OrgSettings,
   type TelegramLink,
 } from "../api.js";
@@ -39,6 +43,29 @@ type Loaded = {
   office: OrgSettings | null;
 };
 
+export type SettingsScreenProps = ScreenProps & {
+  /**
+   * What happens once this office stops being yours. Overridden only by a test:
+   * App hands this screen the three `ScreenProps` and nothing else.
+   */
+  onGone?: () => void;
+};
+
+/**
+ * Where you stand after leaving or deleting: back at the top, reloaded.
+ *
+ * A reload rather than a route change, because `me` is fetched once in App and
+ * still holds the office that has just gone. Navigating with it in memory lands
+ * on a board whose every query now returns nothing, which is the failure this
+ * has to avoid. Reloading re-asks the database who I am, and App's own redirect
+ * then picks the next office or the screen for belonging nowhere. A page load
+ * is not a cost anybody notices once, on the way out.
+ */
+function startOver() {
+  window.location.hash = "#/";
+  window.location.reload();
+}
+
 /**
  * Two audiences on one page.
  *
@@ -52,8 +79,11 @@ type Loaded = {
  * The theme is deliberately not here. It lives in the account menu beside sign
  * out, because it is the one preference somebody changes on a whim and wants to
  * see take effect in the same breath.
+ *
+ * Leaving and deleting are last, behind a rule: terminal actions do not belong
+ * above the setting somebody actually came for.
  */
-export function SettingsScreen({ me, org, role }: ScreenProps) {
+export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsScreenProps) {
   const admin = isAdmin(role);
   const [data, setData] = useState<Loaded | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -109,7 +139,7 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
     return (
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-6">
         {heading}
-        <SettingsSkeleton count={admin ? 6 : 3} />
+        <SettingsSkeleton count={admin ? 7 : 4} />
       </div>
     );
   }
@@ -138,6 +168,11 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
           orgId={org.id}
           profileId={me.profileId}
           initial={me.orgs.find((o) => o.org.id === org.id)?.displayName ?? me.fullName}
+        />
+        <ShortCode
+          orgId={org.id}
+          profileId={me.profileId}
+          initial={me.orgs.find((o) => o.org.id === org.id)?.shortCode ?? ""}
         />
       </section>
 
@@ -168,6 +203,8 @@ export function SettingsScreen({ me, org, role }: ScreenProps) {
           {`The time ordering closes, the bank account bills are paid into, and the group chat the bot posts in, are set by an admin of ${org.name}.`}
         </p>
       )}
+
+      <LeaveAndDelete org={org} profileId={me.profileId} role={role} onGone={onGone} />
     </div>
   );
 }
@@ -426,6 +463,74 @@ function DisplayName({
       />
       <div>
         <Action reason={reason} pending={save.pending} onClick={() => void save.run(name)}>
+          {save.pending ? "Saving" : "Save"}
+        </Action>
+      </div>
+    </Section>
+  );
+}
+
+/* -------------------------------------------------------------- short code */
+
+/**
+ * The code that goes in a bank memo, next to the name that goes on the board.
+ *
+ * It is generated from the first four characters of a full name, which is fine
+ * for "Chi Nguyen" and lands "Quy Tu Nguyen" on QUYT. Vietnamese names produce
+ * the occasional word nobody wants to send to a colleague, and this is the
+ * field that fixes it.
+ *
+ * Uppercased as it is typed, because the CHECK is `^[A-Z0-9]{2,8}$` and a
+ * lowercase code is refused for a reason the person cannot see. Uniqueness is
+ * left to memberships_code_uk: RLS can hide the colleague already holding a
+ * code, so the clash is only ever a server answer.
+ */
+function ShortCode({
+  orgId,
+  profileId,
+  initial,
+}: {
+  orgId: number;
+  profileId: string;
+  initial: string;
+}) {
+  const [saved, setSaved] = useState(initial);
+  const [code, setCode] = useState(initial);
+
+  const save = useAction(
+    async (next: string) => setShortCode({ orgId, profileId, shortCode: next }),
+    {
+      success: "Saved",
+      onSuccess: (stored) => setSaved(stored),
+    },
+  );
+
+  const reason = shortCodeProblem(code) ?? (code === saved ? "Nothing to save" : null);
+
+  return (
+    <Section
+      title="Short code"
+      description="What appears in the memo of a bank transfer when you pay a bill, and beside your name on the People screen. Short and uppercase because somebody types it into a banking app."
+    >
+      <TextField
+        id="short-code"
+        label="Short code"
+        hint={`Two to ${SHORT_CODE_MAX} letters or digits. It is made from your name when you join, so change it if it landed somewhere awkward.`}
+        value={code}
+        // Uppercased here rather than on save, so the field shows what will be
+        // stored instead of correcting it after the fact.
+        onChange={(next) => setCode(next.toUpperCase())}
+        placeholder="QUYT"
+        maxLength={SHORT_CODE_MAX}
+        className="max-w-44"
+      />
+      <p className="max-w-prose text-sm text-muted">
+        Changing it does not rewrite a bill you already have. The reference on each week&apos;s
+        statement is written when that week is billed, so a transfer you have already sent still
+        matches; the new code is used from the next billing run on.
+      </p>
+      <div>
+        <Action reason={reason} pending={save.pending} onClick={() => void save.run(code)}>
           {save.pending ? "Saving" : "Save"}
         </Action>
       </div>

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { SettingsScreen } from "../src/web/components/SettingsScreen.js";
 import * as api from "../src/web/api.js";
 import { EMPTY_PAYMENT_CONFIG, parsePaymentConfig } from "../src/shared/payment.js";
+import { formatMoney } from "../src/shared/money.js";
 import type { Me, Org, Role } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -23,10 +24,15 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     createTelegramLink: vi.fn(),
     unlinkTelegram: vi.fn(),
     setDisplayName: vi.fn(),
+    setShortCode: vi.fn(),
     fetchOrgSettings: vi.fn(),
     setPaymentConfig: vi.fn(),
     setTelegramGroupChatId: vi.fn(),
     setDefaultCutoffLocalTime: vi.fn(),
+    fetchLeaveStanding: vi.fn(),
+    fetchOfficeDebt: vi.fn(),
+    leaveOffice: vi.fn(),
+    deleteOffice: vi.fn(),
   };
 });
 
@@ -36,6 +42,11 @@ const fetchTelegramLink = vi.mocked(api.fetchTelegramLink);
 const createTelegramLink = vi.mocked(api.createTelegramLink);
 const unlinkTelegram = vi.mocked(api.unlinkTelegram);
 const setDisplayName = vi.mocked(api.setDisplayName);
+const setShortCode = vi.mocked(api.setShortCode);
+const fetchLeaveStanding = vi.mocked(api.fetchLeaveStanding);
+const fetchOfficeDebt = vi.mocked(api.fetchOfficeDebt);
+const leaveOffice = vi.mocked(api.leaveOffice);
+const deleteOffice = vi.mocked(api.deleteOffice);
 const fetchOrgSettings = vi.mocked(api.fetchOrgSettings);
 const setPaymentConfig = vi.mocked(api.setPaymentConfig);
 const setTelegramGroupChatId = vi.mocked(api.setTelegramGroupChatId);
@@ -71,14 +82,31 @@ function card(title: string): HTMLElement {
   return section;
 }
 
+/** Called in place of the reload, so a test can see where the person lands. */
+let gone: ReturnType<typeof vi.fn>;
+
 async function renderSettings(role: Role = "member") {
-  render(<SettingsScreen me={ME} org={ORG} role={role} />);
+  render(<SettingsScreen me={ME} org={ORG} role={role} onGone={gone} />);
   await screen.findByRole("heading", { name: "Standing days" });
+  // The leaving section loads its own facts, so waiting for the control it
+  // gates keeps a later state update from landing after the test has finished.
+  await screen.findByRole("button", { name: "Leave" });
 }
+
+const leaveButton = () => within(card("Leave this office")).getByRole("button", { name: "Leave" });
+const deleteButton = () =>
+  within(card("Delete this office")).getByRole("button", { name: "Delete this office" });
+const dialog = () => screen.getByRole("dialog");
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
+  gone = vi.fn();
+  fetchLeaveStanding.mockResolvedValue({ owedMinor: 0, ownerCount: 2 });
+  fetchOfficeDebt.mockResolvedValue({ outstandingMinor: 0, peopleOwing: 0 });
+  leaveOffice.mockResolvedValue(undefined);
+  deleteOffice.mockResolvedValue(undefined);
+  setShortCode.mockImplementation(async (a) => a.shortCode.trim().toUpperCase());
   fetchStandingOrders.mockResolvedValue(new Set<number>());
   fetchTelegramLink.mockResolvedValue(null);
   fetchOrgSettings.mockResolvedValue({
@@ -549,5 +577,321 @@ describe("loading and failure", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(await screen.findByRole("heading", { name: "Standing days" })).toBeInTheDocument();
+  });
+});
+
+/* -------------------------------------------------------------- short code */
+
+describe("the short code", () => {
+  const codeCard = () => card("Short code");
+  const save = () => within(codeCard()).getByRole("button", { name: "Save" });
+
+  it("opens on the code this office knows you by, with nothing to save", async () => {
+    await renderSettings("member");
+    expect(screen.getByLabelText("Short code")).toHaveValue("NEYU");
+    expect(save()).toHaveAccessibleDescription("Nothing to save");
+  });
+
+  it("says what the code is for, which is the bank memo and not the board", async () => {
+    await renderSettings("member");
+    expect(within(codeCard()).getByText(/memo of a bank transfer/)).toBeInTheDocument();
+    // And that changing it leaves references already issued alone.
+    expect(within(codeCard()).getByText(/does not rewrite a bill you already have/))
+      .toBeInTheDocument();
+  });
+
+  it("uppercases as it is typed, because the CHECK would refuse it silently", async () => {
+    await renderSettings("member");
+    const field = screen.getByLabelText("Short code");
+    await userEvent.clear(field);
+    await userEvent.type(field, "quytu");
+
+    expect(field).toHaveValue("QUYTU");
+    await userEvent.click(save());
+    await waitFor(() =>
+      expect(setShortCode).toHaveBeenCalledWith({
+        orgId: 7,
+        profileId: "me",
+        shortCode: "QUYTU",
+      }),
+    );
+    expect(success).toHaveBeenCalledWith("Saved");
+    // The card now agrees with the database without waiting for a refetch.
+    await waitFor(() => expect(save()).toHaveAccessibleDescription("Nothing to save"));
+  });
+
+  it("names the rule the format broke rather than sending it to the CHECK", async () => {
+    await renderSettings("member");
+    const field = screen.getByLabelText("Short code");
+
+    await userEvent.clear(field);
+    expect(save()).toHaveAccessibleDescription("A short code cannot be blank");
+
+    await userEvent.type(field, "Q");
+    expect(save()).toHaveAccessibleDescription("A short code is 2 characters at least");
+
+    await userEvent.type(field, " T");
+    expect(save()).toHaveAccessibleDescription(
+      "A short code is letters and digits only, with no spaces",
+    );
+
+    await userEvent.click(save());
+    expect(setShortCode).not.toHaveBeenCalled();
+  });
+
+  it("lets the clash come back from the server, with a sentence that says what to do", async () => {
+    // RLS can hide the colleague already holding the code, so a duplicate is
+    // only ever a server answer -- and humanError would flatten the raw
+    // constraint violation into a line nobody can act on, which is why
+    // setShortCode translates it instead.
+    expect(
+      api.humanError(
+        new Error('duplicate key value violates unique constraint "memberships_code_uk"'),
+      ),
+    ).toBe("That change conflicts with something else. Reload and try again.");
+
+    setShortCode.mockRejectedValue(
+      new Error("Somebody in this office already uses QUYT. Pick a different one."),
+    );
+    await renderSettings("member");
+    const field = screen.getByLabelText("Short code");
+    await userEvent.clear(field);
+    await userEvent.type(field, "QUYT");
+    await userEvent.click(save());
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "Somebody in this office already uses QUYT. Pick a different one.",
+      ),
+    );
+    expect(success).not.toHaveBeenCalled();
+    // Still their work, and the control still offers to save it.
+    expect(screen.getByLabelText("Short code")).toHaveValue("QUYT");
+  });
+});
+
+/* --------------------------------------------------- leaving, and deleting */
+
+describe("who is offered what at the bottom of the page", () => {
+  it("offers a member leaving, and does not mention deleting at all", async () => {
+    await renderSettings("member");
+
+    expect(screen.getByRole("heading", { name: "Leave this office" })).toBeInTheDocument();
+    // Absent, not greyed: a member has no use for "only an owner can do that"
+    // on a control they were never going to press.
+    expect(screen.queryByRole("heading", { name: "Delete this office" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Leaving" })).toBeInTheDocument();
+    // And the office's books are never even asked for.
+    expect(fetchOfficeDebt).not.toHaveBeenCalled();
+  });
+
+  it("does not offer deleting to an admin either", async () => {
+    await renderSettings("admin");
+    expect(screen.getByRole("heading", { name: "Leave this office" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Delete this office" })).not.toBeInTheDocument();
+    expect(fetchOfficeDebt).not.toHaveBeenCalled();
+  });
+
+  it("offers an owner both, under a heading that names both", async () => {
+    await renderSettings("owner");
+    expect(screen.getByRole("heading", { name: "Leave this office" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Delete this office" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Leaving and deleting" })).toBeInTheDocument();
+    expect(fetchOfficeDebt).toHaveBeenCalledWith(7);
+  });
+});
+
+describe("leaving an office", () => {
+  it("says what leaving does not do, before offering it", async () => {
+    await renderSettings("member");
+    const leave = card("Leave this office");
+    expect(within(leave).getByText(/stay on the office's books/)).toBeInTheDocument();
+    expect(within(leave).getByText(/join code puts you back/)).toBeInTheDocument();
+  });
+
+  it("is unavailable while money is owed, and names the amount", async () => {
+    fetchLeaveStanding.mockResolvedValue({ owedMinor: 180000, ownerCount: 2 });
+    await renderSettings("member");
+
+    expect(leaveButton()).toHaveAccessibleDescription(
+      `You still owe ${formatMoney(180000, ORG.currency)}. Settle up before you leave.`,
+    );
+    expect(leaveButton()).toHaveAccessibleDescription(/180\.000/);
+
+    await userEvent.click(leaveButton());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(leaveOffice).not.toHaveBeenCalled();
+  });
+
+  it("is unavailable to the only owner, and points at the two real ways out", async () => {
+    fetchLeaveStanding.mockResolvedValue({ owedMinor: 0, ownerCount: 1 });
+    await renderSettings("owner");
+
+    expect(leaveButton()).toHaveAccessibleDescription(
+      "You are the only owner. Make somebody else an owner first, or delete the office.",
+    );
+    await userEvent.click(leaveButton());
+    expect(leaveOffice).not.toHaveBeenCalled();
+
+    // Option one is a screen, so it is a link rather than a sentence.
+    expect(screen.getByRole("link", { name: "Make somebody an owner" })).toHaveAttribute(
+      "href",
+      "#/o/test-office/people",
+    );
+    // Option two is the card immediately below.
+    expect(screen.getByRole("heading", { name: "Delete this office" })).toBeInTheDocument();
+  });
+
+  it("does not offer the sole-owner way out to somebody who is not stuck", async () => {
+    await renderSettings("owner");
+    expect(leaveButton()).not.toHaveAccessibleDescription();
+    expect(screen.queryByRole("link", { name: "Make somebody an owner" })).not.toBeInTheDocument();
+  });
+
+  it("confirms, calls leave_office, and does not leave you standing where you were", async () => {
+    await renderSettings("member");
+    expect(leaveButton()).not.toHaveAccessibleDescription();
+
+    await userEvent.click(leaveButton());
+    expect(await screen.findByRole("heading", { name: "Leave Test Office?" })).toBeInTheDocument();
+    expect(leaveOffice).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog()).getByRole("button", { name: "Leave" }));
+    await waitFor(() => expect(leaveOffice).toHaveBeenCalledWith(7));
+    expect(success).toHaveBeenCalledWith("Left Test Office");
+    // The office is no longer theirs, so the screen showing it cannot stay up.
+    await waitFor(() => expect(gone).toHaveBeenCalled());
+  });
+
+  it("can be backed out of, and then nothing has happened", async () => {
+    await renderSettings("member");
+    await userEvent.click(leaveButton());
+    await userEvent.click(within(dialog()).getByRole("button", { name: "Stay" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(leaveOffice).not.toHaveBeenCalled();
+    expect(gone).not.toHaveBeenCalled();
+  });
+
+  it("surfaces the database's own refusal rather than a generic one", async () => {
+    // The client said it was fine and the function disagreed: a week was billed
+    // between the page loading and the button being pressed. The function is
+    // the enforcement, so its sentence is the one that has to arrive.
+    leaveOffice.mockRejectedValue(
+      new Error("you still owe this office money; settle up before you leave"),
+    );
+    await renderSettings("member");
+    await userEvent.click(leaveButton());
+    await userEvent.click(within(dialog()).getByRole("button", { name: "Leave" }));
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "you still owe this office money; settle up before you leave",
+      ),
+    );
+    expect(success).not.toHaveBeenCalled();
+    expect(gone).not.toHaveBeenCalled();
+  });
+
+  it("says nothing about what you owe until it knows, and then says why", async () => {
+    fetchLeaveStanding.mockRejectedValue(new Error("upstream connect error"));
+    render(<SettingsScreen me={ME} org={ORG} role="member" onGone={gone} />);
+
+    // The rest of Settings is untouched: a billing read that failed is not a
+    // reason to replace the display name field with an error page.
+    expect(await screen.findByRole("heading", { name: "Standing days" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Leave" })).toHaveAccessibleDescription(
+      "Your bill did not load, so this cannot say yet whether you can leave. Reload the page.",
+    );
+  });
+});
+
+describe("deleting an office", () => {
+  it("says it is a soft delete, and that this app cannot undo it", async () => {
+    await renderSettings("owner");
+    const remove = card("Delete this office");
+    expect(within(remove).getByText(/Nothing is erased/)).toBeInTheDocument();
+    expect(within(remove).getByText(/cannot bring it back from here/)).toBeInTheDocument();
+    expect(within(remove).getByText(/including anyone who still owes money/)).toBeInTheDocument();
+  });
+
+  it("names the outstanding amount in the confirmation, not afterwards", async () => {
+    fetchOfficeDebt.mockResolvedValue({ outstandingMinor: 540000, peopleOwing: 3 });
+    await renderSettings("owner");
+
+    // On the card, so it is read before the dialog is even opened.
+    expect(within(card("Delete this office")).getByText(/540\.000/)).toBeInTheDocument();
+
+    await userEvent.click(deleteButton());
+    const confirmation = within(await screen.findByRole("dialog"));
+    expect(confirmation.getByText(/540\.000/)).toBeInTheDocument();
+    expect(confirmation.getByText(/3 people/)).toBeInTheDocument();
+    expect(confirmation.getByText(/does not collect it/)).toBeInTheDocument();
+  });
+
+  it("says so plainly when nobody owes anything", async () => {
+    await renderSettings("owner");
+    await userEvent.click(deleteButton());
+    expect(
+      within(await screen.findByRole("dialog")).getByText(/Nobody owes Test Office anything/),
+    ).toBeInTheDocument();
+  });
+
+  it("refuses a name that is not the office's, and says what to type", async () => {
+    await renderSettings("owner");
+    await userEvent.click(deleteButton());
+    const confirm = within(dialog()).getByRole("button", { name: "Delete" });
+
+    expect(confirm).toHaveAccessibleDescription("Type Test Office exactly to confirm");
+    await userEvent.click(confirm);
+    expect(deleteOffice).not.toHaveBeenCalled();
+
+    await userEvent.type(screen.getByLabelText("Type Test Office to confirm"), "Test Offic");
+    expect(confirm).toHaveAccessibleDescription("Type Test Office exactly to confirm");
+    await userEvent.click(confirm);
+    expect(deleteOffice).not.toHaveBeenCalled();
+  });
+
+  it("deletes on the typed name, and does not leave you standing where you were", async () => {
+    await renderSettings("owner");
+    await userEvent.click(deleteButton());
+    await userEvent.type(screen.getByLabelText("Type Test Office to confirm"), "Test Office");
+
+    const confirm = within(dialog()).getByRole("button", { name: "Delete" });
+    expect(confirm).not.toHaveAccessibleDescription();
+
+    await userEvent.click(confirm);
+    await waitFor(() => expect(deleteOffice).toHaveBeenCalledWith(7));
+    expect(success).toHaveBeenCalledWith("Deleted Test Office");
+    await waitFor(() => expect(gone).toHaveBeenCalled());
+  });
+
+  it("forgets a half-typed name when the confirmation is closed", async () => {
+    await renderSettings("owner");
+    await userEvent.click(deleteButton());
+    await userEvent.type(screen.getByLabelText("Type Test Office to confirm"), "Test Office");
+    await userEvent.click(within(dialog()).getByRole("button", { name: "Keep the office" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(deleteOffice).not.toHaveBeenCalled();
+
+    await userEvent.click(deleteButton());
+    expect(await screen.findByLabelText("Type Test Office to confirm")).toHaveValue("");
+    expect(within(dialog()).getByRole("button", { name: "Delete" })).toHaveAccessibleDescription(
+      "Type Test Office exactly to confirm",
+    );
+  });
+
+  it("surfaces the database's own refusal rather than a generic one", async () => {
+    deleteOffice.mockRejectedValue(new Error("only an owner can delete an office"));
+    await renderSettings("owner");
+    await userEvent.click(deleteButton());
+    await userEvent.type(screen.getByLabelText("Type Test Office to confirm"), "Test Office");
+    await userEvent.click(within(dialog()).getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith("only an owner can delete an office"),
+    );
+    expect(gone).not.toHaveBeenCalled();
   });
 });
