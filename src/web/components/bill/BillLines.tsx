@@ -11,8 +11,8 @@ import {
   TableRow,
   TableNumericCell,
 } from "@/ui";
-import { fetchBillLines, humanError, type BillLine } from "../../api.js";
-import { formatMoney } from "../../../shared/money.js";
+import { fetchBillLines, humanError, type BillLine, type UnpricedMeal } from "../../api.js";
+import { formatMoney, formatPrice } from "../../../shared/money.js";
 import { formatDay } from "../../../shared/dates.js";
 import type { Currency } from "../../../shared/money.js";
 
@@ -33,6 +33,7 @@ export function BillLines({
   profileId,
   currency,
   lineCount,
+  waiting = [],
 }: {
   orgId: number;
   periodId: number;
@@ -40,6 +41,13 @@ export function BillLines({
   currency: Currency;
   /** From the period. Zero means the week billed nothing at all. */
   lineCount: number;
+  /**
+   * Meals eaten this week that the caterer has not priced. They have no
+   * billing line -- that is the point of holding them out -- so they are
+   * listed from the orders instead, or the itemisation would contradict the
+   * sentence above it.
+   */
+  waiting?: UnpricedMeal[];
 }) {
   const [open, setOpen] = useState(false);
   const [lines, setLines] = useState<BillLine[] | null>(null);
@@ -66,7 +74,7 @@ export function BillLines({
         className="w-fit px-2 hover:bg-transparent hover:underline"
         aria-expanded={open}
         reason={
-          lineCount > 0
+          lineCount > 0 || waiting.length > 0
             ? null
             : "This week billed no meals of its own, so there is nothing to itemise."
         }
@@ -95,14 +103,14 @@ export function BillLines({
         <p className="text-sm text-muted">Loading the meals…</p>
       )}
 
-      {open && lines !== null && lines.length === 0 && (
+      {open && lines !== null && lines.length === 0 && waiting.length === 0 && (
         <EmptyState heading="No meals on this week">
           Nothing you ordered was billed to this week. If that is wrong, ask an admin to
           run the week again.
         </EmptyState>
       )}
 
-      {open && lines !== null && lines.length > 0 && (
+      {open && lines !== null && (lines.length > 0 || waiting.length > 0) && (
         <Table containerClassName="bg-surface-raised">
           <TableHeader>
             <TableRow>
@@ -133,6 +141,27 @@ export function BillLines({
                   {line.mine
                     ? formatMoney(line.amountMinor, currency)
                     : "Not yours to pay"}
+                </TableNumericCell>
+              </TableRow>
+            ))}
+
+            {/* Beneath the billed meals rather than mixed in with them: these
+                are not on the total above, and a row carrying a price would
+                claim otherwise. `formatPrice(null, …)` is the one way a
+                missing price is written anywhere in the app. */}
+            {waiting.map((meal) => (
+              <TableRow key={`waiting-${meal.orderId}`}>
+                <TableCell className="whitespace-nowrap">
+                  {formatDay(meal.serviceDate)}
+                </TableCell>
+                <TableCell>
+                  <span>{meal.description === "" ? "Lunch" : meal.description}</span>
+                  <span className="block text-xs text-muted">
+                    Waiting on the caterer&rsquo;s price, so it is not on this total
+                  </span>
+                </TableCell>
+                <TableNumericCell className="text-muted">
+                  {formatPrice(null, currency)}
                 </TableNumericCell>
               </TableRow>
             ))}

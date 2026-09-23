@@ -9,6 +9,7 @@
 
 import { supabase } from "../supabase.js";
 import { parsePaymentConfig, type PaymentConfig } from "../../shared/payment.js";
+import { dishKey } from "../../shared/settlement.js";
 
 export type BillStatementStatus = "unpaid" | "partial" | "paid" | "waived";
 export type BillPeriodStatus = "open" | "computing" | "closed" | "void";
@@ -691,4 +692,411 @@ export async function waiveStatement(args: {
   if (!data) {
     throw new Error("That week was not waived. You may no longer be an admin of this office.");
   }
+}
+
+/* ========================================================================= */
+/* Settling the week: the caterer's prices, applied                          */
+/* ========================================================================= */
+
+/**
+ * The caterer prices at the weekend, so a week is lived through unpriced and
+ * settled afterwards. Everything below is the admin's side of that: what the
+ * board recorded, writing the prices the caterer finally gave, and asking the
+ * database to bill the week.
+ */
+
+/** One dish across a whole week's menus, with what the board recorded for it. */
+export type SettlementDish = {
+  /** Folded the way the database folds it, so two spellings are one dish. */
+  key: string;
+  /** The board's spelling, from the first menu the dish appears on. */
+  name: string;
+  /** Portions the board recorded: the sum of the quantities on placed orders. */
+  ourCount: number;
+  /**
+   * Portions of those still carrying no price, and so held off the bill. These
+   * are the meals a late price reaches and the only ones it moves money onto.
+   */
+  waitingCount: number;
+  /**
+   * What this dish already bills, from the snapshots on the orders themselves
+   * rather than from the menu. A price that arrived before the orders did is
+   * on those rows already, and it is not going to change.
+   */
+  pricedTotalMinor: number;
+  /** Every `menu_items` row in the week carrying this name. */
+  menuItemIds: number[];
+  /**
+   * The rows a late price can be written to: the ones still holding NULL.
+   *
+   * `enforce_menu_item_frozen` exempts exactly one change on a locked menu --
+   * `price_minor` going from NULL to a value, with the name, menu, position
+   * and availability untouched -- which is why this is the id list the apply
+   * is built from. A dish that already carries a price cannot be re-priced
+   * there, so those rows are not in here and must be reported rather than
+   * attempted. A cancelled menu is not exempted at all.
+   */
+  unpricedMenuItemIds: number[];
+  /** Distinct prices already on the board for this dish, in board order. */
+  existingPricesMinor: number[];
+  /** Service dates this dish was on a menu for. */
+  days: string[];
+  /** Days whose menu is cancelled, which takes no price at all. */
+  cancelledDays: string[];
+  /** True when at least one menu row for this dish is still waiting on a price. */
+  unpriced: boolean;
+};
+
+export type SettlementWeek = {
+  periodId: number;
+  periodStart: string;
+  /** Inclusive. */
+  periodEnd: string;
+  /** Board order: first the day a dish appears, then its position on that menu. */
+  dishes: SettlementDish[];
+  /**
+   * Placed orders in the week whose dish has no price. This is the number that
+   * holds the week open: `hold_period_open_while_unpriced` refuses to close a
+   * period while any of them exists, and `run_billing` leaves them off the bill
+   * rather than charging them at zero.
+   */
+  unpricedOrders: number;
+  /** Placed orders with no dish chosen at all. They bill at nothing regardless. */
+  ordersWithoutDish: number;
+};
+
+type MenuRow = { id: number; service_date: string; status: string };
+type MenuItemRow = { id: number; menu_id: number; name: string; price_minor: number | null; position: number };
+type OrderRow = { id: number; menu_id: number; service_date: string };
+type OrderItemRow = { order_id: number; menu_item_id: number; quantity: number; unit_price_minor: number | null };
+
+/**
+ * What the office actually ate in one week, dish by dish.
+ *
+ * Four flat queries rather than one embedded select. `order_items` reaches
+ * `orders` through a four-column composite foreign key, and asking PostgREST
+ * to embed across one is how this stopped working the last time; a week is at
+ * most a few hundred rows either way.
+ */
+export async function fetchSettlementWeek(args: {
+  orgId: number;
+  periodId: number;
+  periodStart: string;
+  /** Inclusive. */
+  periodEnd: string;
+}): Promise<SettlementWeek> {
+  const [menusRes, ordersRes] = await Promise.all([
+    supabase
+      .from("menus")
+      .select("id, service_date, status")
+      .eq("org_id", args.orgId)
+      .gte("service_date", args.periodStart)
+      .lte("service_date", args.periodEnd)
+      .order("service_date", { ascending: true }),
+    supabase
+      .from("orders")
+      .select("id, menu_id, service_date")
+      .eq("org_id", args.orgId)
+      .eq("status", "placed")
+      .gte("service_date", args.periodStart)
+      .lte("service_date", args.periodEnd),
+  ]);
+  if (menusRes.error) throw menusRes.error;
+  if (ordersRes.error) throw ordersRes.error;
+
+  const menus = (menusRes.data ?? []) as MenuRow[];
+  const orders = (ordersRes.data ?? []) as OrderRow[];
+
+  const [itemsRes, orderItemsRes] = await Promise.all([
+    menus.length === 0
+      ? Promise.resolve({ data: [] as MenuItemRow[], error: null })
+      : supabase
+          .from("menu_items")
+          .select("id, menu_id, name, price_minor, position")
+          .eq("org_id", args.orgId)
+          .in("menu_id", menus.map((m) => m.id))
+          .order("position", { ascending: true })
+          .order("id", { ascending: true }),
+    orders.length === 0
+      ? Promise.resolve({ data: [] as OrderItemRow[], error: null })
+      : supabase
+          .from("order_items")
+          .select("order_id, menu_item_id, quantity, unit_price_minor")
+          .eq("org_id", args.orgId)
+          .in("order_id", orders.map((o) => o.id)),
+  ]);
+  if (itemsRes.error) throw itemsRes.error;
+  if (orderItemsRes.error) throw orderItemsRes.error;
+
+  const menuItems = (itemsRes.data ?? []) as MenuItemRow[];
+  const orderItems = (orderItemsRes.data ?? []) as OrderItemRow[];
+
+  const dayOf = new Map(menus.map((m) => [m.id, m.service_date]));
+  // A cancelled menu is the one state the late-price exemption does not cover.
+  // A day that did not happen has no price to arrive for.
+  const cancelled = new Set(menus.filter((m) => m.status === "cancelled").map((m) => m.id));
+
+  // Counted off the order rows rather than the menu, because the snapshot is
+  // what bills. A portion whose `unit_price_minor` is null is a meal currently
+  // held off the bill, and the rest are money the week already owes.
+  const waiting = new Map<number, number>();
+  const portions = new Map<number, number>();
+  const billed = new Map<number, number>();
+  for (const oi of orderItems) {
+    portions.set(oi.menu_item_id, (portions.get(oi.menu_item_id) ?? 0) + oi.quantity);
+    if (oi.unit_price_minor === null) {
+      waiting.set(oi.menu_item_id, (waiting.get(oi.menu_item_id) ?? 0) + oi.quantity);
+    } else {
+      billed.set(
+        oi.menu_item_id,
+        (billed.get(oi.menu_item_id) ?? 0) + oi.unit_price_minor * oi.quantity,
+      );
+    }
+  }
+
+  const byKey = new Map<string, SettlementDish>();
+  // Sorted by day first so the board's own order decides the display name and
+  // the row order, rather than whichever menu PostgREST returned first.
+  const ordered = [...menuItems].sort(
+    (a, b) =>
+      (dayOf.get(a.menu_id) ?? "").localeCompare(dayOf.get(b.menu_id) ?? "") ||
+      a.position - b.position ||
+      a.id - b.id,
+  );
+  for (const mi of ordered) {
+    const key = dishKey(mi.name);
+    const day = dayOf.get(mi.menu_id) ?? "";
+    const dish = byKey.get(key) ?? {
+      key,
+      name: mi.name,
+      ourCount: 0,
+      waitingCount: 0,
+      pricedTotalMinor: 0,
+      menuItemIds: [],
+      unpricedMenuItemIds: [],
+      existingPricesMinor: [],
+      days: [],
+      cancelledDays: [],
+      unpriced: false,
+    };
+    byKey.set(key, dish);
+
+    dish.menuItemIds.push(mi.id);
+    if (!dish.days.includes(day)) dish.days.push(day);
+    dish.ourCount += portions.get(mi.id) ?? 0;
+    dish.waitingCount += waiting.get(mi.id) ?? 0;
+    dish.pricedTotalMinor += billed.get(mi.id) ?? 0;
+
+    if (cancelled.has(mi.menu_id)) {
+      if (!dish.cancelledDays.includes(day)) dish.cancelledDays.push(day);
+    } else if (mi.price_minor === null) {
+      dish.unpricedMenuItemIds.push(mi.id);
+    }
+
+    if (mi.price_minor === null) dish.unpriced = true;
+    else if (!dish.existingPricesMinor.includes(mi.price_minor)) {
+      dish.existingPricesMinor.push(mi.price_minor);
+    }
+  }
+
+  const itemsByOrder = new Map<number, OrderItemRow[]>();
+  for (const oi of orderItems) {
+    const list = itemsByOrder.get(oi.order_id) ?? [];
+    list.push(oi);
+    itemsByOrder.set(oi.order_id, list);
+  }
+
+  let unpricedOrders = 0;
+  let ordersWithoutDish = 0;
+  for (const o of orders) {
+    const items = itemsByOrder.get(o.id) ?? [];
+    if (items.length === 0) ordersWithoutDish += 1;
+    else if (items.some((i) => i.unit_price_minor === null)) unpricedOrders += 1;
+  }
+
+  return {
+    periodId: args.periodId,
+    periodStart: args.periodStart,
+    periodEnd: args.periodEnd,
+    dishes: [...byKey.values()],
+    unpricedOrders,
+    ordersWithoutDish,
+  };
+}
+
+/** One dish's price, and the exact menu rows it is to be written to. */
+export type PriceApplication = {
+  name: string;
+  priceMinor: number;
+  /**
+   * `SettlementDish.unpricedMenuItemIds`, never `menuItemIds`. The exemption
+   * covers a price going from NULL to a value and nothing else, so a row that
+   * already carries a price raises on a locked menu -- and because each dish
+   * is its own statement, that would leave the dishes before it priced and the
+   * rest not.
+   */
+  menuItemIds: number[];
+};
+
+export type AppliedPrices = {
+  dishes: number;
+  menuItems: number;
+  /** Orders the new price was copied onto. This is what moves the money. */
+  orderItems: number;
+};
+
+/**
+ * Write the caterer's prices onto the week, and onto the orders already placed.
+ *
+ * Every menu of the week being settled is `locked` by then -- the hourly tick
+ * locks a menu the moment its cutoff passes -- and that is the ordinary case,
+ * not an obstacle. `enforce_menu_item_frozen` exempts exactly one change
+ * there: `price_minor` going from NULL to a value with the name, menu,
+ * position and availability all unchanged. Both writes below stay inside it.
+ *
+ * Two writes per dish, and the second is the one that is easy to leave out.
+ * `menu_items.price_minor` is only what the dish costs from now on; every
+ * `order_items` row snapshotted its price when the dish was chosen, and those
+ * snapshots are what billing reads. A week priced without the second write
+ * bills exactly nothing.
+ *
+ * The re-snapshot is `update order_items set menu_item_id = menu_item_id`.
+ * `order_items_snapshot` is `BEFORE INSERT OR UPDATE **OF menu_item_id**`, so
+ * naming that column in the SET list re-fires it and `snapshot_order_item`
+ * copies the new price across. Touching any other column does nothing at all,
+ * verified both ways. PostgREST sends a value rather than a column reference,
+ * so this runs one id at a time: the value written and the row filtered are
+ * then the same number, which is what makes it a no-op to the data.
+ *
+ * No new grant is needed. `authenticated` holds UPDATE on
+ * `menu_items.price_minor` and on `order_items.menu_item_id`, and
+ * `menu_items_admin_all` and `order_items_admin_all` cover the rows. The
+ * trigger deliberately does not repeat that check: policies answer who, it
+ * answers whether the change is a legal one.
+ */
+export async function applyCatererPrices(args: {
+  orgId: number;
+  prices: PriceApplication[];
+}): Promise<AppliedPrices> {
+  let dishes = 0;
+  let menuItems = 0;
+  let orderItems = 0;
+
+  for (const p of args.prices) {
+    if (p.menuItemIds.length === 0) continue;
+
+    const priced = await supabase
+      .from("menu_items")
+      .update({ price_minor: p.priceMinor })
+      .in("id", p.menuItemIds)
+      // RLS is a permission, not a filter: an admin of two offices would
+      // otherwise be trusting the caller's id list alone.
+      .eq("org_id", args.orgId)
+      .select("id");
+    if (priced.error) throw priced.error;
+    menuItems += priced.data?.length ?? 0;
+    dishes += 1;
+
+    for (const id of p.menuItemIds) {
+      const resnapshot = await supabase
+        .from("order_items")
+        .update({ menu_item_id: id })
+        .eq("menu_item_id", id)
+        .eq("org_id", args.orgId)
+        .select("id");
+      if (resnapshot.error) throw resnapshot.error;
+      orderItems += resnapshot.data?.length ?? 0;
+    }
+  }
+
+  return { dishes, menuItems, orderItems };
+}
+
+export type SettledPeriod = {
+  /** Billing lines the run wrote: one per placed, priced order. */
+  lines: number;
+  statements: number;
+  /** The week's food total. Not what anybody owes: that carries debt forward. */
+  totalMinor: number;
+};
+
+/**
+ * Bill the week.
+ *
+ * `settle_period` is the only way a browser can run billing at all:
+ * `run_billing` takes a period id and is revoked from every browser role,
+ * because it would otherwise let any signed-in person recompute another
+ * office's bill. The wrapper checks `private.my_admin_org_ids()` first, so a
+ * member is refused here rather than silently reading zero rows.
+ *
+ * It does not pass `p_force`, so a week that has already closed stays closed
+ * and the database says so in a sentence.
+ */
+export async function settlePeriod(periodId: number): Promise<SettledPeriod> {
+  const { data, error } = await supabase.rpc("settle_period", { p_period_id: periodId });
+  if (error) throw error;
+
+  // `returns table (...)` reaches PostgREST as an array of rows, and an empty
+  // one would mean the run produced nothing to report -- worth a sentence
+  // rather than a zero somebody would read as "billed nothing".
+  const row = (data as Array<{ lines: number; statements: number; total_minor: number }> | null)?.[0];
+  if (!row) throw new Error("The week was not billed. Reload the screen and try again.");
+
+  return {
+    lines: row.lines,
+    statements: row.statements,
+    // bigint: PostgREST sends it as a JSON number here and as a string once it
+    // outgrows one, and a string would silently concatenate downstream.
+    totalMinor: Number(row.total_minor),
+  };
+}
+
+/* ------------------------------------------------ what a member is still owed */
+
+/** A meal that has been eaten and cannot be billed yet. */
+export type UnpricedMeal = {
+  orderId: number;
+  serviceDate: string;
+  /** The dishes on that order, as they were named on the day. */
+  description: string;
+};
+
+/**
+ * The meals a person will be charged for once the caterer says what they cost.
+ *
+ * Read from `v_order_charges` rather than rebuilt from orders, deliberately:
+ * that view is what `run_billing` itself excludes on, `unpriced` and all, and
+ * it resolves a transferred meal to whoever now pays for it. Counting orders
+ * directly would tell somebody they are waiting on a price for a lunch they
+ * gave away.
+ *
+ * This is the difference between a bill that is wrong and a bill that is
+ * explained. The total on the Bill screen leaves these out, because a meal
+ * billed at zero reads as a free meal; the person still has to be told they
+ * are coming.
+ */
+export async function fetchUnpricedMeals(args: {
+  orgId: number;
+  profileId: string;
+  from: string;
+  /** Inclusive. */
+  to: string;
+}): Promise<UnpricedMeal[]> {
+  const { data, error } = await supabase
+    .from("v_order_charges")
+    .select("order_id, service_date, description")
+    .eq("org_id", args.orgId)
+    .eq("payer_profile_id", args.profileId)
+    .eq("order_status", "placed")
+    .eq("unpriced", true)
+    .gte("service_date", args.from)
+    .lte("service_date", args.to)
+    .order("service_date", { ascending: true });
+  if (error) throw error;
+
+  return (data ?? []).map((r) => ({
+    orderId: r.order_id,
+    serviceDate: r.service_date,
+    description: r.description ?? "",
+  }));
 }

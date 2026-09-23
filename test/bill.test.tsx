@@ -3,7 +3,13 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { BillScreen } from "../src/web/components/BillScreen.js";
 import * as api from "../src/web/api.js";
-import type { Bill, BillLine, BillStatement, BillWeek } from "../src/web/api.js";
+import type {
+  Bill,
+  BillLine,
+  BillStatement,
+  BillWeek,
+  UnpricedMeal,
+} from "../src/web/api.js";
 import { formatMoney } from "../src/shared/money.js";
 import { formatDay } from "../src/shared/dates.js";
 import type { PaymentConfig } from "../src/shared/payment.js";
@@ -19,11 +25,17 @@ vi.mock("sonner", () => ({
 // what these tests are about.
 vi.mock("../src/web/api.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../src/web/api.js")>();
-  return { ...actual, fetchBill: vi.fn(), fetchBillLines: vi.fn() };
+  return {
+    ...actual,
+    fetchBill: vi.fn(),
+    fetchBillLines: vi.fn(),
+    fetchUnpricedMeals: vi.fn(),
+  };
 });
 
 const fetchBill = vi.mocked(api.fetchBill);
 const fetchBillLines = vi.mocked(api.fetchBillLines);
+const fetchUnpricedMeals = vi.mocked(api.fetchUnpricedMeals);
 const success = vi.mocked(toast.success);
 
 /* ------------------------------------------------------------------ fixture */
@@ -116,6 +128,7 @@ function headline(label: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   fetchBillLines.mockResolvedValue([]);
+  fetchUnpricedMeals.mockResolvedValue([]);
 });
 
 /* -------------------------------------------------------------------- tests */
@@ -560,5 +573,116 @@ describe("Bill, copying the reference", () => {
     } finally {
       if (stub) Object.defineProperty(navigator, "clipboard", stub);
     }
+  });
+});
+
+/* ==========================================================================
+   Meals the caterer has not priced yet
+   ========================================================================== */
+
+/**
+ * The caterer prices at the weekend, so a meal eaten on Tuesday can still have
+ * no price on Friday. `run_billing` leaves those orders off the bill rather
+ * than billing them at nothing, which is right and, left unsaid, produces a
+ * total a member cannot reconcile with their own week.
+ */
+function waiting(over: Partial<UnpricedMeal> = {}): UnpricedMeal {
+  return { orderId: 900, serviceDate: "2026-09-16", description: "Cơm tấm", ...over };
+}
+
+describe("A week still waiting on the caterer's price", () => {
+  it("says how many meals the total leaves out, and why", async () => {
+    serve();
+    fetchUnpricedMeals.mockResolvedValue([waiting(), waiting({ orderId: 901 })]);
+    renderBill();
+
+    expect(
+      await screen.findByText(
+        /2 meals are waiting on the caterer's price and are not in this total/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("reads as one meal rather than 1 meals", async () => {
+    serve();
+    fetchUnpricedMeals.mockResolvedValue([waiting()]);
+    renderBill();
+
+    expect(
+      await screen.findByText(/1 meal is waiting on the caterer's price and is not in this total/),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing at all when every meal has a price", async () => {
+    serve();
+    renderBill();
+
+    await waitFor(() => expect(headline("You owe")).toHaveTextContent(money(180_000)));
+    expect(screen.queryByText(/waiting on the caterer/)).not.toBeInTheDocument();
+  });
+
+  it("turns 'nothing owed yet' into the reason nothing is owed", async () => {
+    serve({ weeks: [OPEN_WEEK] });
+    fetchUnpricedMeals.mockResolvedValue([waiting({ serviceDate: "2026-09-22" })]);
+    renderBill();
+
+    expect(
+      await screen.findByText(/1 meal you ate is waiting on the caterer's price/),
+    ).toBeInTheDocument();
+  });
+
+  it("counts a waiting meal against the week it was eaten in", async () => {
+    // One in the lead week, one in the week before it. The lead card must not
+    // claim the older one.
+    serve({ weeks: [week(), week({ periodId: 10, periodStart: "2026-09-07", periodEnd: "2026-09-13", statement: statement({ id: 2 }) })] });
+    fetchUnpricedMeals.mockResolvedValue([
+      waiting({ serviceDate: "2026-09-16" }),
+      waiting({ orderId: 901, serviceDate: "2026-09-09" }),
+    ]);
+    renderBill();
+
+    const notes = await screen.findAllByText(/waiting on the caterer's price/);
+    expect(notes).toHaveLength(2);
+    for (const note of notes) {
+      expect(note.textContent).toMatch(/^1 meal is waiting/);
+    }
+  });
+
+  it("lists the waiting meals in the itemisation, with no price on them", async () => {
+    serve();
+    fetchUnpricedMeals.mockResolvedValue([waiting({ description: "Bún bò" })]);
+    fetchBillLines.mockResolvedValue([]);
+    renderBill();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Show the meals" }));
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByText("Bún bò")).toBeInTheDocument();
+    expect(within(table).getByText("Price to come")).toBeInTheDocument();
+    expect(
+      within(table).getByText(/Waiting on the caterer.s price, so it is not on this total/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the itemisation even when the week billed no line of its own", async () => {
+    serve({ weeks: [week({ lineCount: 0 })] });
+    fetchUnpricedMeals.mockResolvedValue([waiting()]);
+    renderBill();
+
+    expect(await screen.findByRole("button", { name: "Show the meals" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+  });
+
+  it("says it could not check rather than silently reporting none", async () => {
+    serve();
+    fetchUnpricedMeals.mockRejectedValue(new Error("column v_order_charges.unpriced does not exist"));
+    renderBill();
+
+    expect(
+      await screen.findByText(/could not check whether any of your meals are still waiting/),
+    ).toBeInTheDocument();
+    // The bill itself still loaded, so it is still shown.
+    expect(headline("You owe")).toHaveTextContent(money(180_000));
   });
 });

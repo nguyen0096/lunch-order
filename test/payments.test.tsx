@@ -8,10 +8,13 @@ import type {
   PaymentsData,
   PaymentsPeriod,
   PaymentsStatement,
+  SettlementDish,
+  SettlementWeek,
   UnmatchedPayment,
 } from "../src/web/api.js";
 import { formatMoney } from "../src/shared/money.js";
 import { formatDay } from "../src/shared/dates.js";
+import { dishKey } from "../src/shared/settlement.js";
 import type { Me, Org } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -39,6 +42,8 @@ const db = vi.hoisted(() => {
   };
   const calls: Call[] = [];
   const results: Array<{ data: unknown; error: unknown }> = [];
+  /** `settle_period` is an RPC, so it never reaches `from`. */
+  const rpcCalls: Array<{ fn: string; args: unknown }> = [];
 
   function from(table: string): Record<string, unknown> {
     const call: Call = { table, op: "select", payload: null, filters: [] };
@@ -74,12 +79,20 @@ const db = vi.hoisted(() => {
     return builder;
   }
 
-  return { calls, results, from };
+  function rpc(fn: string, args: unknown) {
+    rpcCalls.push({ fn, args });
+    return Promise.resolve(results.shift() ?? { data: null, error: null });
+  }
+
+  return { calls, results, from, rpc, rpcCalls };
 });
 
 vi.mock("../src/web/supabase.js", () => ({
   configError: null,
-  supabase: { from: (table: string) => db.from(table) },
+  supabase: {
+    from: (table: string) => db.from(table),
+    rpc: (fn: string, args: unknown) => db.rpc(fn, args),
+  },
   signIn: vi.fn(),
   signOut: vi.fn(),
 }));
@@ -91,6 +104,9 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     ...actual,
     fetchPayments: vi.fn(),
     fetchCatererSummary: vi.fn(),
+    fetchSettlementWeek: vi.fn(),
+    applyCatererPrices: vi.fn(),
+    settlePeriod: vi.fn(),
     recordPayment: vi.fn(),
     waiveStatement: vi.fn(),
   };
@@ -98,6 +114,9 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
 
 const fetchPayments = vi.mocked(api.fetchPayments);
 const fetchCatererSummary = vi.mocked(api.fetchCatererSummary);
+const fetchSettlementWeek = vi.mocked(api.fetchSettlementWeek);
+const applyCatererPrices = vi.mocked(api.applyCatererPrices);
+const settlePeriod = vi.mocked(api.settlePeriod);
 const recordPayment = vi.mocked(api.recordPayment);
 const waiveStatement = vi.mocked(api.waiveStatement);
 const success = vi.mocked(toast.success);
@@ -220,6 +239,69 @@ const CATERER: CatererSummary = {
   periodTotalMinor: 230_000,
 };
 
+/* ------------------------------------------------------ settling the week */
+
+/**
+ * A dish on a week's menus, waiting on a price. That is the ordinary state at
+ * settlement time and the menu it sits on is `locked` by then, which the
+ * late-price exemption covers: the fixture carries no menu status because the
+ * screen no longer needs one, only whether the row still holds NULL.
+ */
+function dish(over: Partial<SettlementDish> = {}): SettlementDish {
+  const name = over.name ?? "Cơm tấm";
+  return {
+    name,
+    // The real fetch folds the name the way the database folds it, and
+    // reconciliation matches on that. A fixture inventing its own key would
+    // pass tests the screen would fail.
+    key: dishKey(name),
+    ourCount: 4,
+    waitingCount: 4,
+    pricedTotalMinor: 0,
+    menuItemIds: [101],
+    unpricedMenuItemIds: [101],
+    existingPricesMinor: [],
+    days: ["2026-09-14"],
+    cancelledDays: [],
+    unpriced: true,
+    ...over,
+  };
+}
+
+/** A dish the board already priced, so the exemption does not reach it. */
+function pricedDish(name: string, minor: number, over: Partial<SettlementDish> = {}) {
+  return dish({
+    name,
+    waitingCount: 0,
+    pricedTotalMinor: minor * (over.ourCount ?? 4),
+    unpricedMenuItemIds: [],
+    existingPricesMinor: [minor],
+    unpriced: false,
+    ...over,
+  });
+}
+
+function settlementWeek(over: Partial<SettlementWeek> = {}): SettlementWeek {
+  return {
+    periodId: 11,
+    periodStart: "2026-09-14",
+    periodEnd: "2026-09-20",
+    dishes: [
+      dish(),
+      dish({
+        name: "Bún bò",
+        ourCount: 3,
+        waitingCount: 3,
+        menuItemIds: [102],
+        unpricedMenuItemIds: [102],
+      }),
+    ],
+    unpricedOrders: 7,
+    ordersWithoutDish: 0,
+    ...over,
+  };
+}
+
 function serve(over: Partial<PaymentsData> = {}, caterer: CatererSummary = CATERER): PaymentsData {
   const data: PaymentsData = {
     periods: [WEEK_14],
@@ -263,8 +345,12 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.calls.length = 0;
   db.results.length = 0;
+  db.rpcCalls.length = 0;
   recordPayment.mockResolvedValue({ id: 500, amountMinor: 130_000, matchedStatementId: 1 });
   waiveStatement.mockResolvedValue(undefined);
+  fetchSettlementWeek.mockResolvedValue(settlementWeek());
+  applyCatererPrices.mockResolvedValue({ dishes: 0, menuItems: 0, orderItems: 0 });
+  settlePeriod.mockResolvedValue({ lines: 0, statements: 0, totalMinor: 0 });
 });
 
 /* ---------------------------------------------------------- what gets written */
@@ -1060,5 +1146,424 @@ describe("Payments, what the caterer is owed", () => {
         `These do not agree. The meals listed here add up to ${money(230_000)}, and this week's own recorded total is ${money(200_000)}. One of them is stale, so check before you pay.`,
       ),
     ).toBeInTheDocument();
+  });
+});
+
+/* ==========================================================================
+   Settling the week
+   ========================================================================== */
+
+/** The message the feature exists for, in the shape the caterer sends it. */
+const CATERER_MESSAGE = "cơm tấm 50k, tuần rồi em ăn 5 phần, bún bò 60k, tổng cộng là 550k";
+
+/** The week the settle panel works on: open, so it can still be billed. */
+const OPEN = WEEK_21;
+
+function serveSettlement(over: Partial<SettlementWeek> = {}) {
+  serve({ periods: [OPEN], statements: [] }, { ...CATERER, days: [], count: 0, totalMinor: 0 });
+  const week = settlementWeek({
+    periodId: OPEN.periodId,
+    periodStart: OPEN.periodStart,
+    periodEnd: OPEN.periodEnd,
+    ...over,
+  });
+  fetchSettlementWeek.mockResolvedValue(week);
+  return week;
+}
+
+async function readTheMessage(message = CATERER_MESSAGE) {
+  const box = await screen.findByLabelText("The caterer’s message");
+  await userEvent.click(box);
+  await userEvent.paste(message);
+  await userEvent.click(screen.getByRole("button", { name: "Read the message" }));
+}
+
+/** The reconciliation row for one dish, so a count can be read off it. */
+function dishRow(name: string): HTMLElement {
+  const table = screen.getByRole("table", {
+    name: "The caterer's message checked against the board",
+  });
+  const row = within(table).getByText(name).closest("tr");
+  if (row === null) throw new Error(`no row for "${name}"`);
+  return row;
+}
+
+describe("Applying the caterer's prices, the writes that reach the database", () => {
+  it("prices every menu row, then re-fires the snapshot onto the orders", async () => {
+    db.results.push(
+      { data: [{ id: 101 }, { id: 111 }], error: null },
+      { data: [{ id: 5001 }], error: null },
+      { data: [{ id: 5002 }, { id: 5003 }], error: null },
+    );
+    const { applyCatererPrices: apply } = await realApi();
+
+    const applied = await apply({
+      orgId: 7,
+      prices: [{ name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101, 111] }],
+    });
+
+    expect(applied).toEqual({ dishes: 1, menuItems: 2, orderItems: 3 });
+
+    const [priced, first, second] = db.calls;
+    expect(priced).toMatchObject({
+      table: "menu_items",
+      op: "update",
+      payload: { price_minor: 50_000 },
+    });
+    expect(priced?.filters).toContainEqual(["org_id", 7]);
+
+    // The re-snapshot, and the whole reason pricing the menu is not enough.
+    // `order_items_snapshot` is BEFORE UPDATE **OF menu_item_id**, so naming
+    // that column is what re-fires it; writing the id back over itself is what
+    // makes the write a no-op to the data.
+    expect(first).toMatchObject({
+      table: "order_items",
+      op: "update",
+      payload: { menu_item_id: 101 },
+    });
+    expect(first?.filters).toContainEqual(["menu_item_id", 101]);
+    expect(second).toMatchObject({
+      table: "order_items",
+      op: "update",
+      payload: { menu_item_id: 111 },
+    });
+    expect(second?.filters).toContainEqual(["menu_item_id", 111]);
+  });
+
+  it("does not re-snapshot when the price could not be written", async () => {
+    // A locked menu is exactly this: `menu_items_frozen` refuses the dish
+    // change. Going on to touch the orders would claim a price that is not
+    // there.
+    db.results.push({
+      data: null,
+      error: { message: "the menu is locked; dishes can no longer be changed" },
+    });
+    const { applyCatererPrices: apply } = await realApi();
+
+    await expect(
+      apply({ orgId: 7, prices: [{ name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101] }] }),
+    ).rejects.toMatchObject({ message: /the menu is locked/ });
+
+    expect(db.calls.map((c) => c.table)).toEqual(["menu_items"]);
+  });
+
+  it("bills the week through settle_period, the only way in from a browser", async () => {
+    db.results.push({ data: [{ lines: 5, statements: 2, total_minor: 380_000 }], error: null });
+    const { settlePeriod: settle } = await realApi();
+
+    expect(await settle(12)).toEqual({ lines: 5, statements: 2, totalMinor: 380_000 });
+    expect(db.rpcCalls).toEqual([{ fn: "settle_period", args: { p_period_id: 12 } }]);
+  });
+
+  it("says so rather than reporting zero when the run returns nothing", async () => {
+    db.results.push({ data: [], error: null });
+    const { settlePeriod: settle } = await realApi();
+
+    await expect(settle(12)).rejects.toThrow(/not billed/i);
+  });
+});
+
+describe("Checking the caterer's message against the board", () => {
+  it("says how many meals are waiting on a price and why the week is open", async () => {
+    serveSettlement();
+    renderPayments();
+
+    expect(
+      await screen.findByText(
+        /7 meals this week are still waiting on a price.*held off the bill.*cannot close/s,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("shows their count beside ours, each named for whose it is", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+
+    const table = await screen.findByRole("table", {
+      name: "The caterer's message checked against the board",
+    });
+    expect(within(table).getByText("Their count")).toBeInTheDocument();
+    expect(within(table).getByText("Our count")).toBeInTheDocument();
+
+    const row = dishRow("Cơm tấm");
+    expect(within(row).getByText("5")).toBeInTheDocument();
+    expect(within(row).getByText("4")).toBeInTheDocument();
+  });
+
+  it("makes a disagreement impossible to miss, and says which number is whose", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+
+    const row = dishRow("Cơm tấm");
+    expect(within(row).getByText("Counts differ")).toBeInTheDocument();
+    expect(
+      within(row).getByText("The caterer counted 5, the board recorded 4. Check before you pay."),
+    ).toBeInTheDocument();
+  });
+
+  it("says a count is missing rather than showing nothing", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+
+    const row = dishRow("Bún bò");
+    expect(within(row).getByText("They did not say")).toBeInTheDocument();
+    expect(within(row).getByText(/priced this without saying how many/)).toBeInTheDocument();
+  });
+
+  it("keeps a dish the caterer names that we never served", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage("cơm tấm 50k 4 phần, bún bò 60k 3 phần, phở gà 45k 2 phần");
+
+    const row = dishRow("phở gà");
+    expect(within(row).getByText("Not on our board")).toBeInTheDocument();
+    expect(within(row).getByText("Never served")).toBeInTheDocument();
+  });
+
+  it("keeps a dish we served that their message omits", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage("cơm tấm 50k 4 phần");
+
+    const row = dishRow("Bún bò");
+    expect(within(row).getByText("Not in their message")).toBeInTheDocument();
+    // Twice over: the narrow layout puts the price under the dish name and the
+    // wide one gives it a column. Both have to say there is not one.
+    expect(within(row).getAllByText("Price to come").length).toBeGreaterThan(0);
+  });
+
+  it("keeps their arithmetic, their stated total and ours apart", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+
+    expect(screen.getByText("Their prices at our counts")).toBeInTheDocument();
+    // 4 x 50.000 + 3 x 60.000, the board's counts and their prices.
+    expect(screen.getByText(money(380_000))).toBeInTheDocument();
+    expect(screen.getByText("The total they stated")).toBeInTheDocument();
+    expect(screen.getByText(money(550_000))).toBeInTheDocument();
+  });
+});
+
+describe("Settling the week", () => {
+  it("names every price, the meals it moves and the figure the week lands on", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+    await userEvent.click(screen.getByRole("button", { name: "Settle the week" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("2 dishes get a price, across 2 menu rows.")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/copied onto 7 meals already eaten, so this changes what people owe/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText(new RegExp(money(380_000)))).toBeInTheDocument();
+    expect(within(dialog).getByText(/Nothing has been written yet/)).toBeInTheDocument();
+  });
+
+  it("writes the prices, bills the week, and reports what the run returned", async () => {
+    serveSettlement();
+    applyCatererPrices.mockResolvedValue({ dishes: 2, menuItems: 2, orderItems: 7 });
+    settlePeriod.mockResolvedValue({ lines: 5, statements: 2, totalMinor: 380_000 });
+    renderPayments();
+    await readTheMessage();
+    await userEvent.click(screen.getByRole("button", { name: "Settle the week" }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Settle the week" }),
+    );
+
+    await waitFor(() =>
+      expect(applyCatererPrices).toHaveBeenCalledWith({
+        orgId: 7,
+        prices: [
+          { name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101] },
+          { name: "Bún bò", priceMinor: 60_000, menuItemIds: [102] },
+        ],
+      }),
+    );
+    expect(settlePeriod).toHaveBeenCalledWith(OPEN.periodId);
+    expect(success).toHaveBeenCalledWith(
+      `Settled 21–27 September: priced 2 dishes onto 7 meals, and billed 5 meals into 2 statements, ${rawMoney(
+        380_000,
+      )}.`,
+    );
+  });
+
+  /**
+   * The menus of the week being settled are all `locked` by the time the
+   * caterer writes -- the tick locks on cutoff -- and that is the ordinary
+   * case, not an obstacle. `enforce_menu_item_frozen` exempts a price going
+   * from NULL to a value, so the write is expected to go through with nothing
+   * said about it.
+   */
+  it("prices a locked week without a word about it being locked", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+
+    expect(screen.queryByText(/locked/i)).not.toBeInTheDocument();
+    const settleButton = screen.getByRole("button", { name: /Settle the week/ });
+    expect(settleButton).not.toHaveAttribute("aria-disabled");
+
+    await userEvent.click(settleButton);
+    await userEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Settle the week" }),
+    );
+
+    await waitFor(() => expect(applyCatererPrices).toHaveBeenCalled());
+    expect(settlePeriod).toHaveBeenCalledWith(OPEN.periodId);
+  });
+
+  it("reports a dish the board already priced differently, and does not write it", async () => {
+    // The exemption is NULL to a value and nothing wider, so this row cannot
+    // be re-priced. Attempting it would raise and abort the dishes after it;
+    // skipping it quietly would hide a disagreement about money.
+    serveSettlement({
+      dishes: [
+        pricedDish("Cơm tấm", 45_000),
+        dish({
+          name: "Bún bò",
+          ourCount: 3,
+          waitingCount: 3,
+          menuItemIds: [102],
+          unpricedMenuItemIds: [102],
+        }),
+      ],
+    });
+    renderPayments();
+    await readTheMessage();
+
+    const row = dishRow("Cơm tấm");
+    expect(within(row).getByText("Price already set")).toBeInTheDocument();
+    expect(
+      within(row).getByText(
+        new RegExp(`The board already charges ${money(45_000)} for this.*nothing here changes`),
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Settle the week/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText(
+        new RegExp(`board already prices Cơm tấm at ${money(45_000)}.*says ${money(50_000)}`),
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Settle the week" }));
+
+    // Only the dish that was still waiting is written.
+    await waitFor(() =>
+      expect(applyCatererPrices).toHaveBeenCalledWith({
+        orgId: 7,
+        prices: [{ name: "Bún bò", priceMinor: 60_000, menuItemIds: [102] }],
+      }),
+    );
+  });
+
+  it("writes only the rows still waiting when a dish is part priced across the week", async () => {
+    // Monday was priced at 45.000 before the menu locked; Tuesday never was.
+    // The exemption reaches Tuesday's row and not Monday's, so the apply must
+    // carry exactly one of the two ids -- handing it both would raise on
+    // Monday and abort every dish after it.
+    serveSettlement({
+      dishes: [
+        dish({
+          name: "Cơm tấm",
+          ourCount: 4,
+          waitingCount: 1,
+          pricedTotalMinor: 45_000 * 3,
+          menuItemIds: [101, 111],
+          unpricedMenuItemIds: [111],
+          existingPricesMinor: [45_000],
+          days: ["2026-09-21", "2026-09-22"],
+        }),
+        dish({
+          name: "Bún bò",
+          ourCount: 3,
+          waitingCount: 3,
+          menuItemIds: [102],
+          unpricedMenuItemIds: [102],
+        }),
+      ],
+    });
+    renderPayments();
+    await readTheMessage();
+
+    const row = dishRow("Cơm tấm");
+    expect(within(row).getByText("Price already set")).toBeInTheDocument();
+    expect(
+      within(row).getByText(new RegExp(`only the 1 still waiting would take ${money(50_000)}`)),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Settle the week/ }));
+    await userEvent.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Settle the week" }),
+    );
+
+    await waitFor(() =>
+      expect(applyCatererPrices).toHaveBeenCalledWith({
+        orgId: 7,
+        prices: [
+          { name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [111] },
+          { name: "Bún bò", priceMinor: 60_000, menuItemIds: [102] },
+        ],
+      }),
+    );
+  });
+
+  it("bills the week even when every price is already in", async () => {
+    serveSettlement({
+      dishes: [pricedDish("Cơm tấm", 50_000), pricedDish("Bún bò", 60_000, { ourCount: 3 })],
+      unpricedOrders: 0,
+    });
+    renderPayments();
+    await readTheMessage();
+
+    await userEvent.click(screen.getByRole("button", { name: /Settle the week/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByText("No price on this week changes. This runs the billing and nothing else."),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Settle the week" }));
+    await waitFor(() => expect(settlePeriod).toHaveBeenCalledWith(OPEN.periodId));
+    expect(applyCatererPrices).toHaveBeenCalledWith({ orgId: 7, prices: [] });
+  });
+
+  it("counts what the week will bill from the board's own prices, not the caterer's", async () => {
+    // Cơm tấm is settled at 45.000 for 4, and stays there. Bún bò takes the
+    // caterer's 60.000 for 3. So 180.000 + 180.000, never 50.000 x 4.
+    serveSettlement({
+      dishes: [
+        pricedDish("Cơm tấm", 45_000),
+        dish({
+          name: "Bún bò",
+          ourCount: 3,
+          waitingCount: 3,
+          menuItemIds: [102],
+          unpricedMenuItemIds: [102],
+        }),
+      ],
+    });
+    renderPayments();
+    await readTheMessage();
+
+    expect(screen.getByText("What this week will bill")).toBeInTheDocument();
+    expect(screen.getByText(money(360_000))).toBeInTheDocument();
+  });
+
+  it("will not settle before the message has been read", async () => {
+    serveSettlement();
+    renderPayments();
+
+    await screen.findByLabelText("The caterer’s message");
+    expect(screen.queryByRole("button", { name: /Settle the week/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Read the message" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
   });
 });

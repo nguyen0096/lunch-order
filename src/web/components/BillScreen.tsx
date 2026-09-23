@@ -2,12 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, EmptyState, Skeleton } from "@/ui";
 import {
   fetchBill,
+  fetchUnpricedMeals,
   humanError,
   isSettled,
   outstandingMinor,
   type Bill,
   type BillStatement,
   type BillWeek,
+  type UnpricedMeal,
 } from "../api.js";
 import { BillLines } from "./bill/BillLines.js";
 import { PaymentDetails } from "./bill/PaymentDetails.js";
@@ -32,15 +34,43 @@ import type { Org } from "../../shared/types.js";
 export function BillScreen({ me, org }: ScreenProps) {
   const [bill, setBill] = useState<Bill | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** Meals eaten that the caterer has not priced, so no total includes them. */
+  const [waiting, setWaiting] = useState<UnpricedMeal[]>([]);
+  /**
+   * Said out loud rather than swallowed. A total that leaves meals out is only
+   * honest while the screen can say how many, so a failure to find that out is
+   * news in its own right -- and it must not blank a bill that loaded fine.
+   */
+  const [waitingError, setWaitingError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    let loaded: Bill;
     try {
-      setBill(await fetchBill({ orgId: org.id, profileId: me.profileId }));
+      loaded = await fetchBill({ orgId: org.id, profileId: me.profileId });
+      setBill(loaded);
       setLoadError(null);
     } catch (e) {
       // `useAction` covers every write. A read has no toast to fire and nothing
       // to revert, so its failure is a state the screen renders instead.
       setLoadError(humanError(e));
+      return;
+    }
+
+    // One query across every week on screen, bucketed below. A query per week
+    // would be a dozen round trips to answer one sentence.
+    const from = loaded.weeks.at(-1)?.periodStart;
+    const to = loaded.weeks[0]?.periodEnd;
+    if (from === undefined || to === undefined) {
+      setWaiting([]);
+      setWaitingError(null);
+      return;
+    }
+    try {
+      setWaiting(await fetchUnpricedMeals({ orgId: org.id, profileId: me.profileId, from, to }));
+      setWaitingError(null);
+    } catch (e) {
+      setWaiting([]);
+      setWaitingError(humanError(e));
     }
   }, [org.id, me.profileId]);
 
@@ -75,16 +105,22 @@ export function BillScreen({ me, org }: ScreenProps) {
 
   if (lead === undefined || lead.statement === null) {
     return (
-      <EmptyState heading="Nothing owed yet">
-        {openWeek
-          ? `This week closes ${weekdayName(addDays(openWeek.periodEnd, 1))}.`
-          : "Nothing has been billed to you yet. Your first bill arrives at the end of a week you eat in."}
-      </EmptyState>
+      <section className="flex max-w-2xl flex-col gap-4">
+        <EmptyState heading="Nothing owed yet">
+          {openWeek
+            ? `This week closes ${weekdayName(addDays(openWeek.periodEnd, 1))}.`
+            : "Nothing has been billed to you yet. Your first bill arrives at the end of a week you eat in."}
+        </EmptyState>
+        {/* Otherwise "nothing owed" reads as "you ate nothing", and somebody
+            who ate all week is told the opposite of the truth. */}
+        <WaitingNote waiting={waiting} error={waitingError} nothingBilled />
+      </section>
     );
   }
 
   const statement = lead.statement;
   const outstanding = outstandingMinor(statement);
+  const leadWaiting = waitingIn(lead, waiting);
 
   return (
     <section className="flex max-w-2xl flex-col gap-8">
@@ -95,6 +131,8 @@ export function BillScreen({ me, org }: ScreenProps) {
         </header>
 
         <Amount statement={statement} currency={org.currency} timeZone={org.timezone} />
+
+        <WaitingNote waiting={leadWaiting} error={waitingError} />
 
         {outstanding > 0 && (
           <PaymentDetails
@@ -111,6 +149,7 @@ export function BillScreen({ me, org }: ScreenProps) {
           profileId={me.profileId}
           currency={org.currency}
           lineCount={lead.lineCount}
+          waiting={leadWaiting}
         />
       </article>
 
@@ -133,7 +172,12 @@ export function BillScreen({ me, org }: ScreenProps) {
           <ul className="flex flex-col gap-3">
             {past.map((week) => (
               <li key={week.periodId}>
-                <PastWeek week={week} org={org} profileId={me.profileId} />
+                <PastWeek
+                  week={week}
+                  org={org}
+                  profileId={me.profileId}
+                  waiting={waitingIn(week, waiting)}
+                />
               </li>
             ))}
           </ul>
@@ -210,6 +254,57 @@ function Amount({
 }
 
 /**
+ * The meals this total leaves out, and why.
+ *
+ * The caterer prices the week at the weekend, so a meal eaten on Tuesday can
+ * still have no price on Friday. `run_billing` holds those orders off the bill
+ * entirely rather than billing them at zero, because zero is a real price and
+ * on a bill it reads as a free lunch. That is the right arithmetic and the
+ * wrong silence: a total quietly missing three meals is a total somebody
+ * checks against their own memory and disbelieves.
+ *
+ * So the number is explained rather than merely correct. Saying how many are
+ * coming is also the only way somebody can tell an incomplete bill from a
+ * cheap week.
+ */
+function WaitingNote({
+  waiting,
+  error,
+  nothingBilled = false,
+}: {
+  waiting: UnpricedMeal[];
+  /** Set when we could not find out. Said rather than treated as "none". */
+  error: string | null;
+  /** True where nothing has been billed at all, which changes the sentence. */
+  nothingBilled?: boolean;
+}) {
+  if (error !== null) {
+    return (
+      <p className="rounded-md bg-warn-subtle px-3 py-2 text-sm text-warn-subtle-fg">
+        {`We could not check whether any of your meals are still waiting on a price, so this total may be missing some. ${error}`}
+      </p>
+    );
+  }
+  if (waiting.length === 0) return null;
+
+  const count = `${waiting.length} ${waiting.length === 1 ? "meal" : "meals"}`;
+  return (
+    <p className="rounded-md bg-warn-subtle px-3 py-2 text-sm text-warn-subtle-fg">
+      {nothingBilled
+        ? `${count} you ate ${waiting.length === 1 ? "is" : "are"} waiting on the caterer's price, so ${waiting.length === 1 ? "it is" : "they are"} not billed yet. Nothing is owed for ${waiting.length === 1 ? "it" : "them"} until the price arrives.`
+        : `${count} ${waiting.length === 1 ? "is" : "are"} waiting on the caterer's price and ${waiting.length === 1 ? "is" : "are"} not in this total. ${waiting.length === 1 ? "It arrives" : "They arrive"} on a later bill once the caterer says what ${waiting.length === 1 ? "it" : "they"} cost.`}
+    </p>
+  );
+}
+
+/** The waiting meals that fall inside one week. A service date is a local day. */
+function waitingIn(week: BillWeek, waiting: UnpricedMeal[]): UnpricedMeal[] {
+  return waiting.filter(
+    (m) => m.serviceDate >= week.periodStart && m.serviceDate <= week.periodEnd,
+  );
+}
+
+/**
  * One sentence, two sizes. The label and the number are a single paragraph so
  * that a screen reader says "you owe 180.000 ₫" rather than reading a stray
  * figure with no idea what it is.
@@ -234,10 +329,12 @@ function PastWeek({
   week,
   org,
   profileId,
+  waiting,
 }: {
   week: BillWeek;
   org: Org;
   profileId: string;
+  waiting: UnpricedMeal[];
 }) {
   const statement = week.statement;
   if (statement === null) return null;
@@ -258,12 +355,14 @@ function PastWeek({
           {`${formatMoney(outstandingMinor(statement), org.currency)} of this is still to pay, and it is carried into the week above.`}
         </p>
       )}
+      <WaitingNote waiting={waiting} error={null} />
       <BillLines
         orgId={org.id}
         periodId={week.periodId}
         profileId={profileId}
         currency={org.currency}
         lineCount={week.lineCount}
+        waiting={waiting}
       />
     </div>
   );

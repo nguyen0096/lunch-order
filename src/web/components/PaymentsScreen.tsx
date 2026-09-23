@@ -15,6 +15,7 @@ import {
 import { ApplyDialog } from "./payments/ApplyDialog.js";
 import { CatererSummary } from "./payments/CatererSummary.js";
 import { RecordDialog, type RecordDraft } from "./payments/RecordDialog.js";
+import { SettleWeek } from "./payments/SettleWeek.js";
 import { StatementRows } from "./payments/StatementRows.js";
 import { UnmatchedPayments } from "./payments/UnmatchedPayments.js";
 import { meals, people, weekLabel } from "./payments/labels.js";
@@ -211,6 +212,16 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
               />
             </>
           )}
+
+          {/* Above the caterer's summary, because it is what makes that
+              summary true: an unpriced meal is missing from it entirely, and
+              the figure below is worth reading only once the week is priced. */}
+          <SettleWeek
+            orgId={org.id}
+            period={period}
+            currency={org.currency}
+            onSettled={() => void load()}
+          />
 
           <CatererSummary
             orgId={org.id}
