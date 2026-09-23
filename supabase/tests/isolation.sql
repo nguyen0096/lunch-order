@@ -26,6 +26,7 @@ grant insert on probe to authenticated;
 do $$
 declare
   v_a bigint; v_b bigint; v_menu_b bigint; v_date date; v_before bigint; v_after bigint;
+  v_secrets bigint; v_secrets_seen bigint;
 begin
   select id into v_a from public.organizations where slug = 'org-a';
   select id into v_b from public.organizations where slug = 'org-b';
@@ -33,11 +34,34 @@ begin
     from public.menus m where m.org_id = v_b limit 1;
   select count(*) into v_before from public.orders where org_id = v_b;
 
+  -- A webhook secret for each office, written here as the owner so the probe
+  -- below cannot pass on an empty table. The whole file rolls back.
+  insert into public.org_webhook_secrets (org_id, secret)
+  values (v_a, repeat('a', 64)), (v_b, repeat('b', 64))
+  on conflict (org_id) do nothing;
+  select count(*) into v_secrets from public.org_webhook_secrets;
+
   set local role authenticated;
   perform set_config('request.jwt.claims',
     '{"sub":"22222222-2222-2222-2222-222222222222","role":"authenticated"}', true);
 
+  -- org_webhook_secrets has RLS on and no policy at all, and the grant was
+  -- revoked as well, so a member is refused twice over. The missing GRANT
+  -- raises 42501 and would abort this block, which is why it is caught: if a
+  -- GRANT is ever restored, the empty policy list still returns zero rows.
+  -- Either refusal is the same answer -- a member reads nothing, not even
+  -- their own office's secret.
+  begin
+    select count(*) into v_secrets_seen from public.org_webhook_secrets;
+  exception when insufficient_privilege then
+    v_secrets_seen := 0;
+  end;
+
   insert into probe values
+    ('control: webhook secrets exist', (v_secrets >= 2)::text, 'true'),
+    -- Unqualified on purpose: this counts every row in the table, their own
+    -- office's included, and a member sees none of them.
+    ('leak: org_webhook_secrets', v_secrets_seen::text, '0'),
     ('control: acting as Binh',
        ((select auth.uid())::text = '22222222-2222-2222-2222-222222222222')::text, 'true'),
     ('control: role downgraded', (current_role = 'authenticated')::text, 'true'),

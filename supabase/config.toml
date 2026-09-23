@@ -27,3 +27,17 @@ verify_jwt = true
 # proxy is someone else's token bill.
 [functions.parse-assist]
 verify_jwt = true
+
+# Off, and this is the one that has to be said out loud. SePay is a bank
+# reconciliation service: it holds no Supabase key, has nowhere to put one, and
+# the platform's JWT gate would reject every delivery before the function's own
+# check ran -- seven retries, then silence, while the money went unrecorded.
+#
+# With the gate off, the Authorization: Bearer Apikey check inside the function
+# is the ONLY thing in front of an endpoint that writes payments. That secret is
+# per office and lives in public.org_webhook_secrets, not in this function's
+# environment: the handler routes by the account number in the payload, so a
+# single shared secret would let any office holding it address a delivery to any
+# other. An office with no secret stored refuses every delivery.
+[functions.sepay]
+verify_jwt = false
