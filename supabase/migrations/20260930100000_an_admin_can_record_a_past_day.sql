@@ -1,4 +1,4 @@
--- Backfill: an office that starts mid-week still wants the days before it did.
+-- An office that starts mid-week still wants the days before it started.
 --
 -- This app is a tracker. Refusing to record a day that has already happened is
 -- the tool arguing with reality, and it made onboarding impossible to do
@@ -49,7 +49,7 @@ $fn$;
 -- A standing order is a prediction -- "this person eats on Tuesdays". Applying
 -- one to a Tuesday that has already happened writes a guess into the record of
 -- what was actually eaten, which is the one thing a tracker must not do. An
--- admin backfilling a day says who ate; the rule does not get a vote.
+-- admin recording a day says who ate; the rule does not get a vote.
 create or replace function public.trg_menu_published_materialize()
 returns trigger
 language plpgsql
@@ -72,9 +72,10 @@ $fn$;
 -- 3. An admin can open the week they are billing into.
 --
 -- Billing periods were created only by the hourly tick, on the org's week-start
--- day. So a backfilled week had nowhere to bill into, and -- separately -- an
--- admin holding the caterer's Saturday message could not settle last week until
--- Monday morning. One function answers both.
+-- day. So a week recorded after the fact had nowhere to bill into, and --
+-- separately -- an
+-- admin holding the caterer's Saturday message could not settle last week
+-- until Monday morning. One function answers both.
 --
 -- ensure_billing_period itself stays revoked from every browser role: it takes
 -- an org id and would otherwise let any signed-in user open weeks in somebody

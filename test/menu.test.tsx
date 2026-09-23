@@ -519,6 +519,21 @@ describe("When orders close", () => {
     vi.useRealTimers();
   });
 
+  it("does not call an elapsed cutoff a mistake on a day that is already over", async () => {
+    // Recording a day that has happened is a supported flow now, and its cutoff
+    // is always in the past -- it derives to the evening before. Warning here
+    // would make every recorded day unpublishable.
+    const past = addDays(TODAY, -3);
+    serve({ menu: null });
+    renderMenu();
+    await ready();
+
+    set(screen.getByLabelText("Service date"), past);
+    await waitFor(() =>
+      expect(screen.queryByText(/That cutoff has already passed/)).toBeNull(),
+    );
+  });
+
   it("refuses a cutoff after the meal, which nothing else would refuse", async () => {
     serve({ menu: menu() });
     renderMenu();

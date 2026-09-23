@@ -8,7 +8,7 @@
  * instant, and whether the pair says something the database will happily accept
  * but nobody wants.
  */
-import { zonedTimeToInstant } from "../../../shared/dates.js";
+import { todayIn, zonedTimeToInstant } from "../../../shared/dates.js";
 import { longDay } from "./labels.js";
 
 export type LocalCutoff = { date: string; time: string };
@@ -66,6 +66,12 @@ export function cutoffProblem(a: {
     const stored = localCutoff(a.storedAt, a.timeZone);
     if (stored.date === a.cutoff.date && stored.time === a.cutoff.time) return null;
   }
+
+  // A day that is already over is a record, not an invitation to order, so its
+  // cutoff being in the past is the point rather than a mistake. Warning here
+  // would make every recorded day unpublishable -- the cutoff derives to the
+  // evening before, which for a past day is always past.
+  if (a.serviceDate < todayIn(a.timeZone, a.now)) return null;
 
   if (Date.parse(cutoffInstant(a.cutoff, a.timeZone)) <= a.now.getTime()) {
     // Not "nobody could order": admins are exempt from the cutoff, and the

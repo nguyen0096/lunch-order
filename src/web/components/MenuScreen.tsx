@@ -47,6 +47,16 @@ import type { MenuStatus } from "../../shared/types.js";
 const STRIP_DAYS = 12;
 
 /**
+ * How far back the strip reaches.
+ *
+ * An office that starts on Wednesday wants Monday and Tuesday, and the only way
+ * in was the date field, which is a worse way to pick a day than a row of days.
+ * A fortnight is the onboarding case; anything older is still reachable by
+ * typing the date.
+ */
+const STRIP_DAYS_BACK = 14;
+
+/**
  * Turn the caterer's chat message into a published menu without retyping it.
  *
  * The shape of the screen is the shape of the job: the message on one side, the
@@ -103,7 +113,11 @@ export function MenuScreen({ me, org }: ScreenProps) {
     try {
       const [editable, cal] = await Promise.all([
         fetchMenuEditor(org.id, serviceDate),
-        fetchMenuCalendar({ orgId: org.id, from: today, to: addDays(today, STRIP_DAYS) }),
+        fetchMenuCalendar({
+          orgId: org.id,
+          from: addDays(today, -STRIP_DAYS_BACK),
+          to: addDays(today, STRIP_DAYS),
+        }),
       ]);
       const next = await fetchPublishImpact({
         orgId: org.id,
@@ -260,11 +274,14 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const strip = useMemo(() => {
     const out: string[] = [];
-    for (let i = 0; i < STRIP_DAYS; i += 1) {
+    for (let i = -STRIP_DAYS_BACK; i < STRIP_DAYS; i += 1) {
       const day = addDays(today, i);
       // Weekends only when lunch actually happens on them, the same rule the
-      // board uses: an always-empty Sunday is width spent on nothing.
-      if (isoWeekday(day) <= 5 || calendar.has(day)) out.push(day);
+      // board uses: an always-empty Sunday is width spent on nothing. Past days
+      // only when something is recorded on them, or the strip is mostly a
+      // fortnight of empty boxes in front of the day you came here for.
+      const past = day < today;
+      if (past ? calendar.has(day) : isoWeekday(day) <= 5 || calendar.has(day)) out.push(day);
     }
     if (!out.includes(serviceDate)) out.unshift(serviceDate);
     return out;
