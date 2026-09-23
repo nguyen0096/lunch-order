@@ -535,7 +535,7 @@ describe("When orders close", () => {
 
     expect(publishButton()).toHaveAttribute("aria-disabled", "true");
     expect(
-      screen.getAllByText("That cutoff has already passed. Nobody but an admin could order").length,
+      screen.getAllByText("That cutoff has already passed, so only an admin could still order. Move it later").length,
     ).toBeGreaterThan(0);
   });
 
@@ -548,7 +548,7 @@ describe("When orders close", () => {
 
     expect(publishButton()).not.toHaveAttribute("aria-disabled");
     expect(
-      screen.queryByText("That cutoff has already passed. Nobody but an admin could order"),
+      screen.queryByText("That cutoff has already passed, so only an admin could still order. Move it later"),
     ).not.toBeInTheDocument();
   });
 

@@ -68,7 +68,10 @@ export function cutoffProblem(a: {
   }
 
   if (Date.parse(cutoffInstant(a.cutoff, a.timeZone)) <= a.now.getTime()) {
-    return "That cutoff has already passed. Nobody but an admin could order";
+    // Not "nobody could order": admins are exempt from the cutoff, and the
+    // only person reading this sentence is an admin. Saying "nobody" to the
+    // one person it does not apply to is how this reads as a refusal.
+    return "That cutoff has already passed, so only an admin could still order. Move it later";
   }
   return null;
 }
