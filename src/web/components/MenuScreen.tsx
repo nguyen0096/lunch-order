@@ -26,7 +26,13 @@ import {
 import { PublishDialog } from "./menu/PublishDialog.js";
 import { StatusActions } from "./menu/StatusActions.js";
 import { CutoffFields } from "./menu/CutoffFields.js";
-import { cutoffInstant, cutoffProblem, localCutoff, type LocalCutoff } from "./menu/cutoff.js";
+import {
+  cutoffInstant,
+  cutoffProblem,
+  defaultCutoff,
+  localCutoff,
+  type LocalCutoff,
+} from "./menu/cutoff.js";
 import {
   cutoffLabel,
   dishes as dishCount,
@@ -83,8 +89,12 @@ export function MenuScreen({ me, org }: ScreenProps) {
   // belongs to the day they just left.
   const defaultCutoffTime = org.defaultCutoffLocalTime.slice(0, 5);
   const [cutoff, setCutoff] = useState<LocalCutoff & { pinned: boolean }>(() => ({
-    date: addDays(nextServiceDay(today), -1),
-    time: defaultCutoffTime,
+    ...defaultCutoff({
+      serviceDate: nextServiceDay(today),
+      defaultTime: defaultCutoffTime,
+      timeZone: org.timezone,
+      now: appNow(),
+    }),
     pinned: false,
   }));
 
@@ -138,8 +148,14 @@ export function MenuScreen({ me, org }: ScreenProps) {
         if (editable !== null) {
           return { ...localCutoff(editable.orderCutoffAt, org.timezone), pinned: false };
         }
-        const evening = addDays(serviceDate, -1);
-        return c.pinned || c.date === evening ? c : { ...c, date: evening };
+        if (c.pinned) return c;
+        const next = defaultCutoff({
+          serviceDate,
+          defaultTime: defaultCutoffTime,
+          timeZone: org.timezone,
+          now: appNow(),
+        });
+        return c.date === next.date && c.time === next.time ? c : { ...next, pinned: false };
       });
 
       setMenu(editable);
@@ -191,9 +207,17 @@ export function MenuScreen({ me, org }: ScreenProps) {
   // load to land, so the sentence under Publish is never briefly about the day
   // that was on screen a moment ago.
   useEffect(() => {
-    const evening = addDays(serviceDate, -1);
-    setCutoff((c) => (c.pinned || c.date === evening ? c : { ...c, date: evening }));
-  }, [serviceDate]);
+    setCutoff((c) => {
+      if (c.pinned) return c;
+      const next = defaultCutoff({
+        serviceDate,
+        defaultTime: defaultCutoffTime,
+        timeZone: org.timezone,
+        now: appNow(),
+      });
+      return c.date === next.date && c.time === next.time ? c : { ...next, pinned: false };
+    });
+  }, [serviceDate, defaultCutoffTime, org.timezone]);
 
   const status: MenuStatus | null = menu?.status ?? null;
   const frozen = readOnlyReason(status);

@@ -522,6 +522,28 @@ describe("When orders close", () => {
     vi.useRealTimers();
   });
 
+  it("offers a cutoff that has not already passed for a menu written today", async () => {
+    // The default is "the evening before", which for a menu written on the day
+    // itself is already gone. Offering it and then refusing to publish it is
+    // the screen creating the problem and blaming the person for it.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(zonedTimeToInstant(TODAY, "15:36", TZ));
+    serve({ menu: null });
+    renderMenu();
+    await ready();
+
+    set(screen.getByLabelText("Service date"), TODAY);
+
+    await waitFor(() => {
+      expect(screen.queryByText(/That cutoff has already passed/)).toBeNull();
+    });
+    expect(screen.getByLabelText("Orders close at")).toHaveValue("16:00");
+    // Publish is still unavailable, but for the honest reason -- there are no
+    // dishes yet -- and no longer because of a cutoff the screen chose itself.
+    expect(screen.getByText("Add at least one dish")).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
   it("does not call an elapsed cutoff a mistake on a day that is already over", async () => {
     // Recording a day that has happened is a supported flow now, and its cutoff
     // is always in the past -- it derives to the evening before. Warning here

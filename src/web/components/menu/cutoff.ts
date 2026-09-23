@@ -8,7 +8,7 @@
  * instant, and whether the pair says something the database will happily accept
  * but nobody wants.
  */
-import { todayIn, zonedTimeToInstant } from "../../../shared/dates.js";
+import { addDays, todayIn, zonedTimeToInstant } from "../../../shared/dates.js";
 import { longDay } from "./labels.js";
 
 export type LocalCutoff = { date: string; time: string };
@@ -80,4 +80,36 @@ export function cutoffProblem(a: {
     return "That cutoff has already passed, so only an admin could still order. Move it later";
   }
   return null;
+}
+
+/**
+ * The cutoff to offer for a day nobody has set one for.
+ *
+ * The evening before, at the office's own time -- except that for a menu being
+ * written on the day itself, the evening before has already gone. Offering it
+ * anyway hands the admin a value that is dead on arrival and then refuses to
+ * publish it, which is the shape of the bug this exists to stop: the screen
+ * created the problem and then blamed the person for it.
+ *
+ * So when the derived cutoff has already passed and the day has not, the offer
+ * moves to the next whole hour. That is always at least a minute away, reads as
+ * a decision ("closes at 16:00") rather than as an accident, and is still a
+ * suggestion -- the admin can move it, and pinning still wins.
+ *
+ * A day that is already over keeps the evening before. It is a record of when
+ * ordering closed, not an invitation, and nothing about it should look live.
+ */
+export function defaultCutoff(a: {
+  serviceDate: string;
+  /** `HH:MM`, the office's own default. */
+  defaultTime: string;
+  timeZone: string;
+  now: Date;
+}): LocalCutoff {
+  const evening: LocalCutoff = { date: addDays(a.serviceDate, -1), time: a.defaultTime };
+  if (a.serviceDate < todayIn(a.timeZone, a.now)) return evening;
+  if (Date.parse(cutoffInstant(evening, a.timeZone)) > a.now.getTime()) return evening;
+
+  const nextHour = localCutoff(new Date(a.now.getTime() + 3_600_000).toISOString(), a.timeZone);
+  return { date: nextHour.date, time: `${nextHour.time.slice(0, 2)}:00` };
 }
