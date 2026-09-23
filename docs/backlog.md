@@ -128,21 +128,66 @@ builds the EMVCo payload with field `54` set to the outstanding amount and
 rather than typing. Verified against an independent implementation of the spec;
 **never scanned by a real banking app**, which is the one check still owed.
 
-**Showing that money arrived** is the actual work. The schema is ready and
-unused: `payments` has `provider`, `provider_txn_id`, `amount_minor`, `memo` and
-`raw`, `trg_payment_apply` moves `billing_statements.paid_minor` on insert, and
-the Bill screen already renders `partial` and `paid`. What is missing is the
-webhook that turns a SePay callback into a `payments` row, and a way to match
-`memo` to `payment_ref`.
+**Showing that money arrived** is the actual work, and the schema was built for
+it: `payments` has `provider` (defaulting to `'sepay'`), `provider_txn_id`,
+`amount_minor`, `memo` and `raw`; `trg_payment_apply` matches the memo against
+`payment_ref` on insert and moves `paid_minor`; the Bill and Payments screens
+already render `partial` and `paid`. What is missing is the endpoint.
 
-**The open question, which is the reason this is not trivial:** SePay is
-configured per bank account by the account's owner. This app is multi-tenant, so
-every office has its own account and would need its own SePay hookup. Before
-building, find out whether one integration can receive callbacks for many
-accounts, or whether each admin must register separately — and if the latter,
-whether that is something a non-technical admin can actually complete. A payment
-feature only some offices can switch on is a different product decision from one
-everybody gets.
+### What the docs say (read 2026-09-23)
+
+**The multi-tenant question has an answer, and it is Bank Hub.** It exists for
+"software platforms with user bases": each office's admin authorises *their own*
+bank account through a hosted link — a WebView embedded as an iframe or through
+a JS SDK — authenticating with their bank directly, without handing us
+credentials. We then receive that account's transactions. So one integration
+serves every office, which is the thing that decides whether this is a feature
+everybody gets. Terms are not published: "liên hệ SePay" for approval, contract
+and fees.
+
+Its limit is the bank list. Bank Hub names about ten — VPBank, TPBank,
+VietinBank, ACB, BIDV, MBBank, OCB, KienLongBank, MSB, Sacombank — against the
+36 in `src/shared/banks.ts`. An office banking elsewhere can still be *paid* by
+QR; it just cannot be reconciled automatically.
+
+Without Bank Hub the fallback is per-office: each owner registers their own
+SePay account and points a webhook at us. It works, and it is exactly the
+"every admin has to struggle through it" outcome worth avoiding.
+
+### The webhook maps almost one-to-one onto `payments`
+
+| SePay field | ours |
+| --- | --- |
+| `id` | `provider_txn_id` |
+| `gateway` | the bank's brand name |
+| `transactionDate` | `received_at` |
+| `accountNumber` | which office this belongs to |
+| `content` / `description` | `memo`, which `trg_payment_apply` reads |
+| `transferAmount` | `amount_minor` |
+| `transferType` (`in`/`out`) | only `in` is money owed to us |
+| `referenceCode`, `code`, `subAccount`, `accumulated` | `raw` |
+
+Two things fall out of that, both good. SePay retries up to seven times over
+about 33 minutes until it gets a 200 — and `payments_provider_txn_uk`, unique on
+`(org_id, provider, provider_txn_id)`, makes a retry a no-op rather than a
+double credit. And `accountNumber` is how a webhook finds its office, which
+makes `payment_config.vietqr.accountNumber` the routing key: it has to be right
+for reconciliation, not just for the QR.
+
+Authentication is API key, HMAC-SHA256, OAuth 2.0, or none, plus an IP
+allowlist. The official Laravel package checks `Authorization: Bearer Apikey
+<secret>`, so that is the shape to expect.
+
+### What to decide before building
+
+Whether to pursue Bank Hub, which needs a conversation with SePay and makes this
+work for every office, or ship the per-office webhook first and treat Bank Hub
+as the upgrade. The endpoint itself is the same either way; only who configures
+it changes.
+
+Sources: <https://developer.sepay.vn/vi/bankhub/tong-quan>,
+<https://developer.sepay.vn/vi/sepay-webhooks>,
+<https://github.com/sepayvn/laravel-sepay>.
 
 ## Vietnamese interface
 
