@@ -82,9 +82,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Pinned, not `latest`. `latest` asks the GitHub releases API on every
+      # run, unauthenticated from a shared runner, and a rate limit there fails
+      # a deploy that has nothing to do with it -- which it did, on a push that
+      # changed no Edge Function at all. A version bump should be a commit.
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.117.0
       - run: supabase functions deploy --project-ref wvtbstticnactealupph
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
