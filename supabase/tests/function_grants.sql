@@ -26,7 +26,9 @@ insert into expected (name, anon_may) values
   -- Admin-only, and it checks that itself rather than relying on this grant:
   -- the grant says "a signed-in browser may call it", the function decides
   -- whether this particular signed-in browser gets an answer.
-  ('settle_period',       false);
+  ('settle_period',       false),
+  ('leave_office',        false),
+  ('delete_office',       false);
 
 create temp table found as
 select p.proname::text as name,
