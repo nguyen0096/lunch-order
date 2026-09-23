@@ -37,6 +37,23 @@ begin
   end if;
 
   return query select * from public.run_billing(p_period_id, false);
+
+  -- And finish the week if it is over.
+  --
+  -- Without this a week held open past its Monday never closes again: the tick
+  -- only closes the week containing yesterday, on the week-start day, so a week
+  -- settled late stays 'open' for ever -- still accepting transfers, still
+  -- reading "Still running" to an admin who has just paid the caterer.
+  --
+  -- No unpriced check here on purpose: billing_periods_hold_open already
+  -- refuses to let a week with an unpriced meal close, so attempting it and
+  -- letting that trigger decide keeps one rule in one place.
+  update public.billing_periods bp
+     set status = 'closed', closed_at = now(), closed_by = (select auth.uid())
+   where bp.id = p_period_id
+     and bp.status = 'open'
+     and bp.period_end < private.today_in((select o.timezone from public.organizations o
+                                            where o.id = v_org));
 end
 $fn$;
 
