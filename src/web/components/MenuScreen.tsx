@@ -51,10 +51,9 @@ const STRIP_DAYS = 12;
  *
  * An office that starts on Wednesday wants Monday and Tuesday, and the only way
  * in was the date field, which is a worse way to pick a day than a row of days.
- * A fortnight is the onboarding case; anything older is still reachable by
- * typing the date.
+ * A week covers that; anything older is still reachable by typing the date.
  */
-const STRIP_DAYS_BACK = 14;
+const STRIP_DAYS_BACK = 7;
 
 /**
  * Turn the caterer's chat message into a published menu without retyping it.
@@ -277,11 +276,12 @@ export function MenuScreen({ me, org }: ScreenProps) {
     for (let i = -STRIP_DAYS_BACK; i < STRIP_DAYS; i += 1) {
       const day = addDays(today, i);
       // Weekends only when lunch actually happens on them, the same rule the
-      // board uses: an always-empty Sunday is width spent on nothing. Past days
-      // only when something is recorded on them, or the strip is mostly a
-      // fortnight of empty boxes in front of the day you came here for.
-      const past = day < today;
-      if (past ? calendar.has(day) : isoWeekday(day) <= 5 || calendar.has(day)) out.push(day);
+      // board uses: an always-empty Sunday is width spent on nothing.
+      //
+      // Past weekdays are offered whether or not anything is recorded on them.
+      // Showing only the ones that already have a menu is circular: the reason
+      // to reach a past day is that nothing is on it yet.
+      if (isoWeekday(day) <= 5 || calendar.has(day)) out.push(day);
     }
     if (!out.includes(serviceDate)) out.unshift(serviceDate);
     return out;
