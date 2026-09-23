@@ -67,6 +67,28 @@ Decide one thing first: whether a credit is refundable. "Roll it forward
 forever" and "give it back when somebody leaves" are different products, and the
 second needs a payout path this app has never had.
 
+## An office is stuck with the settings it was born with
+
+Creating an office from the app sends only a name and a slug, so
+`create_organization` applies its defaults: `Asia/Ho_Chi_Minh`, `VND`, `vi-VN`,
+and a 21:00 cutoff. Every one of those is right for the office this was built
+for and wrong for anybody else, and **no screen can change the first three
+afterwards** — only the cutoff reached a control.
+
+The timezone is the one that actually breaks things rather than merely reading
+oddly: it decides what "today" is, when a menu may be published, and when
+ordering closes, so an office in the wrong zone gets a board that turns over at
+the wrong hour. Settings names the zone read-only today, which was deliberate —
+stating the thing that gives a time its meaning without pretending it is
+editable — and that sentence is the line to change.
+
+Either ask on the create form or add a control to Settings. Ask on the form only
+if the answer can be defaulted from the browser, because a founder who does not
+know their IANA zone name is worse off than one who is not asked. Changing it
+later is the harder half: existing menus store `order_cutoff_at` as an instant,
+so moving the zone reinterprets every future cutoff, and `enforce_org_timezone`
+validates the name but says nothing about what it does to rows already written.
+
 ## SePay: prove a payment arrived
 
 Two halves, and the first is mostly done.
