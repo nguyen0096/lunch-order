@@ -20,6 +20,7 @@ import {
   cn,
 } from "@/ui";
 import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
+import { JoinOfficeDialog } from "./JoinOfficeDialog.js";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
 
 export type Page = "board" | "bill" | "menu" | "people" | "payments" | "settings";
@@ -61,6 +62,7 @@ export function AppShell({
   email,
   onSignOut,
   onCreated,
+  onJoined,
   children,
 }: {
   org: Org;
@@ -73,12 +75,15 @@ export function AppShell({
   onSignOut: () => void;
   /** Refetch and go: a new office is not in `offices` until somebody reloads. */
   onCreated: (org: Org) => void;
+  onJoined: (slug: string) => void;
   children: ReactNode;
 }) {
   const admin = isAdmin(role);
   const href = (p: Page | "settings") => `#/o/${org.slug}/${p}`;
   const [creating, setCreating] = useState(false);
   const create = () => setCreating(true);
+  const [joining, setJoining] = useState(false);
+  const join = () => setJoining(true);
 
   // Belonging to two offices is what makes the name a control. Belonging to one
   // is the ordinary case, and a menu holding a single entry is a promise the
@@ -103,6 +108,7 @@ export function AppShell({
             page={page}
             align="start"
             onCreateOffice={create}
+            onJoinOffice={join}
             className="text-lg font-semibold"
           />
         </div>
@@ -133,6 +139,7 @@ export function AppShell({
           settingsHref={href("settings")}
           onSignOut={onSignOut}
           onCreateOffice={switchable ? undefined : create}
+          onJoinOffice={switchable ? undefined : join}
           align="start"
         />
       </aside>
@@ -145,6 +152,7 @@ export function AppShell({
             page={page}
             align="start"
             onCreateOffice={create}
+            onJoinOffice={join}
             className="w-auto min-w-0 px-2 text-base font-semibold"
           />
           <AvatarMenu
@@ -153,6 +161,7 @@ export function AppShell({
             settingsHref={href("settings")}
             onSignOut={onSignOut}
             onCreateOffice={switchable ? undefined : create}
+          onJoinOffice={switchable ? undefined : join}
             align="end"
           />
         </header>
@@ -184,6 +193,12 @@ export function AppShell({
       </div>
 
       <CreateOfficeDialog open={creating} onOpenChange={setCreating} onCreated={onCreated} />
+      <JoinOfficeDialog
+        open={joining}
+        onOpenChange={setJoining}
+        suggestedName={displayName}
+        onJoined={onJoined}
+      />
     </div>
   );
 }
@@ -217,6 +232,7 @@ function OfficeName({
   page,
   align,
   onCreateOffice,
+  onJoinOffice,
   className,
 }: {
   org: Org;
@@ -224,6 +240,7 @@ function OfficeName({
   page: string;
   align: "start" | "end";
   onCreateOffice: () => void;
+  onJoinOffice: () => void;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
@@ -276,6 +293,17 @@ function OfficeName({
           );
         })}
         <hr className="my-1 border-t border-border" />
+        <Button
+          variant="ghost"
+          className="w-full justify-start"
+          onClick={() => {
+            setOpen(false);
+            onJoinOffice();
+          }}
+        >
+          <PlusIcon />
+          Join an office
+        </Button>
         <Button
           variant="ghost"
           className="w-full justify-start"
@@ -346,6 +374,7 @@ function AvatarMenu({
   settingsHref,
   onSignOut,
   onCreateOffice,
+  onJoinOffice,
   align,
 }: {
   displayName: string;
@@ -354,6 +383,7 @@ function AvatarMenu({
   onSignOut: () => void;
   /** Absent when the switcher already carries it, so it has one home at a time. */
   onCreateOffice?: () => void;
+  onJoinOffice?: () => void;
   align: "start" | "end";
 }) {
   const [open, setOpen] = useState(false);
@@ -387,6 +417,19 @@ function AvatarMenu({
             Settings
           </a>
         </Button>
+        {onJoinOffice && (
+          <Button
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={() => {
+              setOpen(false);
+              onJoinOffice();
+            }}
+          >
+            <PlusIcon />
+            Join an office
+          </Button>
+        )}
         {onCreateOffice && (
           <Button
             variant="ghost"

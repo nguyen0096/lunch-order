@@ -2,6 +2,7 @@ import { useState } from "react";
 import { PlusIcon } from "lucide-react";
 import { Button } from "@/ui";
 import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
+import { JoinOfficeDialog } from "./JoinOfficeDialog.js";
 import type { Org } from "../../shared/types.js";
 
 // The texture, not a menu: nothing is readable from the sign-in page before
@@ -77,23 +78,30 @@ export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
  */
 export function NoOfficeScreen({
   email,
+  fullName,
   onSignOut,
   onCreated,
+  onJoined,
 }: {
   email: string;
+  /** Their Google name, offered as the name colleagues will see. */
+  fullName: string;
   onSignOut: () => void;
   /** Refetch and go: the new office is the only one this person has. */
   onCreated: (org: Org) => void;
+  onJoined: (slug: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
+  const [joining, setJoining] = useState(false);
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
       <h1 className="text-xl font-semibold">No office yet</h1>
       <p className="text-muted">
-        You're signed in as {email}, but you're not a member of an office yet. Ask a colleague for
-        the join code, or for an invitation link.
+        You're signed in as {email}, but you're not a member of an office yet. Ask a colleague
+        for their office's join code and enter it here.
       </p>
+      <Button onClick={() => setJoining(true)}>Join with a code</Button>
 
       <hr className="w-full border-t border-border" />
 
@@ -110,6 +118,12 @@ export function NoOfficeScreen({
       </Button>
 
       <CreateOfficeDialog open={creating} onOpenChange={setCreating} onCreated={onCreated} />
+      <JoinOfficeDialog
+        open={joining}
+        onOpenChange={setJoining}
+        suggestedName={fullName}
+        onJoined={onJoined}
+      />
     </main>
   );
 }

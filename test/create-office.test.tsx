@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { App } from "../src/web/App.js";
@@ -243,15 +243,58 @@ describe("Creating an office", () => {
 describe("NoOfficeScreen", () => {
   function noOffice() {
     const onCreated = vi.fn();
+    const onJoined = vi.fn();
     render(
-      <NoOfficeScreen email="neyu@example.com" onSignOut={vi.fn()} onCreated={onCreated} />,
+      <NoOfficeScreen
+        email="neyu@example.com"
+        fullName="Neyu Nguyen"
+        onSignOut={vi.fn()}
+        onCreated={onCreated}
+        onJoined={onJoined}
+      />,
     );
-    return { onCreated };
+    return { onCreated, onJoined };
   }
+
+  it("offers a way to enter the join code it tells you to ask for", async () => {
+    // The screen has always said "ask a colleague for the join code" and then
+    // given nowhere to put one: join_with_code was called from the bot and from
+    // nothing else, so somebody signed in with Google could not join at all.
+    noOffice();
+    await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
+
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("Join code")).toBeInTheDocument();
+    // Their Google name is offered rather than demanded blank: join_with_code
+    // writes it to the profile before allocating the short code that ends up
+    // in a bank memo.
+    expect(within(dialog).getByLabelText("Your name")).toHaveValue("Neyu Nguyen");
+  });
+
+  it("uppercases the code as it is typed, so it matches what the office prints", async () => {
+    noOffice();
+    await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
+    const field = within(await screen.findByRole("dialog")).getByLabelText("Join code");
+    await userEvent.type(field, "kgsd4582");
+    expect(field).toHaveValue("KGSD4582");
+  });
+
+  it("says what a join code looks like rather than just refusing", async () => {
+    noOffice();
+    await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(within(dialog).getByLabelText("Join code"), "ABC");
+    expect(
+      within(dialog).getByText(
+        "A join code is 6 to 12 letters and digits, and never uses O, I, 0 or 1",
+      ),
+    ).toBeInTheDocument();
+  });
 
   it("keeps joining as the headline and creating as the other way", () => {
     noOffice();
-    expect(screen.getByText(/Ask a colleague for the join code/)).toBeInTheDocument();
+    expect(screen.getByText(/Ask a colleague/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Join with a code" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Create an office/ })).toBeInTheDocument();
   });
 

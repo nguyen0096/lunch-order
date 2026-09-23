@@ -55,8 +55,16 @@ export function App() {
    * of sends the redirect below straight back to the old office.
    */
   async function enter(org: Org) {
+    await enterSlug(org.slug);
+  }
+
+  // Refetch before routing, always. `me` is what App resolves a slug against,
+  // and an office it has never heard of sends you back to your first one --
+  // so joining and then navigating would bounce you straight home, looking as
+  // though nothing had happened.
+  async function enterSlug(slug: string) {
     await reload();
-    go({ slug: org.slug, page: "board" });
+    go({ slug, page: "board" });
   }
 
   if (me === undefined) {
@@ -80,8 +88,10 @@ export function App() {
     return (
       <NoOfficeScreen
         email={me.email}
+        fullName={me.fullName}
         onSignOut={() => void signOut()}
         onCreated={(org) => void enter(org)}
+        onJoined={(slug) => void enterSlug(slug)}
       />
     );
   }
@@ -105,6 +115,7 @@ export function App() {
       email={me.email}
       onSignOut={() => void signOut()}
       onCreated={(org) => void enter(org)}
+      onJoined={(slug) => void enterSlug(slug)}
     >
       {renderPage(page, me, active)}
     </AppShell>

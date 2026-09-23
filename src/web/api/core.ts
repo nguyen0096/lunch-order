@@ -174,3 +174,45 @@ export async function createOffice(draft: OfficeDraft): Promise<Org> {
   if (!row) throw new Error("The office was created but did not come back. Reload to find it.");
   return toOrg(row);
 }
+
+/** A join code as the office prints it: the constraint is `^[A-Z0-9]{6,12}$`. */
+export function joinCodeProblem(code: string): string | null {
+  const c = code.trim().toUpperCase();
+  if (c === "") return "Paste the join code your colleague gave you";
+  if (!/^[A-Z0-9]{6,12}$/.test(c)) {
+    return "A join code is 6 to 12 letters and digits, and never uses O, I, 0 or 1";
+  }
+  return null;
+}
+
+/**
+ * Join an office with the code from a colleague.
+ *
+ * The same RPC the Telegram bot calls, with `p_chat_id` left null: that
+ * argument is the only Telegram-shaped thing about it, and skipping it skips
+ * every branch that touches a chat. The code has always worked for somebody
+ * signed in with Google; until now the web simply never asked for one, so a
+ * person was told to get a code and then had nowhere on the page to put it.
+ *
+ * The name is sent because `join_with_code` refuses a blank one and writes it
+ * to `profiles.full_name` before allocating the short code -- the code comes
+ * from the name, and it is what appears in a bank transfer memo, so a
+ * placeholder here would be stamped on somebody's payments.
+ */
+export async function joinWithCode(args: {
+  code: string;
+  displayName: string;
+}): Promise<{ slug: string; name: string }> {
+  const { data, error } = await supabase.rpc("join_with_code", {
+    p_code: args.code.trim().toUpperCase(),
+    p_display_name: args.displayName.trim(),
+    p_chat_id: null,
+  });
+  if (error) throw error;
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { org_slug: string; org_name: string }
+    | null
+    | undefined;
+  if (!row) throw new Error("You joined, but the office did not come back. Reload to find it.");
+  return { slug: row.org_slug, name: row.org_name };
+}

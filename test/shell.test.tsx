@@ -22,11 +22,13 @@ function shell(
   offices: Office[] = [{ org: ORG, role }],
 ) {
   const onCreated = vi.fn();
+  const onJoined = vi.fn();
   render(
     <AppShell
       org={ORG}
       role={role}
       offices={offices}
+      onJoined={onJoined}
       page={page}
       displayName="Nguyễn Neyu"
       email="neyu@example.com"
