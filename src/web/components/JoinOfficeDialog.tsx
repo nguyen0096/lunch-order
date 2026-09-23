@@ -18,7 +18,7 @@ import {
   DialogTitle,
   useAction,
 } from "@/ui";
-import { joinCodeProblem, joinWithCode } from "../api.js";
+import { acceptInvitation, invitationToken, joinCodeProblem, joinWithCode } from "../api.js";
 
 /* One spelling of a text input, matching the other dialogs so two cannot be
    two heights. 16px minimum, or iOS Safari zooms the page on focus. */
@@ -51,19 +51,28 @@ export function JoinOfficeDialog({
     }
   }, [open, suggestedName]);
 
-  const join = useAction(joinWithCode, {
-    success: (r) => `Joined ${r.name}`,
-    onSuccess: (r) => {
+  // An invitation is a uuid and a join code is not, so the field can take
+  // either and work out which. Somebody who was sent a link has no reason to
+  // know it is a different mechanism from the code on the wall.
+  const token = invitationToken(code);
+
+  const done = {
+    success: (r: { name: string }) => `Joined ${r.name}`,
+    onSuccess: (r: { slug: string }) => {
       onOpenChange(false);
       onJoined(r.slug);
     },
-  });
+  };
+  const join = useAction(joinWithCode, done);
+  const accept = useAction(acceptInvitation, done);
 
-  // The name matters more than it looks: join_with_code writes it to the
-  // profile *before* allocating the short code, and that code is what appears
-  // in a bank transfer memo.
-  const problem =
-    joinCodeProblem(code) ?? (name.trim() === "" ? "Tell them what to call you" : null);
+  // The name matters more than it looks on the code path: join_with_code writes
+  // it to the profile *before* allocating the short code, and that code is what
+  // appears in a bank transfer memo. An invitation carries its own role and
+  // does not take a name, so it is not asked for.
+  const problem = token
+    ? null
+    : (joinCodeProblem(code) ?? (name.trim() === "" ? "Tell them what to call you" : null));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -79,14 +88,14 @@ export function JoinOfficeDialog({
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <label htmlFor={codeId} className="text-sm font-medium">
-              Join code
+              Join code or invitation link
             </label>
             <input
               id={codeId}
               value={code}
               autoCapitalize="characters"
               placeholder="KGSD4582"
-              className={`${INPUT} tabular tracking-widest uppercase`}
+              className={`${INPUT} ${token ? "" : "tabular tracking-widest uppercase"}`}
               // Uppercased as typed: join_with_code folds the code before
               // comparing, so a lowercase entry would match -- but showing it
               // in a different case than the office prints it invites the
@@ -95,6 +104,7 @@ export function JoinOfficeDialog({
             />
           </div>
 
+          {token === null && (
           <div className="flex flex-col gap-1.5">
             <label htmlFor={nameId} className="text-sm font-medium">
               Your name
@@ -109,6 +119,13 @@ export function JoinOfficeDialog({
               What colleagues see beside your lunch on the board.
             </p>
           </div>
+          )}
+          {token !== null && (
+            <p className="text-sm text-muted">
+              That is an invitation. It carries the role you were invited as, and it only
+              works for the address it was sent to.
+            </p>
+          )}
         </div>
 
         <DialogFooter>
@@ -117,8 +134,12 @@ export function JoinOfficeDialog({
           </Button>
           <Action
             reason={problem}
-            pending={join.pending}
-            onClick={() => void join.run({ code, displayName: name })}
+            pending={join.pending || accept.pending}
+            onClick={() =>
+              token
+                ? void accept.run(token)
+                : void join.run({ code, displayName: name })
+            }
           >
             Join
           </Action>

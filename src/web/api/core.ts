@@ -216,3 +216,17 @@ export async function joinWithCode(args: {
   if (!row) throw new Error("You joined, but the office did not come back. Reload to find it.");
   return { slug: row.org_slug, name: row.org_name };
 }
+
+/**
+ * The invitation token inside whatever somebody pasted.
+ *
+ * An invitation is a uuid, and nobody types a uuid -- they paste the whole
+ * link. Pulling the token out of it means one field can take a join code or an
+ * invitation without asking the person which kind of thing they were sent,
+ * which they have no reason to know.
+ */
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+export function invitationToken(pasted: string): string | null {
+  return pasted.trim().match(UUID)?.[0]?.toLowerCase() ?? null;
+}

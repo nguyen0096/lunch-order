@@ -202,6 +202,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
         invitations={waiting}
         timeZone={org.timezone}
         now={now}
+        onCopy={(text) => void copy.run(text)}
         sending={invite.pending}
         revoking={revoke.pending}
         onInvite={(a) => void invite.run(a)}
@@ -521,6 +522,7 @@ function InvitePanel({
   revoking,
   onInvite,
   onRevoke,
+  onCopy,
 }: {
   invitations: Invitation[];
   timeZone: string;
@@ -529,6 +531,7 @@ function InvitePanel({
   revoking: boolean;
   onInvite: (a: { email: string; role: "member" | "admin" }) => void;
   onRevoke: (inv: Invitation) => void;
+  onCopy: (text: string) => void;
 }) {
   const headingId = useId();
   const emailId = useId();
@@ -617,6 +620,14 @@ function InvitePanel({
                       : `${inv.role} · expires ${untilLabel(inv.expiresAt, now, timeZone)}`}
                   </p>
                 </div>
+                <Action
+                  reason={expired ? "This invitation has expired. Send a new one" : null}
+                  size="sm"
+                  variant="outline"
+                  onClick={() => onCopy(invitationLink(inv.token))}
+                >
+                  Copy link
+                </Action>
                 <Action
                   reason={null}
                   pending={revoking}
@@ -766,6 +777,18 @@ function statusReason({
 
 function withArticle(role: Role): string {
   return role === "member" ? `a ${role}` : `an ${role}`;
+}
+
+/**
+ * The link an invitation actually needs.
+ *
+ * Nothing emails these. Until something does, an invitation that an admin
+ * cannot hand to anybody is a row in a table and no more -- which is exactly
+ * what it was: the token was fetched, never shown, and the invited person was
+ * told nothing and became nothing.
+ */
+export function invitationLink(token: string): string {
+  return `${window.location.origin}${window.location.pathname}#/join/${token}`;
 }
 
 /* -------------------------------------------------------------------- bits */

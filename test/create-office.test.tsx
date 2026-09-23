@@ -264,7 +264,7 @@ describe("NoOfficeScreen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByLabelText("Join code")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Join code or invitation link")).toBeInTheDocument();
     // Their Google name is offered rather than demanded blank: join_with_code
     // writes it to the profile before allocating the short code that ends up
     // in a bank memo.
@@ -274,16 +274,31 @@ describe("NoOfficeScreen", () => {
   it("uppercases the code as it is typed, so it matches what the office prints", async () => {
     noOffice();
     await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
-    const field = within(await screen.findByRole("dialog")).getByLabelText("Join code");
+    const field = within(await screen.findByRole("dialog")).getByLabelText("Join code or invitation link");
     await userEvent.type(field, "kgsd4582");
     expect(field).toHaveValue("KGSD4582");
+  });
+
+  it("takes an invitation link in the same field, and stops asking for a name", async () => {
+    // Somebody sent a link has no reason to know it is a different mechanism
+    // from the code on the wall, and an invitation carries its own role, so
+    // there is no name to ask for.
+    noOffice();
+    await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.type(
+      within(dialog).getByLabelText("Join code or invitation link"),
+      "https://lunch.example/#/join/2b4f1e6a-9c3d-4a71-8e55-0f2b6c1d9a44",
+    );
+    expect(within(dialog).queryByLabelText("Your name")).toBeNull();
+    expect(within(dialog).getByText(/That is an invitation/)).toBeInTheDocument();
   });
 
   it("says what a join code looks like rather than just refusing", async () => {
     noOffice();
     await userEvent.click(screen.getByRole("button", { name: "Join with a code" }));
     const dialog = await screen.findByRole("dialog");
-    await userEvent.type(within(dialog).getByLabelText("Join code"), "ABC");
+    await userEvent.type(within(dialog).getByLabelText("Join code or invitation link"), "ABC");
     expect(
       within(dialog).getByText(
         "A join code is 6 to 12 letters and digits, and never uses O, I, 0 or 1",
