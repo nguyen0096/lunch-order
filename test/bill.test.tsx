@@ -542,6 +542,74 @@ describe("Bill, the meals behind the total", () => {
   });
 });
 
+/**
+ * SePay syncs only transactions whose memo carries LUNCH, because the office
+ * account is often also somebody's own. A transfer without the reference is
+ * therefore not unmatched money an admin can go and find on the Payments
+ * screen: it never reaches this app at all. The screen has to say so, or the
+ * payer believes they have paid and the bill goes on saying unpaid.
+ */
+describe("Bill, the reference as a requirement", () => {
+  const REQUIRED =
+    "Put this in the transfer message. Only transfers carrying it reach this app, " +
+    "so one sent without it leaves your bill unpaid with nothing for an admin to find.";
+
+  /** The heading's own row, so "Required" is read as labelling the reference. */
+  function referenceHeading(): HTMLElement {
+    const node = screen.getByRole("heading", { name: "Payment reference" }).parentElement;
+    if (node === null) throw new Error("no row around the reference heading");
+    return node;
+  }
+
+  it("labels the reference required and says what a transfer without it costs", async () => {
+    serve();
+    renderBill();
+
+    expect(await screen.findByText("LUNCH14NEYU")).toBeInTheDocument();
+    expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
+    expect(screen.getByText(REQUIRED)).toBeInTheDocument();
+  });
+
+  it("no longer promises an admin will sort an unreferenced transfer out", async () => {
+    serve();
+    renderBill();
+    await screen.findByText("LUNCH14NEYU");
+
+    expect(screen.queryByText(/sort out by hand/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/waits for an admin/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/matched to your name/i)).not.toBeInTheDocument();
+  });
+
+  it("says it wherever the reference is offered, code or no code", async () => {
+    serve({ payment: { vietqr: null, note: null } });
+    renderBill();
+
+    expect(await screen.findByText("LUNCH14NEYU")).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
+    expect(screen.getByText(REQUIRED)).toBeInTheDocument();
+  });
+
+  it("says nothing about it on a week with nothing left to pay", async () => {
+    serve({
+      weeks: [
+        week({
+          statement: statement({
+            paidMinor: 180_000,
+            status: "paid",
+            paidAt: "2026-09-22T03:00:00Z",
+          }),
+        }),
+      ],
+    });
+    renderBill();
+
+    expect(await screen.findByText("Paid")).toBeInTheDocument();
+    expect(screen.queryByText("Required")).not.toBeInTheDocument();
+    expect(screen.queryByText(REQUIRED)).not.toBeInTheDocument();
+  });
+});
+
 describe("Bill, copying the reference", () => {
   it("puts the reference on the clipboard and says so", async () => {
     const user = userEvent.setup();

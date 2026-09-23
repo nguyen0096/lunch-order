@@ -33,6 +33,7 @@ import {
   unpricedMealsNote,
   vietQrLink,
   NOTHING_TO_LEAVE,
+  PAYMENT_REF_REQUIRED,
   PRICE_TO_COME,
   type CallbackAction,
   type DayMessage,
@@ -387,6 +388,8 @@ function day(over: Partial<DayMessage> = {}): DayMessage {
   };
 }
 
+const QR = "https://img.vietqr.io/image/970415-1-compact2.png?amount=75000";
+
 function statement(over: Partial<StatementMessage> = {}): StatementMessage {
   return {
     periodStart: "2026-09-21",
@@ -557,6 +560,54 @@ describe("what /me owes", () => {
     expect(text).toContain(`Paid so far: ${money(20_000)}`);
     expect(text).toContain("Put <code>L39NEIL</code> in the transfer message.");
     expect(text).toContain('<a href="https://img.vietqr.io/image/970415-1-compact2.png?amount=75000">Pay by QR</a>');
+  });
+
+  /**
+   * SePay syncs only transactions whose memo carries LUNCH, so a transfer sent
+   * without the reference never reaches the app: no admin sees it, and nobody
+   * can chase what nobody can see. Every bot message that hands somebody the
+   * means to pay has to say that.
+   */
+  describe("the reference as a requirement", () => {
+    it("says it is required and what a transfer without it costs", () => {
+      const text = renderStatementText(statement(), money, null);
+      expect(text).toContain(
+        "Put <code>L39NEIL</code> in the transfer message. It is required: only " +
+          "transfers carrying it reach the lunch app, so one sent without it leaves " +
+          "your bill unpaid with nothing for an admin to find.",
+      );
+    });
+
+    it("says it with the QR as well, and names the QR as the way it is filled in", () => {
+      const text = renderStatementText(statement(), money, QR);
+      expect(text).toContain(PAYMENT_REF_REQUIRED);
+      expect(text).toContain(`<a href="${QR}">Pay by QR</a> fills it in for you.`);
+    });
+
+    it("never offers the reference as merely helpful", () => {
+      for (const qr of [null, QR]) {
+        const text = renderStatementText(statement(), money, qr);
+        expect(text).toContain("L39NEIL");
+        expect(text).toContain("It is required:");
+        expect(text).not.toMatch(/sort .* out by hand|helps|so an admin can/i);
+      }
+    });
+
+    /**
+     * The one message in the bot that hands out a reference or a QR, so this
+     * one sentence covers the bot. A second such message fails here rather than
+     * waiting for a reviewer to notice it. Comments are stripped first, because
+     * the Edge Function names both functions in its own prose; the imports name
+     * them without parentheses, so only call sites are left.
+     */
+    it("is the only message in the Edge Function that offers either", () => {
+      const code = readFileSync(
+        join(import.meta.dirname, "..", "supabase", "functions", "telegram", "index.ts"),
+        "utf8",
+      ).replace(/\/\/.*$/gm, "");
+      expect(code.match(/vietQrLink\(/g)).toHaveLength(1);
+      expect(code.match(/renderStatementText\(/g)).toHaveLength(1);
+    });
   });
 
   it("does not call an unbilled week nothing when a meal is waiting on a price", () => {

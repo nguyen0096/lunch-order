@@ -76,6 +76,11 @@ function startOver() {
  * broken while it was working correctly. An absent section with a sentence
  * naming who does set it beats a row of controls nobody can explain.
  *
+ * The bank account is the exception inside the exception: an admin sees it and
+ * an owner alone can change it, so PaymentAccount takes the role rather than
+ * the admin flag. An admin who reads bills needs to know the account; they do
+ * not need a form the database will refuse.
+ *
  * The theme is deliberately not here. It lives in the account menu beside sign
  * out, because it is the one preference somebody changes on a whim and wants to
  * see take effect in the same breath.
@@ -189,6 +194,7 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
           />
           <PaymentAccount
             orgId={org.id}
+            owner={role === "owner"}
             initial={data.office.payment}
             onSaved={() => void load()}
           />
@@ -200,7 +206,7 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
         </section>
       ) : (
         <p className="max-w-prose text-sm text-muted">
-          {`The time ordering closes, the bank account bills are paid into, and the group chat the bot posts in, are set by an admin of ${org.name}.`}
+          {`The time ordering closes and the group chat the bot posts in are set by an admin of ${org.name}, and the bank account bills are paid into is set by an owner.`}
         </p>
       )}
 

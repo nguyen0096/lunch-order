@@ -446,6 +446,16 @@ export type StatementMessage = {
   unpricedMeals: number;
 };
 
+/**
+ * The one sentence every message that hands out a reference has to carry.
+ *
+ * A constant so a second such message cannot be written without it, and so it
+ * stays the claim the Bill screen makes in its own words.
+ */
+export const PAYMENT_REF_REQUIRED =
+  "It is required: only transfers carrying it reach the lunch app, so one sent " +
+  "without it leaves your bill unpaid with nothing for an admin to find.";
+
 /** What the member owes, and what is not in that number yet. */
 export function renderStatementText(
   s: StatementMessage, money: Money, qrUrl: string | null,
@@ -470,8 +480,15 @@ export function renderStatementText(
   if (s.paidMinor > 0) lines.push(`Paid so far: ${escapeHtml(money(s.paidMinor))}`);
   lines.push(`Status: ${escapeHtml(s.status)}`);
   lines.push("");
-  lines.push(`Put <code>${escapeHtml(s.paymentRef)}</code> in the transfer message.`);
-  if (qrUrl !== null) lines.push(`<a href="${escapeHtml(qrUrl)}">Pay by QR</a>`);
+  // Stated as required, not as a courtesy. SePay syncs only transactions whose
+  // memo carries LUNCH, so a transfer sent without the reference never arrives
+  // here at all: no admin sees it, and nobody can chase what nobody can see.
+  lines.push(
+    `Put <code>${escapeHtml(s.paymentRef)}</code> in the transfer message. ${PAYMENT_REF_REQUIRED}`,
+  );
+  if (qrUrl !== null) {
+    lines.push(`<a href="${escapeHtml(qrUrl)}">Pay by QR</a> fills it in for you.`);
+  }
 
   return lines.join("\n");
 }

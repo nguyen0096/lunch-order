@@ -24,7 +24,7 @@ import type { Org } from "../../shared/types.js";
  * One number, large, then the reference, then the code. In that order because
  * that is the order the questions arrive in, and because the reference is the
  * step that goes wrong: the scan fills in the account and the amount, the memo
- * is typed, and a wrong memo is a payment nobody can attribute.
+ * is typed, and a memo without the reference is a payment this app never sees.
  *
  * The week the screen leads with is the oldest thing still unsettled rather
  * than simply the newest week. Carry-forward rolls an unpaid remainder into the

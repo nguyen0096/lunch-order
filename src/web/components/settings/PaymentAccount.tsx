@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Action, Combobox, useAction } from "@/ui";
+import { Action, Badge, Combobox, useAction } from "@/ui";
 import { Section, TextField } from "./Section.js";
 import { setPaymentConfig } from "../../api.js";
 import {
@@ -48,16 +48,52 @@ const same = (a: Draft, b: Draft) =>
   a.accountName.trim() === b.accountName.trim() &&
   a.note.trim() === b.note.trim();
 
+const TITLE = "Where the money goes";
+const DESCRIPTION = "The bank account behind the QR code on everyone's bill.";
+
 /**
- * The account every bill's QR code pays.
+ * guard_owner_only_settings() refuses a payment_config change from anyone but
+ * an owner. Recased from the sentence it raises, the way LeaveAndDelete recases
+ * leave_office()'s: a refusal the screen predicts is written for the screen,
+ * and only a refusal that actually came back travels through humanError().
+ */
+const OWNER_ONLY = "Only an owner can change where the money goes.";
+
+/**
+ * The account every bill's QR code pays, to whoever is allowed to change it.
  *
+ * A non-owner admin still reads bills and chases payments, so they get the
+ * account as facts rather than as a form: an editable field they would be
+ * refused on save is a worse lie than a read-only one. Split in two so the
+ * form's state and its save action exist only where they can be used.
+ */
+export function PaymentAccount({
+  orgId,
+  owner,
+  initial,
+  onSaved,
+}: {
+  orgId: number;
+  /** `role === "owner"`. Admin is not enough for this one setting. */
+  owner: boolean;
+  initial: PaymentConfig;
+  onSaved: () => void;
+}) {
+  return owner ? (
+    <PaymentAccountForm orgId={orgId} initial={initial} onSaved={onSaved} />
+  ) : (
+    <PaymentAccountReadOnly config={initial} />
+  );
+}
+
+/**
  * The bank is picked from a list rather than typed, because what the QR
  * actually carries is the bank's NAPAS BIN: a mistyped six-digit number is a
  * code that scans perfectly and pays a stranger, and nothing downstream would
  * notice. The account number and the name under it are then read back as one
  * sentence, which is the only check there is before somebody scans it.
  */
-export function PaymentAccount({
+function PaymentAccountForm({
   orgId,
   initial,
   onSaved,
@@ -107,8 +143,8 @@ export function PaymentAccount({
 
   return (
     <Section
-      title="Where the money goes"
-      description="The bank account behind the QR code on everyone's bill. Leave it empty and the bill shows the amount without a code."
+      title={TITLE}
+      description={`${DESCRIPTION} Leave it empty and the bill shows the amount without a code.`}
     >
       <div className="flex flex-col gap-1.5">
         <label htmlFor="bank" className="text-sm font-medium">
@@ -185,6 +221,56 @@ export function PaymentAccount({
         <Action reason={reason} pending={save.pending} onClick={() => void save.run(draft)}>
           {save.pending ? "Saving" : "Save"}
         </Action>
+      </div>
+    </Section>
+  );
+}
+
+/**
+ * The same account, to an admin who is not an owner.
+ *
+ * They need to know it: they read bills and chase payments, so hiding it would
+ * cost them the answer to "which account is this office paid into". They do not
+ * get a form, because a form they can fill in and not save is a refusal held
+ * back until after the typing. The control they came for is still here, saying
+ * why it is not theirs, which is what the rest of this app does with an
+ * unavailable action.
+ */
+function PaymentAccountReadOnly({ config }: { config: PaymentConfig }) {
+  const account = config.vietqr;
+  const bank = bankByBin(account?.bankBin ?? null);
+
+  return (
+    <Section title={TITLE} description={DESCRIPTION} aside={<Badge>Owner only</Badge>}>
+      {account === null ? (
+        <p className="max-w-prose text-sm text-muted">
+          No account set yet, so bills show the amount and no QR code.
+        </p>
+      ) : (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+          <dt className="text-muted">Bank</dt>
+          <dd className="text-text">{bank?.shortName ?? account.bankBin}</dd>
+          {account.accountName !== "" && (
+            <>
+              <dt className="text-muted">Account name</dt>
+              <dd className="text-text">{account.accountName}</dd>
+            </>
+          )}
+          <dt className="text-muted">Account number</dt>
+          <dd className="tabular text-text">{account.accountNumber}</dd>
+        </dl>
+      )}
+
+      {config.note !== null && (
+        <p className="max-w-prose text-sm text-muted">{config.note}</p>
+      )}
+
+      <p className="max-w-prose text-sm text-muted">
+        {`${OWNER_ONLY} When ordering closes and where the bot posts are still yours to set.`}
+      </p>
+
+      <div>
+        <Action reason={OWNER_ONLY}>Change the account</Action>
       </div>
     </Section>
   );

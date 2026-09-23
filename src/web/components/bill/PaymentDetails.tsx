@@ -5,7 +5,7 @@
 // paint strings, which lets the code be drawn in `currentColor` from the design
 // tokens instead of a hardcoded black. It encodes; the payload is ours.
 import { QRCodeSVG } from "qrcode.react";
-import { Action, useAction } from "@/ui";
+import { Action, Badge, useAction } from "@/ui";
 import { vietQrPayload } from "../../../shared/vietqr.js";
 import { bankByBin } from "../../../shared/banks.js";
 import { formatMoney, type Currency } from "../../../shared/money.js";
@@ -14,10 +14,12 @@ import type { PaymentConfig } from "../../../shared/payment.js";
 /**
  * How to pay: the reference first, the code under it.
  *
- * The reference leads because it is the part that goes wrong. The transfer
- * itself is a scan, but the memo is typed, and a memo that does not match is a
- * payment sitting in the account with nobody's name on it until an admin works
- * out whose it was.
+ * The reference leads because it is the part that goes wrong, and getting it
+ * wrong is not something anybody can put right afterwards. SePay syncs only
+ * transactions whose memo carries LUNCH, because the office account is often
+ * also somebody's own, so a transfer without the reference never reaches this
+ * app at all: it is not unmatched money waiting on the Payments screen, it is
+ * money nobody here can see.
  */
 export function PaymentDetails({
   paymentRef,
@@ -56,7 +58,10 @@ export function PaymentDetails({
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <h3 className="text-sm font-semibold text-muted">Payment reference</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="text-sm font-semibold text-muted">Payment reference</h3>
+          <Badge variant="accent">Required</Badge>
+        </div>
         <div className="flex flex-wrap items-center gap-3">
           <p className="tabular text-xl font-semibold tracking-wider text-text">{paymentRef}</p>
           <Action
@@ -74,8 +79,8 @@ export function PaymentDetails({
           </Action>
         </div>
         <p className="max-w-prose text-sm text-muted">
-          Put this in the transfer message. It is how your payment is matched to your
-          name, so a transfer without it waits for an admin to sort out by hand.
+          Put this in the transfer message. Only transfers carrying it reach this app, so
+          one sent without it leaves your bill unpaid with nothing for an admin to find.
         </p>
       </div>
 

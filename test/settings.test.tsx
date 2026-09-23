@@ -139,8 +139,12 @@ describe("the two audiences", () => {
     expect(screen.queryByLabelText("Default cutoff")).not.toBeInTheDocument();
     expect(fetchOrgSettings).not.toHaveBeenCalled();
 
-    // And the absence is explained rather than silent.
+    // And the absence is explained rather than silent, naming both roles: the
+    // bank account stopped being an admin's when the owner-only guard landed.
     expect(screen.getByText(/set by an admin of Test Office/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/the bank account bills are paid into is set by an owner/),
+    ).toBeInTheDocument();
   });
 
   it("gives every unavailable control on the member's page a reason", async () => {
@@ -307,7 +311,15 @@ describe("display name", () => {
 
 /* --------------------------------------------------------- where money goes */
 
+/**
+ * guard_owner_only_settings() refuses a payment_config change from anybody who
+ * is not an owner, with "only an owner can change where the money goes". So the
+ * form is an owner's; an admin gets the account as facts, because they read
+ * bills and chase payments and still need to know which account this is.
+ */
 describe("the office's bank account", () => {
+  const OWNER_ONLY = "Only an owner can change where the money goes.";
+
   async function fillAccount() {
     const money = card("Where the money goes");
     await userEvent.click(within(money).getByRole("combobox"));
@@ -318,7 +330,7 @@ describe("the office's bank account", () => {
   }
 
   it("writes payment_config in the shape parsePaymentConfig defines", async () => {
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = await fillAccount();
     await userEvent.type(screen.getByLabelText("Note under the QR"), "Cash to Chi is fine too");
     await userEvent.click(within(money).getByRole("button", { name: "Save" }));
@@ -342,7 +354,7 @@ describe("the office's bank account", () => {
   });
 
   it("refuses half an account, naming the half that is missing", async () => {
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = card("Where the money goes");
     await userEvent.click(within(money).getByRole("combobox"));
     await userEvent.click(await screen.findByText("Techcombank"));
@@ -354,7 +366,7 @@ describe("the office's bank account", () => {
   });
 
   it("insists on the name the payer checks the account against", async () => {
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = card("Where the money goes");
     await userEvent.click(within(money).getByRole("combobox"));
     await userEvent.click(await screen.findByText("Vietcombank"));
@@ -366,7 +378,7 @@ describe("the office's bank account", () => {
   });
 
   it("refuses an account number that cannot be one", async () => {
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = card("Where the money goes");
     await userEvent.click(within(money).getByRole("combobox"));
     await userEvent.click(await screen.findByText("Vietcombank"));
@@ -386,7 +398,7 @@ describe("the office's bank account", () => {
       telegramGroupChatId: null,
       defaultCutoffLocalTime: "21:00:00",
     });
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = card("Where the money goes");
     expect(within(money).getByRole("combobox")).toHaveTextContent("VietinBank");
     expect(screen.getByLabelText("Account number")).toHaveValue("0987654321");
@@ -399,7 +411,7 @@ describe("the office's bank account", () => {
     setPaymentConfig.mockRejectedValue(
       new Error("That did not save. You need to be an admin of this office."),
     );
-    await renderSettings("admin");
+    await renderSettings("owner");
     const money = await fillAccount();
     await userEvent.click(within(money).getByRole("button", { name: "Save" }));
 
@@ -409,6 +421,95 @@ describe("the office's bank account", () => {
       ),
     );
     expect(success).not.toHaveBeenCalled();
+  });
+
+  describe("to an owner", () => {
+    it("is a form, with no talk of who else may touch it", async () => {
+      await renderSettings("owner");
+      const money = card("Where the money goes");
+
+      expect(within(money).getByRole("combobox")).toBeInTheDocument();
+      expect(within(money).getByLabelText("Account number")).toBeInTheDocument();
+      expect(within(money).getByLabelText("Account name")).toBeInTheDocument();
+      expect(within(money).getByLabelText("Note under the QR")).toBeInTheDocument();
+      expect(within(money).getByRole("button", { name: "Save" })).toBeInTheDocument();
+      expect(within(money).queryByText("Owner only")).not.toBeInTheDocument();
+      expect(within(money).queryByText(new RegExp(OWNER_ONLY))).not.toBeInTheDocument();
+    });
+  });
+
+  describe("to an admin who is not an owner", () => {
+    const ACCOUNT = {
+      payment: {
+        vietqr: { bankBin: "970415", accountNumber: "0987654321", accountName: "CHI" },
+        note: "Pay Chi in cash if you prefer",
+      },
+      telegramGroupChatId: null,
+      defaultCutoffLocalTime: "21:00:00",
+    };
+
+    it("shows the account, because they read bills and chase payments", async () => {
+      fetchOrgSettings.mockResolvedValue(ACCOUNT);
+      await renderSettings("admin");
+      const money = card("Where the money goes");
+
+      // 970415 is VietinBank. Named, not a BIN: an admin chasing a payment
+      // reads this against a bank statement.
+      expect(within(money).getByText("VietinBank")).toBeInTheDocument();
+      expect(within(money).getByText("0987654321")).toBeInTheDocument();
+      expect(within(money).getByText("CHI")).toBeInTheDocument();
+      expect(within(money).getByText("Pay Chi in cash if you prefer")).toBeInTheDocument();
+    });
+
+    it("says an office with no account set has none, rather than showing nothing", async () => {
+      await renderSettings("admin");
+      expect(
+        within(card("Where the money goes")).getByText(
+          "No account set yet, so bills show the amount and no QR code.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("offers no form, so nothing is filled in that the database will refuse", async () => {
+      fetchOrgSettings.mockResolvedValue(ACCOUNT);
+      await renderSettings("admin");
+      const money = card("Where the money goes");
+
+      expect(within(money).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(within(money).queryByLabelText("Account number")).not.toBeInTheDocument();
+      expect(within(money).queryByLabelText("Account name")).not.toBeInTheDocument();
+      expect(within(money).queryByLabelText("Note under the QR")).not.toBeInTheDocument();
+      expect(within(money).queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
+    });
+
+    it("says why the control is not theirs, and cannot be pressed into saving", async () => {
+      fetchOrgSettings.mockResolvedValue(ACCOUNT);
+      await renderSettings("admin");
+      const money = card("Where the money goes");
+
+      expect(within(money).getByText("Owner only")).toBeInTheDocument();
+      const change = within(money).getByRole("button", { name: "Change the account" });
+      expect(change).toHaveAttribute("aria-disabled", "true");
+      expect(change).toHaveAccessibleDescription(OWNER_ONLY);
+
+      await userEvent.click(change);
+      fireEvent.keyDown(change, { key: "Enter" });
+      expect(setPaymentConfig).not.toHaveBeenCalled();
+    });
+
+    it("names what is still theirs, so the section does not read as a demotion", async () => {
+      await renderSettings("admin");
+      expect(
+        within(card("Where the money goes")).getByText(
+          `${OWNER_ONLY} When ordering closes and where the bot posts are still yours to set.`,
+        ),
+      ).toBeInTheDocument();
+      // And those two really are still theirs.
+      expect(within(card("When ordering closes")).getByRole("button", { name: "Save" }))
+        .toBeInTheDocument();
+      expect(within(card("Telegram group chat")).getByRole("button", { name: "Save" }))
+        .toBeInTheDocument();
+    });
   });
 });
 
