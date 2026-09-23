@@ -178,6 +178,36 @@ Authentication is API key, HMAC-SHA256, OAuth 2.0, or none, plus an IP
 allowlist. The official Laravel package checks `Authorization: Bearer Apikey
 <secret>`, so that is the shape to expect.
 
+### Setting it up, once the endpoint exists
+
+Two settings on the **bank account** in SePay, which is a different place from
+the webhook and does a different job:
+
+- **Lọc giao dịch theo từ khóa** — sync only transactions whose content carries
+  the keyword. Set it to `LUNCH`. This is a *sync* filter: a transaction it
+  excludes never enters SePay at all, so it cannot reach this app and cannot
+  appear in "Money that matched nobody". The webhook-side option ("Chỉ gửi khi
+  có mã thanh toán") is weaker — it only decides what is *delivered*; SePay has
+  still received and stored the rest.
+- **Đồng bộ giao dịch tiền ra** — off. Money leaving is never a payment to the
+  office.
+
+This is why `payment_ref` begins with `LUNCH`. The old `L39NGUY` could not be a
+sync keyword: filtering on `L` would have matched almost every memo, which is no
+filter at all.
+
+Unconfirmed, and worth one question to SePay: whether an unsynced transaction
+also escapes the monthly quota. The quota is defined as "tổng số lượng giao dịch
+tiền vào" and SePay can only count what it holds, so it should — but the two are
+documented in different places and never connected. The owner's position is that
+the overage is small enough not to design around, so this is a curiosity rather
+than a blocker.
+
+The trade this makes, which is worth saying out loud: a genuine lunch payment
+whose memo omits the reference entirely will not sync either, so it is invisible
+to the app rather than landing in the unmatched list. That makes the reference
+on the Bill screen load-bearing rather than merely helpful.
+
 ### What to decide before building
 
 Whether to pursue Bank Hub, which needs a conversation with SePay and makes this
