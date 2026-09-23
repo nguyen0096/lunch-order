@@ -32,7 +32,24 @@ something that looks broken.
 | --- | --- |
 | default | one button, "Continue with Google" |
 | config missing | the `configError` from `supabase.ts`, verbatim, naming the missing variable |
-| signed in, no org | "You're signed in as X, but you're not a member of an office yet. Ask for a join code." Not an empty app |
+| signed in, no office | two doors, in order: join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one |
+
+## Switching office
+
+**Job.** Cross between two offices without leaving the page you were reading.
+
+The office name is the control, and **only above one office** — somebody in a
+single office keeps a plain heading rather than gaining a menu that does
+nothing, which is almost everybody.
+
+The page carries over where it still means something: two bills compare without
+a detour back to the board. The two admin chores do not, because a role does not
+follow you: a member switching from an office they administer lands on the
+board, not on a page explaining that the page is not for them.
+
+Creating an office lives here for somebody who already has one, and on the
+sign-in screen for somebody who belongs nowhere. It has one home at a time, not
+both.
 
 ## Board
 

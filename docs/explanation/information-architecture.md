@@ -73,3 +73,16 @@ database refuses what it refuses regardless of which tab a control sits on.
 Hiding a tab is a courtesy to the user, never a security boundary. See
 [design-system](../reference/design-system.md) for why every hidden control still
 states its reason when it is merely disabled.
+
+## Creating an office refetches before it routes
+
+The obvious order is wrong here. `App` resolves a slug it does not recognise by
+sending you to your first office, which is what stops a stale bookmark rendering
+an empty app. A newly created office is a slug `me` has never heard of, so
+routing to it and refetching afterwards bounces the founder straight back to
+where they started, having apparently created nothing.
+
+So `reload` is awaited and the redirect happens after it. The test that holds
+this mounts the app with a deliberately slow `fetchMe`, because an
+instantly-resolving one hides the race entirely: the first version of that test
+passed against the broken code.
