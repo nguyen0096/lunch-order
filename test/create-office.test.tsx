@@ -256,6 +256,23 @@ describe("NoOfficeScreen", () => {
     return { onCreated, onJoined };
   }
 
+  it("does not greet an email-free account as 'signed in as ,'", () => {
+    // Joining from Telegram means no email at all, which is the case this app
+    // went furthest out of its way to support.
+    const onCreated = vi.fn();
+    render(
+      <NoOfficeScreen
+        email=""
+        fullName="Tèo"
+        onSignOut={vi.fn()}
+        onCreated={onCreated}
+        onJoined={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/You're signed in, but you're not a member/)).toBeInTheDocument();
+    expect(screen.queryByText(/signed in as ,/)).toBeNull();
+  });
+
   it("offers a way to enter the join code it tells you to ask for", async () => {
     // The screen has always said "ask a colleague for the join code" and then
     // given nowhere to put one: join_with_code was called from the bot and from

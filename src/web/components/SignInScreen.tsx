@@ -98,8 +98,12 @@ export function NoOfficeScreen({
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
       <h1 className="text-xl font-semibold">No office yet</h1>
       <p className="text-muted">
-        You're signed in as {email}, but you're not a member of an office yet. Ask a colleague
-        for their office's join code and enter it here.
+        {/* Somebody who joined from Telegram has no email address at all, and
+            naming them "signed in as ," is the worst possible greeting for the
+            person this app was most careful to support. */}
+        {email === ""
+          ? "You're signed in, but you're not a member of an office yet. Ask a colleague for their office's join code and enter it here."
+          : `You're signed in as ${email}, but you're not a member of an office yet. Ask a colleague for their office's join code and enter it here.`}
       </p>
       <Button onClick={() => setJoining(true)}>Join with a code</Button>
 
