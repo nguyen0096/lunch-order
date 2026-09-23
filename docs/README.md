@@ -25,6 +25,8 @@ mixing them is what makes documentation that nobody finds anything in.
 - [Information architecture](explanation/information-architecture.md) — why the app is two tabs
 - [Join codes](explanation/join-codes.md) — why the code is permanent and what actually protects it
 
+[Backlog](backlog.md) holds the big pieces not started yet.
+
 Operational setup (secrets, deploys, the database) lives in the top-level
 [README](../README.md), because it is the first thing a new person needs and
 splitting it across two files helps nobody.
