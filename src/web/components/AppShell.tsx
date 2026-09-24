@@ -397,7 +397,11 @@ function AvatarMenu({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         aria-label={`Account: ${displayName}`}
-        className="flex h-11 w-full items-center gap-3 rounded-md px-2 text-left transition-colors hover:bg-surface-sunken md:w-full"
+        // `w-auto` below `md`, because the name inside is `hidden md:block`:
+        // full width made the trigger 266px wide on a phone with a 36px
+        // avatar in it, so 222px of it was empty and clickable and the org
+        // name beside it was truncated to "Test …" for want of the room.
+        className="ml-auto flex h-11 w-auto items-center gap-3 rounded-md px-2 text-left transition-colors hover:bg-surface-sunken md:ml-0 md:w-full"
       >
         <span
           aria-hidden="true"

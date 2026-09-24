@@ -471,6 +471,34 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
     <section ref={gridRef} className="flex flex-col gap-4">
       {nav}
 
+      {/* Above the grid, not below it. The grid is the thing that grows: every
+          colleague costs 49.3px and a menu of two to five dishes costs nothing
+          extra, so putting the bounded thing after the unbounded one meant
+          scrolling past the whole office to find out what was for lunch.
+          Measured at 390 with eight people, the first dish sat 13.9px below
+          the tab bar: you could not see a single dish without scrolling, and
+          tapping a column head moved a panel that was entirely off screen.
+
+          The alternative was to hide colleagues behind a button, which costs
+          345px of the screen's stated purpose to relocate a 242px panel, and
+          makes the board's own hero depend on a setting. */}
+      {days.every((d) => d.menuId === null) ? (
+        <EmptyState heading="No menus this week">
+          An admin pastes the caterer's message on the Menu screen and publishes it, and these
+          columns fill in.
+        </EmptyState>
+      ) : (
+        panelDay && (
+          <MenuPanel
+            day={panelDay}
+            org={org}
+            now={now}
+            reason={cellReason({ day: panelDay, now, timeZone: org.timezone })}
+          />
+        )
+      )}
+
+
       <Table containerClassName="bg-surface-raised">
         <TableHeader>
           <TableRow>
@@ -607,22 +635,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
           </TableRow>
         </TableFooter>
       </Table>
-
-      {days.every((d) => d.menuId === null) ? (
-        <EmptyState heading="No menus this week">
-          An admin pastes the caterer's message on the Menu screen and publishes it, and these
-          columns fill in.
-        </EmptyState>
-      ) : (
-        panelDay && (
-          <MenuPanel
-            day={panelDay}
-            org={org}
-            now={now}
-            reason={cellReason({ day: panelDay, now, timeZone: org.timezone })}
-          />
-        )
-      )}
 
       {focused?.member && focused.day && focused.member.isMe && (
         <DishDialog
@@ -1012,7 +1024,12 @@ function TheirCell({
       variant="ghost"
       aria-label={`${spoken}. Hand a meal over`}
       className={cn(
-        "h-9 w-full min-w-16 rounded-md px-1 text-xs font-medium",
+        // `flex`, not the Button's default `inline-flex`. An inline box sits
+        // on a line box, where its baseline is the text baseline when it
+        // names a dish and the bottom margin edge when it is empty: measured,
+        // every filled chip sat 2.15px below the empty targets in the same
+        // row, which is what made the grid read as jittery across a week.
+        "flex h-9 w-full min-w-16 rounded-md px-1 text-xs font-medium",
         MARK_FILL[mark],
         pendingWith !== null && "border border-dashed border-accent",
       )}
