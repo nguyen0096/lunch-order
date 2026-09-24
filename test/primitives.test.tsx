@@ -6,6 +6,7 @@ import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogHeader,
   DialogTitle,
   DialogTrigger,
   EmptyState,
@@ -72,6 +73,44 @@ describe("primitives mount and behave", () => {
     );
     await userEvent.click(screen.getByText("Pick a dish"));
     expect(await screen.findByRole("dialog", { name: "Wednesday" })).toBeInTheDocument();
+  });
+
+  it("Dialog leaves room for the close button beside the title", async () => {
+    render(
+      <Dialog defaultOpen>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Cancel lunch on Friday 25 September?</DialogTitle>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>,
+    );
+
+    // jsdom has neither layout nor the stylesheet, so this cannot be measured
+    // here: it was measured in a browser, where the title's box ended 12px
+    // clear of the button instead of running under it. What is assertable is
+    // the rule that put it there, which is one class and easy to delete by
+    // accident.
+    const content = (await screen.findByRole("dialog")).closest(
+      "[data-slot=dialog-content]",
+    ) as HTMLElement;
+    expect(content.className).toContain("[&_[data-slot=dialog-header]]:pr-10");
+  });
+
+  it("Dialog reclaims that room when there is no close button", async () => {
+    render(
+      <Dialog defaultOpen>
+        <DialogContent showCloseButton={false}>
+          <DialogHeader>
+            <DialogTitle>Nothing to close</DialogTitle>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>,
+    );
+    const content = (await screen.findByRole("dialog")).closest(
+      "[data-slot=dialog-content]",
+    ) as HTMLElement;
+    expect(content.className).not.toContain("[&_[data-slot=dialog-header]]:pr-10");
   });
 
   it("Tabs switch panels", async () => {

@@ -48,6 +48,14 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border border-border bg-surface-raised p-6 shadow-lg duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          // The close button is absolutely positioned and takes no space, so
+          // nothing stopped a title running underneath it -- which almost every
+          // title did, because most of them are a sentence. It sits 16px from
+          // the edge and is 36px wide, so it eats 28px of a content box padded
+          // by 24px; 40px of right padding clears it with room to spare. Set
+          // from here rather than on DialogHeader, because this is the only
+          // place that knows whether there is a button to clear.
+          showCloseButton && "[&_[data-slot=dialog-header]]:pr-10",
           className,
         )}
         {...props}

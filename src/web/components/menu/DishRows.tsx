@@ -336,7 +336,7 @@ export function DishRows({
         <span />
       </div>
 
-      <ul className="flex flex-col gap-3">
+      <ul className="flex flex-col gap-3 sm:gap-5">
         {rows.map((row, i) => {
           const flags = flagsFor(row, rows, currency);
           const read = reading(row);
@@ -364,6 +364,9 @@ export function DishRows({
                   onChange={(e) => onChange(row.key, { name: e.target.value })}
                   className="h-11 w-full rounded-md border border-border bg-surface-raised px-3 text-base"
                 />
+                {takerNote(row, takers) !== null && (
+                  <p className="text-xs text-muted">{takerNote(row, takers)}</p>
+                )}
               </div>
 
               <div className="flex flex-col gap-1">
@@ -410,11 +413,8 @@ export function DishRows({
                 </Action>
               </div>
 
-              {(flags.length > 0 || row.source !== null || takerNote(row, takers) !== null) && (
+              {(flags.length > 0 || row.source !== null) && (
                 <div className="flex flex-col gap-1 sm:col-span-3 sm:-mt-1 sm:pl-1">
-                  {takerNote(row, takers) !== null && (
-                    <p className="text-xs text-muted">{takerNote(row, takers)}</p>
-                  )}
                   {flags.map((f) => (
                     <p
                       key={f.text}
