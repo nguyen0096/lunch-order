@@ -125,7 +125,7 @@ export function DishDialog(props: DishDialogProps) {
             <Action
               reason={orderReason}
               pending={pending}
-              className="flex-1"
+              className="sm:flex-1"
               onClick={() => props.onSurprise(clean)}
             >
               <DicesIcon />
@@ -135,7 +135,7 @@ export function DishDialog(props: DishDialogProps) {
               reason={cell !== null ? orderReason : "You are not down as eating this day"}
               pending={pending}
               variant="outline"
-              className="flex-1"
+              className="sm:flex-1"
               onClick={props.onNotEating}
             >
               <UtensilsCrossedIcon />

@@ -144,7 +144,12 @@ export function AppShell({
         />
       </aside>
 
-      <div className="flex min-h-dvh flex-col">
+      {/* `min-w-0` is load-bearing. A flex item defaults to `min-width: auto`,
+          so the board table's min-content width refused to shrink and pushed
+          the PAGE sideways instead of scrolling inside its own wrapper.
+          Measured at 768: 265px of horizontal page scroll, and scrolling
+          right took the sidebar off screen entirely. */}
+      <div className="flex min-h-dvh min-w-0 flex-col">
         <header className="sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-surface-raised px-4 py-2 md:hidden">
           <OfficeName
             org={org}

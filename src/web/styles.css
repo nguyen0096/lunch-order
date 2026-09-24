@@ -62,6 +62,7 @@
   --border: #e6ded0;       /*  1.30 on surface: a hairline, decorative       */
   --border-strong: #9e8363;/*  3.48 on surface |  3.57 raised |  3.17 sunken */
 
+  --scrim: oklch(0% 0 0 / 50%);
   --accent: #af7305;       /*  3.88 on surface |  3.98 raised |  3.53 sunken */
   --accent-fg: #1a1206;    /*  4.66 on accent                                */
   --accent-subtle: #f8ead0;
@@ -108,6 +109,9 @@
     /* Ochre itself is far too dark against a dark page, so the dark accent is
        pulled toward the gold end of the brand. It stays a fill with dark text,
        exactly as in light mode, so the two themes teach the same rule. */
+    /* Heavier after dark: the same 50% over a dark page barely separates the
+       two planes, and the dialog is what has to read as lifted. */
+    --scrim: oklch(0% 0 0 / 65%);
     --accent: #e0a93c;       /*  8.84 on surface |  8.12 raised |  9.18 sunken */
     --accent-fg: #201603;    /*  8.42 on accent                                */
     --accent-subtle: #3b2b0d;
@@ -149,6 +153,7 @@
   --text-subtle: #9c8a73;
   --border: #352b1f;
   --border-strong: #806d52;
+  --scrim: oklch(0% 0 0 / 65%);
   --accent: #e0a93c;
   --accent-fg: #201603;
   --accent-subtle: #3b2b0d;
@@ -194,6 +199,13 @@
   --color-border: var(--border);
   --color-border-strong: var(--border-strong);
   --color-ring: var(--ring);
+
+  /* The dim behind a dialog. A token because `bg-black/50` silently computed
+     to rgba(0,0,0,0): `@theme` resets every --color-* to `initial`, so
+     Tailwind's own palette does not exist here and `black` is not a colour
+     this app has. Measured before the fix: every dialog opened onto a fully
+     lit page, so the click-outside target was invisible. */
+  --color-scrim: var(--scrim);
 
   --color-accent: var(--accent);
   --color-accent-fg: var(--accent-fg);
