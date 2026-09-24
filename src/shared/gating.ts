@@ -6,9 +6,77 @@
  * trip, while the database remains the thing that actually refuses the write.
  * If these two ever disagree, the database wins and the user sees its message.
  */
-import type { Menu, MyOrder } from "./types.js";
+import type { Menu, MyOrder, Org } from "./types.js";
+import { zonedTimeToInstant } from "./dates.js";
 
 export type Notice = { level: "info" | "warn" | "error"; text: string };
+
+/**
+ * The five stages a day goes through, plus the three it can sit outside.
+ *
+ * Mirrors `private.day_stage`. The database is what actually refuses a write;
+ * this is what lets a screen say which stage a day is in without asking.
+ */
+export type DayStage =
+  | "no_menu"
+  | "draft"
+  | "open"
+  | "locked"
+  | "closed"
+  | "done"
+  | "cancelled";
+
+/**
+ * Which stage a day is in.
+ *
+ * `locked` is the cutoff. `closed` is the office's start of day, when the
+ * kitchen begins and ordering can no longer be reopened. `done` is its end of
+ * day, after which a member cannot record a meal passed to somebody else.
+ *
+ * The last two are derived from the clock rather than stored, so they are
+ * right to the second rather than right to the last hourly tick -- which
+ * matters, because an hour is long enough to hand on a meal already eaten.
+ */
+export function dayStage(args: {
+  serviceDate: string;
+  status: string | null;
+  orderCutoffAt: string | null;
+  org: Pick<Org, "timezone" | "businessDayStartsAt" | "businessDayEndsAt">;
+  now: Date;
+}): DayStage {
+  const { serviceDate, status, orderCutoffAt, org, now } = args;
+  if (status === null) return "no_menu";
+  if (status === "cancelled") return "cancelled";
+  if (status === "draft") return "draft";
+
+  const at = (hhmm: string) =>
+    zonedTimeToInstant(serviceDate, hhmm, org.timezone).getTime();
+  if (now.getTime() >= at(org.businessDayEndsAt)) return "done";
+  if (now.getTime() >= at(org.businessDayStartsAt)) return "closed";
+  if (status === "locked") return "locked";
+  if (orderCutoffAt !== null && now.getTime() >= Date.parse(orderCutoffAt)) return "locked";
+  return "open";
+}
+
+/** The word a day's stage puts on a column head or a day card. */
+export function stageWord(stage: DayStage): string | null {
+  switch (stage) {
+    case "no_menu":
+      return "No menu";
+    case "draft":
+      return "Draft";
+    case "open":
+      return null;
+    case "locked":
+      return "Closed";
+    case "closed":
+      return "Cooking";
+    case "done":
+      return "Served";
+    case "cancelled":
+      return "Cancelled";
+  }
+}
 
 /** Null when ordering is allowed; otherwise the reason to show the member. */
 export function orderDisabledReason(

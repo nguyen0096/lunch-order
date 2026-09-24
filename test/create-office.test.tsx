@@ -53,6 +53,8 @@ const CREATED: Org = {
   currency: { code: "VND", minorUnits: 0, locale: "vi-VN" },
   defaultCutoffLocalTime: "16:00:00",
   billingWeekStartsOn: 1,
+  businessDayStartsAt: "08:30",
+  businessDayEndsAt: "17:30",
 };
 
 beforeEach(() => {

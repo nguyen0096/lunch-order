@@ -11,6 +11,8 @@ const ORG: Org = {
   currency: { code: "VND", minorUnits: 0, locale: "vi-VN" },
   defaultCutoffLocalTime: "21:00:00",
   billingWeekStartsOn: 1,
+  businessDayStartsAt: "08:30",
+  businessDayEndsAt: "17:30",
 };
 
 const OTHER: Org = { ...ORG, id: 8, slug: "other-office", name: "Other Office" };

@@ -9,6 +9,8 @@
  */
 import type { BoardCell, BoardDay } from "../api.js";
 import { formatDay, isoWeekday } from "../../shared/dates.js";
+import { dayStage, stageWord } from "../../shared/gating.js";
+import type { Org } from "../../shared/types.js";
 
 export type Dish = { id: number; name: string; priceMinor: number | null };
 
@@ -123,17 +125,27 @@ export function cellReason(args: {
 export function columnTag(args: {
   day: BoardDay;
   isAdminHere: boolean;
+  org: Pick<Org, "timezone" | "businessDayStartsAt" | "businessDayEndsAt">;
   now: Date;
 }): string | null {
-  const { day, isAdminHere, now } = args;
+  const { day, isAdminHere, org, now } = args;
+  if (day.dishes.length > 0 && day.status !== null && day.status !== "cancelled") {
+    const stage = dayStage({
+      serviceDate: day.serviceDate,
+      status: day.status,
+      orderCutoffAt: day.orderCutoffAt,
+      org,
+      now,
+    });
+    // An admin is inside the ordering window on every day, so `locked` is not
+    // news to them. `Cooking` and `Served` are: those two are the clock's, not
+    // the cutoff's, and they bind an admin's reopen and a member's meal pass.
+    if (isAdminHere && stage === "locked") return null;
+    return stageWord(stage);
+  }
   if (day.menuId === null) return "No menu";
   if (day.status === "cancelled") return "Cancelled";
-  if (day.dishes.length === 0) return "No dishes";
-  if (isAdminHere) return null;
-  if (day.status === "draft") return "Not up yet";
-  if (day.status === "locked") return "Closed";
-  if (day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt)) return "Closed";
-  return null;
+  return "No dishes";
 }
 
 /**

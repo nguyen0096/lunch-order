@@ -332,22 +332,32 @@ export async function assistParse(args: {
   return data as AssistedMenu;
 }
 
-/** Status of each day in a range, for the admin's day picker. */
+/**
+ * Status of each day in a range, for the admin's day picker.
+ *
+ * The cutoff comes back as well as the status, because the day picker labels
+ * each day with its stage and two of the five stages are the clock's rather
+ * than the status column's.
+ */
 export async function fetchMenuCalendar(args: {
   orgId: number; from: string; to: string;
-}): Promise<Map<string, { status: string; dishes: number }>> {
+}): Promise<Map<string, { status: string; dishes: number; orderCutoffAt: string | null }>> {
   const { data, error } = await supabase
     .from("menus")
-    .select("service_date, status, menu_items(count)")
+    .select("service_date, status, order_cutoff_at, menu_items(count)")
     .eq("org_id", args.orgId)
     .gte("service_date", args.from)
     .lte("service_date", args.to);
   if (error) throw error;
 
-  const out = new Map<string, { status: string; dishes: number }>();
+  const out = new Map<string, { status: string; dishes: number; orderCutoffAt: string | null }>();
   for (const m of data ?? []) {
     const counted = m.menu_items as unknown as Array<{ count: number }> | null;
-    out.set(m.service_date, { status: m.status, dishes: counted?.[0]?.count ?? 0 });
+    out.set(m.service_date, {
+      status: m.status,
+      dishes: counted?.[0]?.count ?? 0,
+      orderCutoffAt: m.order_cutoff_at as string | null,
+    });
   }
   return out;
 }

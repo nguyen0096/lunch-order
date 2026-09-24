@@ -477,7 +477,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             {days.map((d) => {
               const { dow, dom } = columnLabel(d.serviceDate);
               const isToday = d.serviceDate === today;
-              const tag = columnTag({ day: d, isAdminHere: admin, now });
+              const tag = columnTag({ day: d, isAdminHere: admin, org, now });
               // Today and the day's state are different axes and both can hold
               // at once, which by mid-afternoon they usually do.
               const tags = [isToday ? "Today" : null, tag].filter((t) => t !== null);

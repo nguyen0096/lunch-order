@@ -10,6 +10,7 @@ type OrgRow = {
   id: number; slug: string; name: string; timezone: string;
   currency: string; currency_minor_units: number; locale: string;
   default_cutoff_local_time: string; billing_week_starts_on: number;
+  business_day_starts_at: string; business_day_ends_at: string;
 };
 
 function toOrg(r: OrgRow): Org {
@@ -21,6 +22,10 @@ function toOrg(r: OrgRow): Org {
     currency: { code: r.currency, minorUnits: r.currency_minor_units, locale: r.locale },
     defaultCutoffLocalTime: r.default_cutoff_local_time,
     billingWeekStartsOn: r.billing_week_starts_on,
+    // Defaulted here as well as in the column: an office created before the
+    // stages existed reads back null until it is next written.
+    businessDayStartsAt: (r.business_day_starts_at ?? "08:30").slice(0, 5),
+    businessDayEndsAt: (r.business_day_ends_at ?? "17:30").slice(0, 5),
   };
 }
 
@@ -42,7 +47,8 @@ export async function fetchMe(): Promise<Me | null> {
     .select(
       `role, short_code, display_name,
        organizations ( id, slug, name, timezone, currency, currency_minor_units,
-                       locale, default_cutoff_local_time, billing_week_starts_on )`,
+                       locale, default_cutoff_local_time, billing_week_starts_on,
+                       business_day_starts_at, business_day_ends_at )`,
     )
     .eq("profile_id", auth.user.id)
     .eq("status", "active");

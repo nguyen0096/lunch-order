@@ -17,6 +17,10 @@ export type Org = {
   currency: Currency;
   defaultCutoffLocalTime: string;
   billingWeekStartsOn: number;
+  /** HH:MM. When the kitchen starts cooking, after which a day cannot reopen. */
+  businessDayStartsAt: string;
+  /** HH:MM. When lunch is over, after which a member cannot pass a meal on. */
+  businessDayEndsAt: string;
 };
 
 export type Me = {

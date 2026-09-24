@@ -52,6 +52,7 @@ import { parseMenu, type ParsedMenu } from "../../shared/menuParser.js";
 import { publishDisabledReason } from "../../shared/gating.js";
 import { addDays, daysApart, isoWeekday, todayIn, weekStart } from "../../shared/dates.js";
 import { now as appNow } from "../../shared/clock.js";
+import { dayStage, stageWord } from "../../shared/gating.js";
 import type { MenuStatus } from "../../shared/types.js";
 
 /**
@@ -119,9 +120,9 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const [impact, setImpact] = useState<PublishImpact | null>(null);
   // Who chose each dish, by menu_items.id. Empty when the day has no menu yet.
   const [takers, setTakers] = useState<Map<number, string[]>>(() => new Map());
-  const [calendar, setCalendar] = useState<Map<string, { status: string; dishes: number }>>(
-    () => new Map(),
-  );
+  const [calendar, setCalendar] = useState<
+    Map<string, { status: string; dishes: number; orderCutoffAt: string | null }>
+  >(() => new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -449,9 +450,21 @@ export function MenuScreen({ me, org }: ScreenProps) {
         {strip.map((day) => {
           const entry = calendar.get(day);
           const selected = day === serviceDate;
-          const state = entry
-            ? `${statusWord(entry.status as MenuStatus)}, ${dishCount(entry.dishes)}`
-            : "no menu";
+          // The day's stage, not its stored status: `locked` on a day already
+          // eaten reads the same as `locked` on tomorrow, and those are not
+          // the same day to anybody looking at this strip.
+          const word = entry
+            ? (stageWord(
+                dayStage({
+                  serviceDate: day,
+                  status: entry.status,
+                  orderCutoffAt: entry.orderCutoffAt,
+                  org,
+                  now: appNow(),
+                }),
+              ) ?? "Open")
+            : "No menu";
+          const state = entry ? `${word}, ${dishCount(entry.dishes)}` : "no menu";
           return (
             <li key={day}>
               <button
@@ -467,9 +480,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
                 )}
               >
                 <span className="font-medium">{shortDay(day)}</span>
-                <span className="text-xs">
-                  {entry ? statusWord(entry.status as MenuStatus) : "No menu"}
-                </span>
+                <span className="text-xs">{word}</span>
               </button>
             </li>
           );

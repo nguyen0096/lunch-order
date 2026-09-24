@@ -6,7 +6,7 @@ import { cellKey, type Board, type BoardDay, type TransferRow } from "../src/web
 import * as api from "../src/web/api.js";
 import { columnLabel, longDayLabel } from "../src/web/components/boardModel.js";
 import { formatMoney } from "../src/shared/money.js";
-import { addDays, formatDay, todayIn, weekStart } from "../src/shared/dates.js";
+import { addDays, formatDay, todayIn, weekStart, zonedTimeToInstant } from "../src/shared/dates.js";
 import type { Me, Org, Role } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -50,6 +50,8 @@ const ORG: Org = {
   currency: { code: "VND", minorUnits: 0, locale: "vi-VN" },
   defaultCutoffLocalTime: "21:00:00",
   billingWeekStartsOn: 1,
+  businessDayStartsAt: "08:30",
+  businessDayEndsAt: "17:30",
 };
 
 const ME: Me = {
@@ -185,6 +187,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   createTransfer.mockResolvedValue(undefined);
   decideTransfer.mockResolvedValue(undefined);
+  // Pinned, because a day's stage is a function of the time of day. Without
+  // this the suite passed every morning and failed every afternoon: at 08:00
+  // today is `locked` at most, and after 08:30 it is `Cooking`. 08:00 is the
+  // state the older tests were written against without knowing it.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(zonedTimeToInstant(TODAY, "08:00", TZ));
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /* -------------------------------------------------------------------- tests */
@@ -834,8 +846,12 @@ describe("Board, the menu panel", () => {
     serve(makeBoard({ wed: menuDay({ status: "locked" }) }));
     renderBoard();
 
+    // Clicked through the column itself rather than by label: the head's
+    // wording is the day's stage, and which stage WED is in depends on what
+    // weekday the suite happens to run. The panel is what this test is about.
+    await screen.findByRole("table");
     await userEvent.click(
-      await screen.findByRole("button", { name: headName(WED, "closed") }),
+      document.querySelector(`th[data-service-date="${WED}"] button`) as HTMLElement,
     );
     const panel = await screen.findByRole("region", { name: `Menu for ${longDayLabel(WED)}` });
     expect(
@@ -888,6 +904,33 @@ describe("Board, days you cannot act on", () => {
       name: `${formatDay(THU)}: not eating`,
     });
     expect(closedCell.closest("td")!.className).not.toContain("bg-surface-sunken");
+  });
+
+  it("says Cooking once the kitchen has started, and Served once lunch is over", async () => {
+    const base = makeBoard();
+    serve({
+      ...base,
+      days: base.days.map((d) =>
+        d.serviceDate === TODAY
+          ? { ...menuDay({ orderCutoffAt: PAST_CUTOFF, status: "locked" }), serviceDate: TODAY }
+          : d,
+      ),
+    });
+
+    // Mid-morning: the cutoff is long gone and the kitchen is on.
+    vi.setSystemTime(zonedTimeToInstant(TODAY, "09:00", TZ));
+    const view = renderBoard();
+    await screen.findByRole("table");
+    expect(head(TODAY).textContent).toContain("Cooking");
+    expect(head(TODAY).textContent).not.toContain("Served");
+    view.unmount();
+
+    // After the office has gone home. A member can no longer hand the meal on,
+    // which is the rule this word is the face of.
+    vi.setSystemTime(zonedTimeToInstant(TODAY, "18:00", TZ));
+    renderBoard();
+    await screen.findByRole("table");
+    expect(head(TODAY).textContent).toContain("Served");
   });
 
   it("marks today with a word and no rule at all", async () => {
