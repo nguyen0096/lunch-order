@@ -9,7 +9,6 @@ import { formatMoney } from "../src/shared/money.js";
 import {
   addDays,
   formatDay,
-  todayIn,
   weekNumberOf,
   weekStart,
   zonedTimeToInstant,
@@ -75,14 +74,24 @@ const DISHES = [
   { id: 7, name: "Phở bò", priceMinor: 40_000 },
 ];
 
-// Anchored to the real week so the screen's own `todayIn` agrees with the
-// fixture. Wednesday is always a weekday, so it always gets a column.
-const TODAY = todayIn(TZ);
+// A fixed Tuesday, not the real one, and `beforeEach` pins the clock to it.
+//
+// These fixtures all say something about where a day sits relative to today:
+// Wednesday is tomorrow, its cutoff is ahead or gone, Thursday is later still.
+// Anchored to the real week those sentences changed meaning by the day of the
+// week the suite happened to run on, and the suite was green Monday to Thursday
+// and red Friday to Sunday. CI caught it at 00:02 local, twelve minutes after
+// the same tests passed here.
+//
+// The cutoffs come off the same pinned clock. Derived from `Date.now()` they
+// were "past" and "open" relative to the real moment, which says nothing about
+// a clock pinned to another day.
+const TODAY = "2026-09-22";
 const MONDAY = weekStart(TODAY, 1);
 const WED = addDays(MONDAY, 2);
 const THU = addDays(MONDAY, 3);
-const OPEN_CUTOFF = new Date(Date.now() + 86_400_000).toISOString();
-const PAST_CUTOFF = new Date(Date.now() - 86_400_000).toISOString();
+const OPEN_CUTOFF = zonedTimeToInstant(WED, "23:00", TZ).toISOString();
+const PAST_CUTOFF = zonedTimeToInstant(TODAY, "07:00", TZ).toISOString();
 
 const MEMBERS = [
   { profileId: "me", name: "Neyu", shortCode: "NEYU", paymentRef: "LUNCHNEYU", isMe: true },
@@ -940,14 +949,30 @@ describe("Board, the menu panel", () => {
 });
 
 describe("Board, days you cannot act on", () => {
+  // Wednesday of the fixture week is "today" for this block, which is what
+  // makes Thursday a day still ahead with its cutoff already gone. Pinned to a
+  // weekday inside the week rather than to the real one: run this on a Friday
+  // and Thursday is yesterday, whose stage is Served rather than Closed, which
+  // is a true statement about a different day and a failing test about this
+  // one. It failed in CI at 00:02 local for exactly that reason.
+  beforeEach(() => {
+    vi.setSystemTime(zonedTimeToInstant(WED, "08:00", TZ));
+  });
+
+  // Relative to that pinned clock, not to the real one: a cutoff derived from
+  // `Date.now()` at module load is in the future again as soon as the pinned
+  // clock moves behind it.
+  const GONE = zonedTimeToInstant(WED, "07:00", TZ).toISOString();
+  const AHEAD = zonedTimeToInstant(WED, "23:00", TZ).toISOString();
+
   /** Wednesday inside the window, Thursday past its cutoff. */
   function mixedWeek() {
-    const base = makeBoard();
+    const base = makeBoard({ wed: menuDay({ orderCutoffAt: AHEAD }) });
     return {
       ...base,
       days: base.days.map((d) =>
         d.serviceDate === THU
-          ? { ...menuDay({ orderCutoffAt: PAST_CUTOFF }), serviceDate: THU }
+          ? { ...menuDay({ orderCutoffAt: GONE }), serviceDate: THU }
           : d,
       ),
     };
