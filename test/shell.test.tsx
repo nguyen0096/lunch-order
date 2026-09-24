@@ -22,6 +22,7 @@ function shell(
   page = "board",
   onSignOut = vi.fn(),
   offices: Office[] = [{ org: ORG, role }],
+  mayFoundOffice = true,
 ) {
   const onCreated = vi.fn();
   const onJoined = vi.fn();
@@ -34,6 +35,7 @@ function shell(
       page={page}
       displayName="Nguyễn Neyu"
       email="neyu@example.com"
+      mayFoundOffice={mayFoundOffice}
       onSignOut={onSignOut}
       onCreated={onCreated}
     >
@@ -285,6 +287,28 @@ describe("AppShell, where creating an office lives", () => {
     shell("member", "board", vi.fn(), both());
     const menu = await accountMenu();
     expect(menu.queryByRole("button", { name: "Create an office" })).not.toBeInTheDocument();
+  });
+
+  /**
+   * `app_settings.office_creation`, off while the app lives inside one company.
+   * The database refuses `create_organization` outright, so what is at stake
+   * here is only whether somebody is shown a door that would not open.
+   */
+  it("offers nothing anywhere when founding an office is switched off", async () => {
+    shell("member", "board", vi.fn(), [{ org: ORG, role: "member" }], false);
+    const menu = await accountMenu();
+
+    expect(menu.queryByRole("button", { name: "Create an office" })).not.toBeInTheDocument();
+    // Joining is not the switch: somebody with a code can always come in.
+    expect(menu.getByRole("button", { name: "Join an office" })).toBeInTheDocument();
+  });
+
+  it("takes it out of the switcher too, where it had no guard at all", async () => {
+    shell("member", "board", vi.fn(), both(), false);
+    const menu = await openSwitcher();
+
+    expect(menu.queryByRole("button", { name: "Create an office" })).not.toBeInTheDocument();
+    expect(menu.getByRole("button", { name: "Join an office" })).toBeInTheDocument();
   });
 });
 

@@ -67,6 +67,7 @@ export function AppShell({
   page,
   displayName,
   email,
+  mayFoundOffice,
   onSignOut,
   onCreated,
   onJoined,
@@ -79,6 +80,8 @@ export function AppShell({
   page: string;
   displayName: string;
   email: string;
+  /** Off while the app lives inside one company. Joining is always offered. */
+  mayFoundOffice: boolean;
   onSignOut: () => void;
   /** Refetch and go: a new office is not in `offices` until somebody reloads. */
   onCreated: (org: Org) => void;
@@ -88,7 +91,9 @@ export function AppShell({
   const admin = isAdmin(role);
   const href = (p: Page | "settings") => `#/o/${org.slug}/${p}`;
   const [creating, setCreating] = useState(false);
-  const create = () => setCreating(true);
+  // Undefined rather than a no-op, so every menu below simply has one fewer
+  // item instead of one that does nothing.
+  const create = mayFoundOffice ? () => setCreating(true) : undefined;
   const [joining, setJoining] = useState(false);
   const join = () => setJoining(true);
 
@@ -257,7 +262,7 @@ function OfficeName({
   offices: ReadonlyArray<Office>;
   page: string;
   align: "start" | "end";
-  onCreateOffice: () => void;
+  onCreateOffice?: () => void;
   onJoinOffice: () => void;
   className?: string;
 }) {
@@ -322,17 +327,19 @@ function OfficeName({
           <PlusIcon />
           Join an office
         </Button>
-        <Button
-          variant="ghost"
-          className="w-full justify-start"
-          onClick={() => {
-            setOpen(false);
-            onCreateOffice();
-          }}
-        >
-          <PlusIcon />
-          Create an office
-        </Button>
+        {onCreateOffice && (
+          <Button
+            variant="ghost"
+            className="w-full justify-start"
+            onClick={() => {
+              setOpen(false);
+              onCreateOffice();
+            }}
+          >
+            <PlusIcon />
+            Create an office
+          </Button>
+        )}
       </PopoverContent>
     </Popover>
   );

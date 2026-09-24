@@ -90,6 +90,7 @@ export function App() {
       <NoOfficeScreen
         email={me.email}
         fullName={me.fullName}
+        mayFoundOffice={me.mayFoundOffice}
         onSignOut={() => void signOut()}
         onCreated={(org) => void enter(org)}
         onJoined={(slug) => void enterSlug(slug)}
@@ -114,6 +115,7 @@ export function App() {
       page={page}
       displayName={active.displayName}
       email={me.email}
+      mayFoundOffice={me.mayFoundOffice}
       onSignOut={() => void signOut()}
       onCreated={(org) => void enter(org)}
       onJoined={(slug) => void enterSlug(slug)}

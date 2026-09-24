@@ -32,7 +32,8 @@ something that looks broken.
 | --- | --- |
 | default | one button, "Continue with Google" |
 | config missing | the `configError` from `supabase.ts`, verbatim, naming the missing variable |
-| signed in, no office | two doors, in order: join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one |
+| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one |
+| signed in, no office, founding switched off | the join code alone. `app_settings.office_creation` is a row the database holds and `create_organization` refuses on, so the second door is not hidden, it is shut: every place that offered it (this screen, the account menu, the office switcher) reads the same switch |
 
 ## Switching office
 

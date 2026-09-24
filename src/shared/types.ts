@@ -33,6 +33,16 @@ export type Me = {
   profileId: string;
   fullName: string;
   email: string;
+  /**
+   * `app_settings.office_creation`, which is off while the app lives inside one
+   * company. Carried here rather than fetched on its own because the screens
+   * that offer to found an office already wait for this call, and a second
+   * round trip would make the button appear a moment after the page.
+   *
+   * The database refuses it either way: this only decides whether somebody is
+   * offered a door that would not open.
+   */
+  mayFoundOffice: boolean;
   orgs: Array<{
     org: Org;
     role: Role;

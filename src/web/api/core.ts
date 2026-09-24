@@ -58,11 +58,16 @@ export async function fetchMe(): Promise<Me | null> {
     .eq("status", "active");
   if (error) throw error;
 
-  const { data: profile } = await supabase
-    .from("profiles").select("full_name, email").eq("id", auth.user.id).single();
+  const [{ data: profile }, { data: settings }] = await Promise.all([
+    supabase.from("profiles").select("full_name, email").eq("id", auth.user.id).single(),
+    supabase.from("app_settings").select("enabled").eq("key", "office_creation").maybeSingle(),
+  ]);
 
   return {
     profileId: auth.user.id,
+    // Missing row means a database that predates the switch, and the function
+    // treats that as allowed too, so the screen and the server agree.
+    mayFoundOffice: settings?.enabled ?? true,
     fullName: profile?.full_name ?? auth.user.email ?? "",
     email: profile?.email ?? auth.user.email ?? "",
     orgs: (data ?? []).flatMap((row) => {

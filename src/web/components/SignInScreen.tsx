@@ -79,6 +79,7 @@ export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
 export function NoOfficeScreen({
   email,
   fullName,
+  mayFoundOffice,
   onSignOut,
   onCreated,
   onJoined,
@@ -86,6 +87,8 @@ export function NoOfficeScreen({
   email: string;
   /** Their Google name, offered as the name colleagues will see. */
   fullName: string;
+  /** Off while the app lives inside one company: joining is the only way in. */
+  mayFoundOffice: boolean;
   onSignOut: () => void;
   /** Refetch and go: the new office is the only one this person has. */
   onCreated: (org: Org) => void;
@@ -107,15 +110,21 @@ export function NoOfficeScreen({
       </p>
       <Button onClick={() => setJoining(true)}>Join with a code</Button>
 
-      <hr className="w-full border-t border-border" />
+      {/* The offer goes with the switch. Leaving it up and letting the database
+          refuse would be offering somebody a door that does not open. */}
+      {mayFoundOffice && (
+        <>
+          <hr className="w-full border-t border-border" />
 
-      <p className="text-sm text-muted">
-        Nobody to ask? Create the office yourself and send colleagues the join code.
-      </p>
-      <Button variant="outline" onClick={() => setCreating(true)}>
-        <PlusIcon />
-        Create an office
-      </Button>
+          <p className="text-sm text-muted">
+            Nobody to ask? Create the office yourself and send colleagues the join code.
+          </p>
+          <Button variant="outline" onClick={() => setCreating(true)}>
+            <PlusIcon />
+            Create an office
+          </Button>
+        </>
+      )}
 
       <Button variant="ghost" onClick={onSignOut}>
         Sign out

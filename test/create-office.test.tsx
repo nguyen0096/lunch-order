@@ -243,13 +243,14 @@ describe("Creating an office", () => {
 });
 
 describe("NoOfficeScreen", () => {
-  function noOffice() {
+  function noOffice(mayFoundOffice = true) {
     const onCreated = vi.fn();
     const onJoined = vi.fn();
     render(
       <NoOfficeScreen
         email="neyu@example.com"
         fullName="Neyu Nguyen"
+        mayFoundOffice={mayFoundOffice}
         onSignOut={vi.fn()}
         onCreated={onCreated}
         onJoined={onJoined}
@@ -266,6 +267,7 @@ describe("NoOfficeScreen", () => {
       <NoOfficeScreen
         email=""
         fullName="Tèo"
+        mayFoundOffice
         onSignOut={vi.fn()}
         onCreated={onCreated}
         onJoined={vi.fn()}
@@ -332,6 +334,15 @@ describe("NoOfficeScreen", () => {
     expect(screen.getByRole("button", { name: /Create an office/ })).toBeInTheDocument();
   });
 
+  it("offers only the join code when founding an office is switched off", () => {
+    // The company-private state: everybody arrives with a code from somebody.
+    noOffice(false);
+
+    expect(screen.getByRole("button", { name: "Join with a code" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Create an office/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nobody to ask/)).not.toBeInTheDocument();
+  });
+
   it("creates from here too, and hands the office to the caller", async () => {
     const { onCreated } = noOffice();
 
@@ -350,6 +361,7 @@ describe("Landing in the new office", () => {
     profileId: "me",
     fullName: "Nguyễn Neyu",
     email: "neyu@example.com",
+    mayFoundOffice: true,
     orgs: orgs.map(member),
   });
 

@@ -61,6 +61,7 @@ const ME: Me = {
   profileId: "me",
   fullName: "Neyu",
   email: "neyu@example.com",
+  mayFoundOffice: true,
   orgs: [{ org: ORG, role: "admin", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
 
