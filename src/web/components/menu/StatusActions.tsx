@@ -12,9 +12,10 @@ import {
   useAction,
   type ActionHandle,
 } from "@/ui";
-import { cutoffLabel, longDay, ordersExist, peopleHave, weekdayName } from "./labels.js";
+import { cutoffLabel, longDay, peopleHave, weekdayName } from "./labels.js";
 import { setMenuStatus } from "../../api.js";
 import { now as appNow } from "../../../shared/clock.js";
+import { todayIn } from "../../../shared/dates.js";
 import type { MenuStatus } from "../../../shared/types.js";
 
 /**
@@ -23,15 +24,20 @@ import type { MenuStatus } from "../../../shared/types.js";
  *
  * `enforce_menu_lifecycle` has permitted every one of these since the first
  * migration and nothing here re-implements it: each control sends a status and
- * lets the trigger answer. The order count gates un-publishing as an affordance
- * only -- the trigger sees the count and the write in the same instant and this
- * screen cannot -- so its refusal still has to land, and does.
+ * lets the trigger answer.
  *
- * Reopening comes first because it is what an admin reaches for when the cutoff
- * closed a day by mistake. Cancelling comes last and is the only one behind a
- * typed confirmation: no transition leaves `cancelled`, so nothing in this app
- * takes it back, and the day strip above makes it one tap to be looking at a
- * date you did not mean.
+ * Reopening is what an admin reaches for when the cutoff closed a day by
+ * mistake, so it is offered only while the day is still ahead: there is nothing
+ * to order for a lunch that has already been eaten.
+ *
+ * Un-publishing used to sit here and no longer does. A published menu is
+ * editable in place, so the only thing un-publishing added was hiding a day
+ * from members -- and a day that is hidden but still being cooked is a state
+ * with no meaning to anybody. Calling lunch off is Cancel, which says so.
+ *
+ * Cancelling is the only one behind a typed confirmation: no transition leaves
+ * `cancelled`, so nothing in this app takes it back, and the day strip above
+ * makes it one tap to be looking at a date you did not mean.
  */
 export function StatusActions({
   status,
@@ -56,10 +62,6 @@ export function StatusActions({
   const [reopening, setReopening] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [typed, setTyped] = useState("");
-
-  const unpublish = useAction(async () => setMenuStatus({ menuId, status: "draft" }), {
-    success: "Un-published · this day is a draft again",
-  });
 
   const reopen = useAction(async () => setMenuStatus({ menuId, status: "published" }), {
     success: "Reopened · people can order again",
@@ -90,20 +92,17 @@ export function StatusActions({
   // job is to prove you know which day, not that you can reach the keyboard.
   const confirmed = typed === day;
 
-  const unpublishReason =
-    orders === null
-      ? "The order count has not loaded yet"
-      : orders > 0
-        ? `${ordersExist(orders)} on this day. Un-publishing needs a menu nobody has ordered from`
-        : null;
-
   // A locked menu got there from the hourly check, so this is all but always
   // true; it is asked rather than assumed because the answer changes the sentence.
   const cutoffPassed = Date.parse(cutoffAt) <= appNow().getTime();
 
+  // The office's day, not the reader's: an admin on a trip must see the same
+  // day the kitchen is cooking for.
+  const dayHasPassed = serviceDate < todayIn(timeZone, appNow());
+
   return (
     <>
-      {status === "locked" && (
+      {status === "locked" && !dayHasPassed && (
         <Action
           reason={null}
           pending={reopen.pending}
@@ -115,24 +114,16 @@ export function StatusActions({
         </Action>
       )}
 
-      {status === "published" && (
-        <Action
-          reason={unpublishReason}
-          pending={unpublish.pending}
-          variant="outline"
-          size="sm"
-          onClick={() => void apply(unpublish, "draft")}
-        >
-          {unpublish.pending ? "Un-publishing…" : "Un-publish"}
-        </Action>
-      )}
-
+      {/* Outline, not danger. The loud red belongs on the button that does it,
+          inside the dialog; out here it made calling lunch off the most
+          prominent thing on a screen whose job is publishing a menu. */}
       {(status === "published" || status === "locked") && (
         <Action
           reason={null}
           pending={cancel.pending}
-          variant="danger"
+          variant="outline"
           size="sm"
+          className="text-danger hover:text-danger"
           onClick={() => openCancel(true)}
         >
           Cancel lunch

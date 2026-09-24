@@ -108,6 +108,35 @@ export function cellReason(args: {
 }
 
 /**
+ * The one or two words a column head carries under its date.
+ *
+ * This used to be a tint. A recessed column said "you cannot act here", but
+ * the same grey covered a day with no menu, a day past its cutoff and a day
+ * lunch was cancelled on, so one shade stood for three different pieces of
+ * news and the commonest reading of it -- "these are the days with a menu" --
+ * was not one of them. A word says which.
+ *
+ * Returns null when the reader can act on the day, so an ordinary open day
+ * stays quiet. `Today` is added by the caller: it is a different axis and the
+ * two coexist, since today is usually also closed by the afternoon.
+ */
+export function columnTag(args: {
+  day: BoardDay;
+  isAdminHere: boolean;
+  now: Date;
+}): string | null {
+  const { day, isAdminHere, now } = args;
+  if (day.menuId === null) return "No menu";
+  if (day.status === "cancelled") return "Cancelled";
+  if (day.dishes.length === 0) return "No dishes";
+  if (isAdminHere) return null;
+  if (day.status === "draft") return "Not up yet";
+  if (day.status === "locked") return "Closed";
+  if (day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt)) return "Closed";
+  return null;
+}
+
+/**
  * The day the menu panel opens on, and the column the grid scrolls to.
  *
  * The next one still orderable, so the panel answers "what is on offer that I

@@ -1,4 +1,5 @@
 import { parseVietnamesePrice } from "./money.js";
+import { dishName } from "./dishName.js";
 
 export type ItemWarning =
   | "price_out_of_range"
@@ -41,8 +42,10 @@ const DEFAULT_MAX = 500_000;
 const LEADER =
   /^\s*(?:\p{Extended_Pictographic}[️‍\p{Extended_Pictographic}]*\s*)*(?:[-*•·–—+>»]+|\(?\d{1,2}[.)\/]|\d{1,2}\s*[-–])?\s*/u;
 
-const HEADER = /^(thực đơn|thuc don|menu|ngày|ngay|thứ|thu\s*[2-7]\b|t[2-7]\b|cn\b)/i;
-const NOTE = /^(note|lưu ý|luu y|ghi chú|ghi chu|đặt|dat |deadline|free|miễn phí|mien phi|liên hệ|lien he)/i;
+const HEADER =
+  /^(thực đơn|thuc don|menu|ngày|ngay|thứ|thu\s*[2-7]\b|t[2-7]\b|cn\b)/i;
+const NOTE =
+  /^(note|lưu ý|luu y|ghi chú|ghi chu|đặt|dat |deadline|free|miễn phí|mien phi|liên hệ|lien he)/i;
 
 /**
  * Parse a caterer's pasted chat message into draft menu items.
@@ -96,14 +99,14 @@ export function parseMenu(text: string, opts: ParseOptions): ParsedMenu {
     }
 
     // Strip the matched price off the end; what remains is the dish name.
-    const name = body
-      .replace(
-        /\s*[(\[]?\s*(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*[)\]]?\s*[.,;!…]*\s*$/iu,
-        "",
-      )
-      .replace(/[\s\-–—:·.]+$/u, "")
-      .replace(/\s+/g, " ")
-      .trim();
+    const name = dishName(
+      body
+        .replace(
+          /\s*[(\[]?\s*(\d{1,3}(?:[.,\s]\d{3})+|\d+(?:[.,]\d{1,2})?)\s*(k|nghìn|ngàn|nghin|ngan|đ|d|vnd|vnđ|₫)?\s*[)\]]?\s*[.,;!…]*\s*$/iu,
+          "",
+        )
+        .replace(/[\s\-–—:·.]+$/u, ""),
+    );
 
     if (name === "") {
       // A price with no dish attached is not an item priced 0.
@@ -118,13 +121,15 @@ export function parseMenu(text: string, opts: ParseOptions): ParsedMenu {
     const warnings: ItemWarning[] = [];
     if (reading.inferredThousands) warnings.push("price_inferred_thousands");
     if (reading.ambiguousDecimal) warnings.push("price_ambiguous_decimal");
-    if (reading.minor < min || reading.minor > max) warnings.push("price_out_of_range");
+    if (reading.minor < min || reading.minor > max)
+      warnings.push("price_out_of_range");
 
     const key = name.toLowerCase();
     const prior = seen.get(key);
     if (prior) {
       // Keep the first price; flag rather than guess which was intended.
-      if (!prior.warnings.includes("duplicate_name")) prior.warnings.push("duplicate_name");
+      if (!prior.warnings.includes("duplicate_name"))
+        prior.warnings.push("duplicate_name");
       return;
     }
 
@@ -177,13 +182,15 @@ function guessDate(line: string, today: string): string | null {
 }
 
 function daysBetween(a: string, b: string): number {
-  return (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000;
+  return (
+    (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000
+  );
 }
 
 /** The next occurrence of `target`, never today: menus are published ahead. */
 function nextWeekday(today: string, target: number): string {
   const base = Date.parse(`${today}T00:00:00Z`);
   const current = new Date(base).getUTCDay() || 7;
-  const shift = ((target - current + 7) % 7) || 7;
+  const shift = (target - current + 7) % 7 || 7;
   return new Date(base + shift * 86_400_000).toISOString().slice(0, 10);
 }

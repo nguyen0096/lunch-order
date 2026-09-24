@@ -2,6 +2,7 @@ import { Trash2Icon } from "lucide-react";
 import { Button, cn } from "@/ui";
 import type { DraftDish } from "../../api.js";
 import type { ItemWarning, ParsedItem } from "../../../shared/menuParser.js";
+import { dishName } from "../../../shared/dishName.js";
 import {
   PRICE_PENDING,
   formatAmount,
@@ -75,7 +76,18 @@ export function rowFromAssist(
   c: Currency,
 ): DishRow {
   const price = formatAmount(item.priceMinor, c);
-  return { key: nextKey(), id: null, name: item.name, price, source: item.note, seeded: [], seededPrice: price };
+  // Capitalised here rather than in toDrafts, so the admin reads the name the
+  // database will get and can still lower-case it back if they meant to. The
+  // model is no better at this than the caterer: both send what chat sends.
+  return {
+    key: nextKey(),
+    id: null,
+    name: dishName(item.name),
+    price,
+    source: item.note,
+    seeded: [],
+    seededPrice: price,
+  };
 }
 
 /**
@@ -205,7 +217,11 @@ export function toDrafts(rows: DishRow[]): DraftDish[] {
     const blank = r.price.trim() === "";
     return {
       id: r.id ?? undefined,
-      name: r.name.trim(),
+      // NFC only, never re-cased: `menu_items` is unique on
+      // `lower(btrim(name))` and a phone keyboard's decomposed `Cơm` would
+      // slip past that index as a second row. Capitalising is done where a
+      // row is built from a parse, where the admin can see and undo it.
+      name: r.name.normalize("NFC").trim(),
       priceMinor: blank ? null : read === null ? Number.NaN : read.minor,
     };
   });

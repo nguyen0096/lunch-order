@@ -1318,7 +1318,7 @@ describe("Checking the caterer's message against the board", () => {
     renderPayments();
     await readTheMessage("cơm tấm 50k 4 phần, bún bò 60k 3 phần, phở gà 45k 2 phần");
 
-    const row = dishRow("phở gà");
+    const row = dishRow("Phở gà");
     expect(within(row).getByText("Not on our board")).toBeInTheDocument();
     expect(within(row).getByText("Never served")).toBeInTheDocument();
   });

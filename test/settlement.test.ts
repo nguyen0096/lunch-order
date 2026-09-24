@@ -31,14 +31,14 @@ describe("Reading the caterer's weekend message", () => {
 
     expect(parsed.dishes).toHaveLength(2);
     expect(parsed.dishes[0]).toMatchObject({
-      name: "cơm tấm",
+      name: "Cơm tấm",
       priceMinor: 50_000,
       theirCount: 5,
     });
     // The conversation between the price and the count -- "tuần rồi em ăn" --
     // must not become part of the next dish's name.
     expect(parsed.dishes[1]).toMatchObject({
-      name: "bún bò",
+      name: "Bún bò",
       priceMinor: 60_000,
       theirCount: null,
     });
@@ -74,8 +74,8 @@ describe("Reading the caterer's weekend message", () => {
   it("takes a count written before the dish, and one written as x5", () => {
     const parsed = parseSettlement("5 suất cơm tấm 50k\nbún bò 60k x3");
 
-    expect(parsed.dishes[0]).toMatchObject({ name: "cơm tấm", theirCount: 5 });
-    expect(parsed.dishes[1]).toMatchObject({ name: "bún bò", theirCount: 3 });
+    expect(parsed.dishes[0]).toMatchObject({ name: "Cơm tấm", theirCount: 5 });
+    expect(parsed.dishes[1]).toMatchObject({ name: "Bún bò", theirCount: 3 });
   });
 
   it("reads phần and suất, accented or not", () => {
@@ -87,7 +87,7 @@ describe("Reading the caterer's weekend message", () => {
   it("takes the stated total from tổng cộng without making a dish of it", () => {
     const parsed = parseSettlement("cơm tấm 50k\nbún bò 60k\ntổng cộng 550.000");
 
-    expect(names(parsed)).toEqual(["cơm tấm", "bún bò"]);
+    expect(names(parsed)).toEqual(["Cơm tấm", "Bún bò"]);
     expect(parsed.statedTotalMinor).toBe(550_000);
   });
 
@@ -103,7 +103,7 @@ describe("Reading the caterer's weekend message", () => {
   it("keeps a line it could not read rather than dropping it", () => {
     const parsed = parseSettlement("cơm tấm 50k\nbún bò hôm qua hết hàng");
 
-    expect(names(parsed)).toEqual(["cơm tấm"]);
+    expect(names(parsed)).toEqual(["Cơm tấm"]);
     expect(parsed.unparsed).toEqual([{ line: 1, raw: "bún bò hôm qua hết hàng" }]);
   });
 
@@ -111,7 +111,7 @@ describe("Reading the caterer's weekend message", () => {
     const parsed = parseSettlement("cơm tấm 50k, bún bò 60k, cơm tấm 55k");
 
     expect(parsed.dishes).toHaveLength(2);
-    expect(parsed.dishes[0]).toMatchObject({ name: "cơm tấm", priceMinor: 50_000 });
+    expect(parsed.dishes[0]).toMatchObject({ name: "Cơm tấm", priceMinor: 50_000 });
     expect(parsed.dishes[0]?.warnings).toContain("duplicate_name");
   });
 
@@ -135,7 +135,7 @@ describe("Reading the caterer's weekend message", () => {
     const parsed = parseSettlement("em gửi anh\ncơm tấm 50k");
 
     expect(parsed.notes).toEqual(["em gửi anh"]);
-    expect(names(parsed)).toEqual(["cơm tấm"]);
+    expect(names(parsed)).toEqual(["Cơm tấm"]);
   });
 
   it("folds a dish name the way the database folds it", () => {
@@ -184,7 +184,7 @@ describe("Checking the message against the board", () => {
   it("keeps a dish the caterer names that we never served", () => {
     const r = reconcile(parseSettlement("cơm tấm 50k 4 phần, phở gà 45k 2 phần"), SERVED);
 
-    const stray = r.dishes.find((d) => d.name === "phở gà");
+    const stray = r.dishes.find((d) => d.name === "Phở gà");
     expect(stray).toMatchObject({ ourCount: null, theirCount: 2, issue: "not_on_our_board" });
   });
 

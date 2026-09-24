@@ -40,6 +40,19 @@ export function formatAmount(minor: number, c: Currency): string {
   }).format(minor / 10 ** c.minorUnits);
 }
 
+/**
+ * 45000 -> "45000". Digits only: no symbol and no grouping.
+ *
+ * This is the one that gets pasted into a banking app's amount field, which
+ * is why it drops the separators `formatAmount` keeps. Some banks strip a
+ * grouping dot and some read it as a decimal point, and on VND the second
+ * reading turns 45.000 into forty-five dong.
+ */
+export function plainAmount(minor: number, c: Currency): string {
+  assertMinor(minor);
+  return (minor / 10 ** c.minorUnits).toFixed(c.minorUnits);
+}
+
 export function assertMinor(n: number): asserts n is number {
   if (!Number.isInteger(n)) {
     throw new TypeError(`money must be an integer minor amount, got ${n}`);

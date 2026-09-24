@@ -26,6 +26,8 @@ import {
 import { PublishDialog } from "./menu/PublishDialog.js";
 import { StatusActions } from "./menu/StatusActions.js";
 import { CutoffFields } from "./menu/CutoffFields.js";
+import { WeekNav } from "./WeekNav.js";
+import { weekRangeLabel } from "./boardModel.js";
 import {
   cutoffInstant,
   cutoffProblem,
@@ -47,21 +49,19 @@ import {
 import type { ScreenProps } from "./screenProps.js";
 import { parseMenu, type ParsedMenu } from "../../shared/menuParser.js";
 import { publishDisabledReason } from "../../shared/gating.js";
-import { addDays, isoWeekday, todayIn } from "../../shared/dates.js";
+import { addDays, daysApart, isoWeekday, todayIn, weekStart } from "../../shared/dates.js";
 import { now as appNow } from "../../shared/clock.js";
 import type { MenuStatus } from "../../shared/types.js";
 
-/** How far ahead the day strip looks. Two working weeks is as far as a caterer plans. */
-const STRIP_DAYS = 12;
-
 /**
- * How far back the strip reaches.
+ * How far either side of today the calendar is fetched.
  *
- * An office that starts on Wednesday wants Monday and Tuesday, and the only way
- * in was the date field, which is a worse way to pick a day than a row of days.
- * A week covers that; anything older is still reachable by typing the date.
+ * The strip shows one week, but the reader can page to any of them, and a
+ * fetch per keypress on the arrows would flicker. Four weeks each way covers
+ * ordinary paging in one request; going further reloads, which is fine because
+ * by then it is a deliberate trip.
  */
-const STRIP_DAYS_BACK = 7;
+const CALENDAR_DAYS = 28;
 
 /**
  * Turn the caterer's chat message into a published menu without retyping it.
@@ -82,6 +82,22 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
 
   const [serviceDate, setServiceDate] = useState(() => nextServiceDay(today));
+
+  // The week on screen. It follows the service date rather than being chosen
+  // separately: typing a date into the field is a way of changing week too,
+  // and a strip still showing the old one would be lying about what is selected.
+  const thisWeek = weekStart(today, org.billingWeekStartsOn);
+  const weekOf = weekStart(serviceDate, org.billingWeekStartsOn);
+
+  /**
+   * Paging lands on the same weekday you were looking at, so the arrows read
+   * as "this day, last week" rather than shuffling you to a Monday each time.
+   * A weekend only survives the move when lunch happens on it there too.
+   */
+  function goToWeek(start: string) {
+    const offset = Math.min(4, Math.max(0, daysApart(weekOf, serviceDate)));
+    setServiceDate(addDays(start, offset));
+  }
 
   // The evening before at the org's own time, until either the day's stored
   // menu says otherwise or the admin does. `pinned` records the admin's hand:
@@ -126,8 +142,8 @@ export function MenuScreen({ me, org }: ScreenProps) {
         fetchMenuEditor(org.id, serviceDate),
         fetchMenuCalendar({
           orgId: org.id,
-          from: addDays(today, -STRIP_DAYS_BACK),
-          to: addDays(today, STRIP_DAYS),
+          from: addDays(today, -CALENDAR_DAYS),
+          to: addDays(today, CALENDAR_DAYS),
         }),
       ]);
       const next = await fetchPublishImpact({
@@ -325,8 +341,8 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const strip = useMemo(() => {
     const out: string[] = [];
-    for (let i = -STRIP_DAYS_BACK; i < STRIP_DAYS; i += 1) {
-      const day = addDays(today, i);
+    for (let i = 0; i < 7; i += 1) {
+      const day = addDays(weekOf, i);
       // Weekends only when lunch actually happens on them, the same rule the
       // board uses: an always-empty Sunday is width spent on nothing.
       //
@@ -335,9 +351,11 @@ export function MenuScreen({ me, org }: ScreenProps) {
       // to reach a past day is that nothing is on it yet.
       if (isoWeekday(day) <= 5 || calendar.has(day)) out.push(day);
     }
-    if (!out.includes(serviceDate)) out.unshift(serviceDate);
-    return out;
-  }, [today, calendar, serviceDate]);
+    // A date typed into the field can be a Sunday with nothing on it. It is
+    // still the selected day and the strip has to show it.
+    if (!out.includes(serviceDate)) out.push(serviceDate);
+    return out.sort();
+  }, [weekOf, calendar, serviceDate]);
 
   const drafts = toDrafts(rows);
   const duplicate = duplicateName(rows);
@@ -414,6 +432,14 @@ export function MenuScreen({ me, org }: ScreenProps) {
           </div>
         )}
       </div>
+
+      <WeekNav
+        label={weekRangeLabel(strip[0] ?? weekOf, strip[strip.length - 1] ?? weekOf)}
+        away={weekOf !== thisWeek}
+        onPrev={() => goToWeek(addDays(weekOf, -7))}
+        onNext={() => goToWeek(addDays(weekOf, 7))}
+        onReset={() => goToWeek(thisWeek)}
+      />
 
       <ul className="flex flex-wrap gap-2">
         {strip.map((day) => {

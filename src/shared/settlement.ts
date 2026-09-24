@@ -19,6 +19,7 @@
  */
 
 import { parseVietnamesePrice } from "./money.js";
+import { dishName } from "./dishName.js";
 
 export type SettlementWarning =
   | "price_out_of_range"
@@ -250,7 +251,10 @@ function cleanName(raw: string): string {
     if (next === name) break;
     name = next;
   }
-  return name.replace(/\s+/g, " ").trim();
+  // Same sentence case the menu parser applies, so the caterer's column and
+  // ours read alike on the settle screen. Matching is `dishKey`'s job and is
+  // case-blind either way.
+  return dishName(name);
 }
 
 /**

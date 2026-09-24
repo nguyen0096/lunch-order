@@ -61,6 +61,30 @@ const ME: Me = {
 
 const TODAY = todayIn(TZ);
 
+/**
+ * Click a day in the strip, paging the week first when it is not on screen.
+ *
+ * The strip shows one week and pages with the same arrows the board uses, so
+ * a day two working days out is often in the next one. Paging here rather
+ * than pinning the tests to a Monday keeps them honest whatever day they run.
+ */
+async function pickDay(
+  user: ReturnType<typeof userEvent.setup>,
+  date: string,
+  state = "no menu",
+): Promise<void> {
+  const name = `${shortDay(date)}, ${state}`;
+  for (let i = 0; i < 3; i += 1) {
+    const button = screen.queryByRole("button", { name });
+    if (button !== null) {
+      await user.click(button);
+      return;
+    }
+    await user.click(screen.getByRole("button", { name: "Next week" }));
+  }
+  throw new Error(`no strip button for "${name}"`);
+}
+
 /** The day the screen opens on: tomorrow, skipping the weekend. */
 const DATE = (() => {
   let d = addDays(TODAY, 1);
@@ -400,7 +424,7 @@ describe("Changing the service date", () => {
     while (isoWeekday(other) > 5) other = addDays(other, 1);
 
     fetchMenuEditor.mockResolvedValue(menu({ status: "draft" }));
-    await user.click(screen.getByRole("button", { name: `${shortDay(other)}, no menu` }));
+    await pickDay(user, other);
 
     await waitFor(() =>
       expect(screen.getByLabelText("Price of C\u01a1m g\u00e0")).toBeInTheDocument(),
@@ -436,7 +460,7 @@ describe("When orders close", () => {
     await ready();
 
     const other = workingDayAfter(DATE);
-    await user.click(screen.getByRole("button", { name: `${shortDay(other)}, no menu` }));
+    await pickDay(user, other);
 
     await waitFor(() => expect(screen.getByLabelText("Service date")).toHaveValue(other));
     expect(cutoffDate()).toHaveValue(addDays(other, -1));
@@ -460,7 +484,7 @@ describe("When orders close", () => {
     // Two days on, not one: the evening before the very next day IS the pinned
     // date, and a test that cannot tell the two apart proves nothing.
     const other = workingDayAfter(workingDayAfter(DATE));
-    await user.click(screen.getByRole("button", { name: `${shortDay(other)}, no menu` }));
+    await pickDay(user, other);
 
     expect(screen.getByLabelText("Service date")).toHaveValue(other);
     expect(cutoffDate()).toHaveValue(DATE);
@@ -781,7 +805,6 @@ describe("Changing the menu's status", () => {
   }
 
   const reopenButton = () => screen.getByRole("button", { name: "Reopen ordering" });
-  const unpublishButton = () => screen.getByRole("button", { name: "Un-publish" });
   const cancelButton = () => screen.getByRole("button", { name: "Cancel lunch" });
 
   /* ------------------------------------------------------------- reopening */
@@ -895,74 +918,18 @@ describe("Changing the menu's status", () => {
     expect(screen.queryByText(/can no longer be changed/)).not.toBeInTheDocument();
   });
 
-  /* ----------------------------------------------------------- un-publishing */
+  /* ------------------------------------------------- un-publishing, removed */
 
-  it("un-publishes a day nobody has ordered for, and the badge says Draft", async () => {
-    const user = userEvent.setup();
-    serveChange(menu({ status: "published" }), menu({ status: "draft" }), { orders: 0 });
+  it("does not offer un-publishing at all", async () => {
+    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 0 }) });
     renderMenu();
     await ready();
 
-    expect(unpublishButton()).not.toHaveAttribute("aria-disabled");
-    await user.click(unpublishButton());
-
-    await waitFor(() => expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "draft" }));
-    expect(await screen.findByText("Draft")).toBeInTheDocument();
-    expect(screen.queryByText("Published")).not.toBeInTheDocument();
-    expect(success).toHaveBeenCalledWith("Un-published · this day is a draft again");
-  });
-
-  it("says the order count before the button is pressed, and refuses the press", async () => {
-    const user = userEvent.setup();
-    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 4 }) });
-    renderMenu();
-    await ready();
-
-    expect(unpublishButton()).toHaveAttribute("aria-disabled", "true");
-    expect(
-      screen.getAllByText(
-        "4 orders already exist on this day. Un-publishing needs a menu nobody has ordered from",
-      ).length,
-    ).toBeGreaterThan(0);
-
-    await user.click(unpublishButton());
-    expect(setMenuStatus).not.toHaveBeenCalled();
-  });
-
-  it("agrees with a count of one", async () => {
-    serve({ menu: menu({ status: "published" }), impact: impact({ orders: 1 }) });
-    renderMenu();
-    await ready();
-
-    expect(
-      screen.getAllByText(
-        "One order already exists on this day. Un-publishing needs a menu nobody has ordered from",
-      ).length,
-    ).toBeGreaterThan(0);
-  });
-
-  it("surfaces the trigger's refusal when somebody ordered after the count was read", async () => {
-    const user = userEvent.setup();
-    fetchMenuEditor.mockResolvedValue(menu({ status: "published" }));
-    fetchMenuCalendar.mockResolvedValue(new Map());
-    fetchPublishImpact
-      .mockResolvedValueOnce(impact({ orders: 0 }))
-      .mockResolvedValue(impact({ orders: 1 }));
-    setMenuStatus.mockRejectedValue(
-      new Error("cannot un-publish: orders already exist for this menu"),
-    );
-    renderMenu();
-    await ready();
-
-    expect(unpublishButton()).not.toHaveAttribute("aria-disabled");
-    await user.click(unpublishButton());
-
-    await waitFor(() =>
-      expect(failure).toHaveBeenCalledWith("cannot un-publish: orders already exist for this menu"),
-    );
-    // The screen catches up rather than going on offering what was just refused.
-    await waitFor(() => expect(unpublishButton()).toHaveAttribute("aria-disabled", "true"));
-    expect(screen.getByText("Published")).toBeInTheDocument();
+    // A published menu is editable in place, so un-publishing only ever hid
+    // the day from members while lunch went on being cooked. Calling lunch off
+    // is Cancel, which says so.
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+    expect(cancelButton()).toBeInTheDocument();
   });
 
   /* ------------------------------------------------------------- cancelling */
@@ -1070,24 +1037,37 @@ describe("Changing the menu's status", () => {
     expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
   });
 
-  it("published: un-publish and cancel, but nothing to reopen", async () => {
+  it("published: cancel, and nothing to reopen on a day still open", async () => {
     serve({ menu: menu({ status: "published" }) });
     renderMenu();
     await ready();
 
-    expect(unpublishButton()).toBeInTheDocument();
     expect(cancelButton()).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
   });
 
-  it("locked: reopen and cancel, but nothing to un-publish", async () => {
+  it("locked: reopen and cancel, while the day is still ahead", async () => {
     serve({ menu: menu({ status: "locked" }) });
     renderMenu();
     await ready();
 
     expect(reopenButton()).toBeInTheDocument();
     expect(cancelButton()).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
+  });
+
+  it("locked and already eaten: cancel, but nothing to reopen", async () => {
+    // Reopening a day in the past invites orders for a lunch that has been
+    // served. The cutoff is what an admin reopens past, not the calendar.
+    let gone = addDays(TODAY, -3);
+    while (isoWeekday(gone) > 5) gone = addDays(gone, -1);
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    set(screen.getByLabelText("Service date"), gone);
+    await waitFor(() => expect(screen.getByText("Locked")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
+    expect(cancelButton()).toBeInTheDocument();
   });
 
   it("cancelled: no way out, and the copy says so instead of implying one", async () => {

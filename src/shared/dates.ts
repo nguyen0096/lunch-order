@@ -35,6 +35,13 @@ export function isoWeekday(isoDate: string): number {
   return day === 0 ? 7 : day;
 }
 
+/** Whole days from `a` to `b`; negative when `b` is the earlier one. */
+export function daysApart(a: string, b: string): number {
+  return Math.round(
+    (Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000,
+  );
+}
+
 /** Start of the billing week containing `isoDate`, given the org's week start. */
 export function weekStart(isoDate: string, weekStartsOn = 1): string {
   const shift = (isoWeekday(isoDate) - weekStartsOn + 7) % 7;

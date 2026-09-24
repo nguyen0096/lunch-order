@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Badge, Button, EmptyState, Skeleton } from "@/ui";
+import { Action, Badge, Button, EmptyState, Skeleton, useAction } from "@/ui";
 import {
   fetchBill,
   fetchUnpricedMeals,
@@ -14,7 +14,7 @@ import {
 import { BillLines } from "./bill/BillLines.js";
 import { PaymentDetails } from "./bill/PaymentDetails.js";
 import type { ScreenProps } from "./screenProps.js";
-import { formatMoney, type Currency } from "../../shared/money.js";
+import { formatMoney, plainAmount, type Currency } from "../../shared/money.js";
 import { addDays } from "../../shared/dates.js";
 import type { Org } from "../../shared/types.js";
 
@@ -232,6 +232,7 @@ function Amount({
       <Headline
         label={statement.paidMinor > 0 ? "Still to pay" : "You owe"}
         amount={formatMoney(outstanding, currency)}
+        copy={plainAmount(outstanding, currency)}
       />
       <p className="text-sm text-muted">
         {`${meals}, ${formatMoney(statement.mealsMinor, currency)}.`}
@@ -309,12 +310,61 @@ function waitingIn(week: BillWeek, waiting: UnpricedMeal[]): UnpricedMeal[] {
  * that a screen reader says "you owe 180.000 ₫" rather than reading a stray
  * figure with no idea what it is.
  */
-function Headline({ label, amount }: { label: string; amount: string }) {
+function Headline({
+  label,
+  amount,
+  copy,
+}: {
+  label: string;
+  amount: string;
+  /** Digits only, for a banking app's amount field. Omitted when nothing is due. */
+  copy?: string;
+}) {
+  // Still one paragraph, and the wrapper is a span: a button is phrasing
+  // content and may sit inside a <p>, a div may not.
   return (
     <p className="flex flex-col gap-1">
       <span className="text-sm text-muted">{label}</span>
-      <span className="tabular text-3xl font-semibold">{amount}</span>
+      <span className="flex flex-wrap items-center gap-3">
+        <span className="tabular text-3xl font-semibold">{amount}</span>
+        {copy !== undefined && <CopyAmount amount={copy} />}
+      </span>
     </p>
+  );
+}
+
+/**
+ * Copies the number without the currency glyph.
+ *
+ * The reference has its own button because it is typed into the memo; this one
+ * exists because the amount is typed into a different field, and a person
+ * paying is moving two values from this screen into their bank. Pasting
+ * `45.000 ₫` into an amount field fails on every bank we have tried.
+ */
+function CopyAmount({ amount }: { amount: string }) {
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  const copy = useAction(
+    async () => {
+      await clipboard?.writeText(amount);
+    },
+    { success: "Amount copied" },
+  );
+
+  return (
+    <Action
+      variant="outline"
+      size="sm"
+      reason={
+        clipboard
+          ? null
+          : "Your browser will not let the page copy. Select the amount and copy it by hand."
+      }
+      pending={copy.pending}
+      aria-label={`Copy the amount, ${amount}`}
+      onClick={() => void copy.run()}
+    >
+      Copy
+    </Action>
   );
 }
 

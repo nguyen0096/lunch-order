@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeftIcon, ChevronRightIcon, Dice5Icon, PlusIcon } from "lucide-react";
+import { Dice5Icon, PlusIcon } from "lucide-react";
 import {
   Action,
   Button,
@@ -31,10 +31,12 @@ import {
   type TransferRow,
 } from "../api.js";
 import { DishDialog } from "./DishDialog.js";
+import { WeekNav } from "./WeekNav.js";
 import { HandoverDialog } from "./HandoverDialog.js";
 import {
   cellMark,
   cellReason,
+  columnTag,
   columnLabel,
   cutoffLabel,
   longDayLabel,
@@ -475,6 +477,10 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             {days.map((d) => {
               const { dow, dom } = columnLabel(d.serviceDate);
               const isToday = d.serviceDate === today;
+              const tag = columnTag({ day: d, isAdminHere: admin, now });
+              // Today and the day's state are different axes and both can hold
+              // at once, which by mid-afternoon they usually do.
+              const tags = [isToday ? "Today" : null, tag].filter((t) => t !== null);
               return (
                 <TableHead
                   key={d.serviceDate}
@@ -483,27 +489,36 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                   aria-current={isToday ? "date" : undefined}
                   className={cn(
                     "min-w-28 p-0 text-center",
-                    closedDays.has(d.serviceDate) && "bg-surface-sunken",
                     // Which column the menu below is describing. A neutral rule
                     // rather than a tint: the accent is spoken for by ordered.
                     panelDay?.serviceDate === d.serviceDate && "border-b-2 border-b-border-strong",
                   )}
                 >
                   {/* Available on every day, including one with no menu: the
-                      panel then says so, which teaches more than a refusal. */}
+                      panel then says so, which teaches more than a refusal.
+
+                      `h-full` and a line that is always rendered: with neither,
+                      only the column carrying a third line filled its cell, so
+                      hovering the head moved the highlight around by a few
+                      pixels from one day to the next. */}
                   <Button
                     variant="ghost"
                     aria-pressed={panelDay?.serviceDate === d.serviceDate}
-                    aria-label={`${dow} ${dom}${isToday ? ", today" : ""}: show this day's menu`}
-                    className="h-auto w-full flex-col gap-0 rounded-none px-3 py-2 text-muted"
+                    aria-label={`${dow} ${dom}${tags
+                      .map((t) => `, ${t.toLowerCase()}`)
+                      .join("")}: show this day's menu`}
+                    className="h-full w-full flex-col gap-0 rounded-none px-3 py-2 text-muted"
                     onClick={() => setPanelDate(d.serviceDate)}
                   >
                     <span className="block text-xs font-semibold">{dow}</span>
                     <span className="block text-base font-semibold text-text tabular">{dom}</span>
-                    {/* A word, not a colour: ordered owns the accent, and a
-                        rule down the column edge read as a divider between two
-                        days rather than a property of one. */}
-                    {isToday && <span className="block text-xs font-medium">Today</span>}
+                    {/* A word, not a colour. One grey stood for "no menu",
+                        "closed" and "cancelled" at once, and read as none of
+                        them. The non-breaking space keeps every head the same
+                        height when a day has nothing to say. */}
+                    <span className="block text-xs font-medium">
+                      {tags.length === 0 ? "\u00A0" : tags.join(" · ")}
+                    </span>
                   </Button>
                 </TableHead>
               );
@@ -533,13 +548,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                 });
 
                 return (
-                  <TableCell
-                    key={day.serviceDate}
-                    className={cn(
-                      "p-1 text-center",
-                      closedDays.has(day.serviceDate) && "bg-surface-sunken",
-                    )}
-                  >
+                  <TableCell key={day.serviceDate} className="p-1 text-center">
                     {incoming !== null ? (
                       <IncomingOffer
                         offer={incoming}
@@ -591,13 +600,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
               Total
             </TableCell>
             {days.map((d) => (
-              <TableCell
-                key={d.serviceDate}
-                className={cn(
-                  "text-center font-medium tabular",
-                  closedDays.has(d.serviceDate) && "bg-surface-sunken",
-                )}
-              >
+              <TableCell key={d.serviceDate} className="text-center font-medium tabular">
                 {totals.get(d.serviceDate) ?? 0}
               </TableCell>
             ))}
@@ -749,40 +752,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
 }
 
 /* ------------------------------------------------------------------ pieces */
-
-function WeekNav({
-  label,
-  away,
-  onPrev,
-  onNext,
-  onReset,
-}: {
-  label: string;
-  away: boolean;
-  onPrev: () => void;
-  onNext: () => void;
-  onReset: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-2">
-      <Button variant="ghost" size="icon" aria-label="Previous week" onClick={onPrev}>
-        <ChevronLeftIcon />
-      </Button>
-      <h1 className="min-w-32 text-center text-lg font-semibold tabular">{label}</h1>
-      <Button variant="ghost" size="icon" aria-label="Next week" onClick={onNext}>
-        <ChevronRightIcon />
-      </Button>
-      {/* Only once you have left, because a reset to where you already are is a
-          control that does nothing, and the column head already says which day
-          is today. */}
-      {away && (
-        <Button variant="link" className="ml-1" onClick={onReset}>
-          This week
-        </Button>
-      )}
-    </div>
-  );
-}
 
 /**
  * What is on offer that day, without a tap.

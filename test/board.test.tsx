@@ -160,10 +160,16 @@ function myCell(cellOver: Partial<import("../src/web/api.js").BoardCell> = {}) {
 
 const EMPTY_LABEL = `${formatDay(WED)}: not eating`;
 
-/** The column head that switches the menu panel to that day. */
-function headName(serviceDate: string): string {
+/**
+ * The column head that switches the menu panel to that day.
+ *
+ * `tags` are the words the head carries under the date -- today, and why the
+ * day cannot be acted on -- which the label repeats in the order they render.
+ */
+function headName(serviceDate: string, ...tags: string[]): string {
   const { dow, dom } = columnLabel(serviceDate);
-  return `${dow} ${dom}${serviceDate === TODAY ? ", today" : ""}: show this day's menu`;
+  const all = [...(serviceDate === TODAY ? ["today"] : []), ...tags];
+  return `${dow} ${dom}${all.map((t) => `, ${t}`).join("")}: show this day's menu`;
 }
 // One dish is not a choice, so the cell orders outright. Two or more and the
 // `+` opens the chooser while the dice commits to one.
@@ -828,7 +834,9 @@ describe("Board, the menu panel", () => {
     serve(makeBoard({ wed: menuDay({ status: "locked" }) }));
     renderBoard();
 
-    await userEvent.click(await screen.findByRole("button", { name: headName(WED) }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: headName(WED, "closed") }),
+    );
     const panel = await screen.findByRole("region", { name: `Menu for ${longDayLabel(WED)}` });
     expect(
       within(panel).getByText("Orders are closed and have gone to the caterer"),
@@ -839,7 +847,9 @@ describe("Board, the menu panel", () => {
     serve(makeBoard());
     renderBoard();
 
-    await userEvent.click(await screen.findByRole("button", { name: headName(MONDAY) }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: headName(MONDAY, "no menu") }),
+    );
 
     const panel = await screen.findByRole("region", { name: `Menu for ${longDayLabel(MONDAY)}` });
     expect(within(panel).getByText(/Nothing on the menu for this day/)).toBeInTheDocument();
@@ -868,13 +878,16 @@ describe("Board, days you cannot act on", () => {
     renderBoard();
     await screen.findByRole("button", { name: CHOOSE_LABEL });
 
-    expect(head(THU).className).toContain("bg-surface-sunken");
-    expect(head(WED).className).not.toContain("bg-surface-sunken");
-    // The cells of that column recede with it, not just its head.
+    // A word, not a tint. One grey used to cover "no menu", "closed" and
+    // "cancelled" alike, so the commonest reading of it -- these are the days
+    // with a menu -- was not one of the three things it meant.
+    expect(head(THU).textContent).toContain("Closed");
+    expect(head(WED).textContent).not.toContain("Closed");
+    expect(head(THU).className).not.toContain("bg-surface-sunken");
     const closedCell = screen.getByRole("button", {
       name: `${formatDay(THU)}: not eating`,
     });
-    expect(closedCell.closest("td")!.className).toContain("bg-surface-sunken");
+    expect(closedCell.closest("td")!.className).not.toContain("bg-surface-sunken");
   });
 
   it("marks today with a word and no rule at all", async () => {
