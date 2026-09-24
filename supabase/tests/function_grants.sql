@@ -35,7 +35,8 @@ create temp table found as
 select p.proname::text as name,
        has_function_privilege('authenticated', p.oid, 'EXECUTE') as authed,
        has_function_privilege('anon', p.oid, 'EXECUTE')          as anon,
-       p.prosecdef as secdef
+       p.prosecdef as secdef,
+       pg_get_function_result(p.oid) = 'trigger' as is_trigger
   from pg_proc p
   join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
@@ -67,5 +68,17 @@ select case when count(*) = 0 then 'PASS: anon can execute nothing unlisted'
             else 'FAIL: anon can execute unlisted -> ' || string_agg(name, ', ')
        end as check_4_anon_no_strays
   from found where anon and name not in (select name from expected);
+
+-- 5. No trigger function is reachable by anybody.
+--
+--    These are the ones that drift, because adding one feels like adding
+--    internals rather than adding an endpoint. Four had: stamp_join_code_set_at,
+--    hold_period_open_while_unpriced, guard_owner_only_settings and
+--    enforce_reopen_window. Checked by shape rather than by name, so the next
+--    one is caught the day it is written.
+select case when count(*) = 0 then 'PASS: no trigger function is granted'
+            else 'FAIL: trigger function granted -> ' || string_agg(name, ', ')
+       end as check_5_no_trigger_functions
+  from found where is_trigger;
 
 rollback;
