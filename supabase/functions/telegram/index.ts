@@ -52,9 +52,9 @@ import {
 import {
   addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
   humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, normalizeJoinCode,
-  NOTHING_TO_LEAVE, orderingClosedReason, orgHeading, parseCommand, renderDayText,
-  renderExitCancelledText, renderExitRefusedText, renderLeaveConfirmText, renderLeftText,
-  renderNothingBilledText, renderOfferText, renderStatementText, renderUnlinkConfirmText,
+  NOTHING_TO_LEAVE, orderingClosedReason, orgHeading, parseCommand, renderAccountText,
+  renderDayText, renderExitCancelledText, renderExitRefusedText, renderLeaveConfirmText,
+  renderLeftText, renderOfferText, renderUnlinkConfirmText,
   renderUnlinkedText, targetMenu, todayIn, vietQrLink,
   type CallbackAction, type ExitKind, type Money,
 } from "../_shared/telegram.ts";
@@ -67,7 +67,7 @@ const HELP = [
   "<b>What I can do</b>",
   "/order - the next menu, and order from it",
   "/cancel - cancel your next order",
-  "/me - what you owe this week",
+  "/me - what you owe, and how to pay it",
   "/unlink - disconnect this chat, and stay a member",
   "/leave - leave your office",
   "/help - this message",
@@ -103,7 +103,6 @@ type Link = {
   membershipId: number;
   /** profiles.full_name, not the per-org display name: join_with_code writes it. */
   fullName: string;
-  isAdmin: boolean;
   org: Org;
 };
 
@@ -572,7 +571,7 @@ async function resolveTarget(tx: Tx, link: Link): Promise<Target | null> {
       orderCutoffAt: row.order_cutoff_at,
       row,
     })),
-    { today, isAdmin: link.isAdmin, now, timeZone: link.org.timezone },
+    { today, now, timeZone: link.org.timezone },
   );
   return chosen === null ? null : { menu: chosen.menu.row, closedReason: chosen.closedReason };
 }
@@ -591,7 +590,6 @@ async function targetById(tx: Tx, link: Link, menuId: number): Promise<Target | 
         status: menu.status,
         orderCutoffAt: menu.order_cutoff_at,
       },
-      isAdmin: link.isAdmin,
       now,
       timeZone: link.org.timezone,
     }),
@@ -745,47 +743,63 @@ async function offerViews(tx: Tx, link: Link): Promise<Rendered[]> {
 
 /* ---------------------------------------------------------------------- /me */
 
-type StatementRow = {
-  meal_count: number;
-  meals_minor: number;
-  carried_in_minor: number;
-  total_due_minor: number;
-  paid_minor: number;
+/**
+ * The account, not the newest week.
+ *
+ * `balance_minor` is positive for a debt and negative for credit; the amounts
+ * are cast because `sum(bigint)` is `numeric`, and db.ts teaches the driver to
+ * parse int8 and nothing else, so a numeric would arrive as a string.
+ */
+type AccountRow = {
+  charged_minor: number;
+  credited_minor: number;
+  balance_minor: number;
+  /** memberships', not a statement's: the one that does not change weekly. */
   payment_ref: string;
-  status: string;
-  period_start: string | null;
-  period_end: string | null;
+};
+
+const NO_ACCOUNT: AccountRow = {
+  charged_minor: 0, credited_minor: 0, balance_minor: 0, payment_ref: "",
 };
 
 async function onMe(chatId: number, links: Link[]): Promise<void> {
   for (const link of links) {
     const orgName = links.length > 1 ? link.org.name : null;
 
-    // billing_statements is own-row under RLS and the profile_id filter says so
-    // out loud. Nobody ever sees anybody else's balance through this bot.
+    // Every row here is the member's own under RLS and the profile_id filters
+    // say so out loud. Nobody ever sees anybody else's balance through this bot.
     //
-    // The unpriced count rides along in the same transaction, because the
-    // statement and what the statement had to leave out have to describe one
-    // moment. run_billing() skips an order whose dish has no price, so without
-    // this the total reads as the final word on a week that is still growing.
+    // One transaction, because the balance, the weeks behind it and what it had
+    // to leave out have to describe one moment. run_billing() skips an order
+    // whose dish has no price, so without the last of these the number reads as
+    // the final word on an account that is still growing.
     const outcome = await attempt(() =>
       asMember(link.profileId, async (tx) => ({
-        statement: (await tx<StatementRow[]>`
-          select s.meal_count, s.meals_minor, s.carried_in_minor, s.total_due_minor,
-                 s.paid_minor, s.payment_ref, s.status,
-                 bp.period_start::text as period_start,
-                 bp.period_end::text   as period_end
-            from public.billing_statements s
-            left join public.billing_periods bp on bp.id = s.billing_period_id
-           where s.org_id = ${link.org.id} and s.profile_id = ${link.profileId}::uuid
-           order by s.billing_period_id desc
-           limit 1`)[0] ?? null,
+        account: (await tx<AccountRow[]>`
+          select b.charged_minor::bigint  as charged_minor,
+                 b.credited_minor::bigint as credited_minor,
+                 b.balance_minor::bigint  as balance_minor,
+                 m.payment_ref
+            from public.memberships m
+            join public.v_account_balance b
+              on b.org_id = m.org_id and b.profile_id = m.profile_id
+           where m.org_id = ${link.org.id}
+             and m.profile_id = ${link.profileId}::uuid`)[0] ?? NO_ACCOUNT,
+        // Waived weeks are outside the balance, so they are outside the meal
+        // count that explains it too.
+        weeks: (await tx<Array<{ meals: number; behind: number }>>`
+          select coalesce(sum(meal_count), 0)::int as meals,
+                 count(*) filter (where status in ('unpaid','partial'))::int as behind
+            from public.billing_statements
+           where org_id = ${link.org.id}
+             and profile_id = ${link.profileId}::uuid
+             and status <> 'waived'`)[0] ?? { meals: 0, behind: 0 },
         // Read straight off the member's own rows rather than through
         // v_order_charges: order_items.profile_id is the person who PLACED the
         // order, so those are the rows order_items_own actually shows them.
-        // Not bounded by the statement's week, deliberately -- a member with no
-        // statement at all still has meals waiting on a price, and that is the
-        // case the old "Nothing billed to you yet." read most wrongly.
+        // Not bounded by a billing week, deliberately -- a member with nothing
+        // billed at all still has meals waiting on a price, and that is the
+        // case "Nothing has been billed to you yet." reads most wrongly.
         unpriced: (await tx<Array<{ n: number }>>`
           select count(*)::int as n
             from public.orders o
@@ -801,40 +815,37 @@ async function onMe(chatId: number, links: Link[]): Promise<void> {
       await say(chatId, orgHeading(orgName) + escapeHtml(outcome.reason));
       continue;
     }
-    const { statement, unpriced } = outcome.value;
-    if (statement === null) {
-      await say(chatId, renderNothingBilledText(orgName, unpriced));
-      continue;
-    }
-
-    await say(chatId, renderStatement(statement, link, orgName, unpriced));
+    await say(chatId, orgHeading(orgName) + renderAccount(outcome.value, link));
   }
 }
 
-function renderStatement(
-  s: StatementRow, link: Link, orgName: string | null, unpricedMeals: number,
+function renderAccount(
+  me: {
+    account: AccountRow;
+    weeks: { meals: number; behind: number };
+    unpriced: number;
+  },
+  link: Link,
 ): string {
-  const outstanding = s.total_due_minor - s.paid_minor;
+  const owed = Math.max(me.account.balance_minor, 0);
 
   // The QR is built here because vietQrLink() needs the org's payment_config,
-  // which is a database row rather than a sentence.
-  const qr = vietQrLink(link.org.payment_config, {
-    amountMinor: Math.max(outstanding, 0),
+  // which is a database row rather than a sentence. None where nothing is
+  // owed: a code that pays zero, or pays a credit again, is a trap.
+  const qr = owed === 0 ? null : vietQrLink(link.org.payment_config, {
+    amountMinor: owed,
     minorUnits: link.org.currency_minor_units,
-    addInfo: s.payment_ref,
+    addInfo: me.account.payment_ref,
   });
 
-  return orgHeading(orgName) + renderStatementText({
-    periodStart: s.period_start,
-    periodEnd: s.period_end,
-    mealCount: s.meal_count,
-    mealsMinor: s.meals_minor,
-    carriedInMinor: s.carried_in_minor,
-    totalDueMinor: s.total_due_minor,
-    paidMinor: s.paid_minor,
-    status: s.status,
-    paymentRef: s.payment_ref,
-    unpricedMeals,
+  return renderAccountText({
+    balanceMinor: me.account.balance_minor,
+    chargedMinor: me.account.charged_minor,
+    creditedMinor: me.account.credited_minor,
+    mealCount: me.weeks.meals,
+    weeksBehind: me.weeks.behind,
+    paymentRef: me.account.payment_ref,
+    unpricedMeals: me.unpriced,
   }, moneyIn(link.org), qr);
 }
 
@@ -1268,11 +1279,11 @@ async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<Written> 
 async function linksForChat(chatId: number): Promise<Link[]> {
   const rows = await asSystem((tx) =>
     tx<Array<{
-      profile_id: string; membership_id: number; full_name: string; role: string;
+      profile_id: string; membership_id: number; full_name: string;
       org_id: number; org_name: string; timezone: string; currency: string;
       currency_minor_units: number; locale: string; payment_config: unknown;
     }>>`
-      select m.profile_id, tl.membership_id, p.full_name, m.role,
+      select m.profile_id, tl.membership_id, p.full_name,
              o.id as org_id, o.name as org_name, o.timezone, o.currency,
              o.currency_minor_units, o.locale, o.payment_config
         from public.telegram_links tl
@@ -1287,7 +1298,6 @@ async function linksForChat(chatId: number): Promise<Link[]> {
     profileId: r.profile_id,
     membershipId: r.membership_id,
     fullName: r.full_name,
-    isAdmin: r.role === "admin" || r.role === "owner",
     org: {
       id: r.org_id,
       name: r.org_name,

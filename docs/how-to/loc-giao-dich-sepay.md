@@ -28,9 +28,10 @@ Xong. SePay sẽ **chỉ đồng bộ các giao dịch có nội dung chứa** t
 
 ## Tại sao là `LUNCH`
 
-Mã thanh toán của app có dạng `LUNCH39NGUY`: `LUNCH` + số tuần ISO + mã ngắn của
-người trả. Mã này nằm trong nội dung chuyển khoản, và app hiển thị nó rất rõ
-trên màn hình Bill để người trả sao chép.
+Mã thanh toán của app có dạng `LUNCHNGUY`: `LUNCH` + mã ngắn của người trả. Mã
+này nằm trong nội dung chuyển khoản, và app hiển thị nó rất rõ trên màn hình
+Bill để người trả sao chép. Mỗi người một mã, không đổi theo tuần, nên lưu được
+mẫu chuyển khoản trong app ngân hàng.
 
 Trước đây mã có dạng `L39NGUY`. Từ khóa `L` thì lọc được gì — gần như mọi nội
 dung chuyển khoản đều có chữ L. Đó là lý do mã được đổi.

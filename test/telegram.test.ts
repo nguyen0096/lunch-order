@@ -18,14 +18,13 @@ import {
   orderingClosedReason,
   parseCommand,
   priceText,
+  renderAccountText,
   renderDayText,
   renderExitCancelledText,
   renderExitRefusedText,
   renderLeaveConfirmText,
   renderLeftText,
-  renderNothingBilledText,
   renderOfferText,
-  renderStatementText,
   renderUnlinkConfirmText,
   renderUnlinkedText,
   targetMenu,
@@ -36,8 +35,8 @@ import {
   PAYMENT_REF_REQUIRED,
   PRICE_TO_COME,
   type CallbackAction,
+  type AccountMessage,
   type DayMessage,
-  type StatementMessage,
 } from "../src/shared/telegram.js";
 import { orderDisabledReason } from "../src/shared/gating.js";
 import { PRICE_PENDING, VND, formatMoney } from "../src/shared/money.js";
@@ -64,34 +63,33 @@ function menu(over: Partial<Menu> = {}): Menu {
 describe("orderingClosedReason agrees with the web app's gating", () => {
   const statuses: MenuStatus[] = ["draft", "published", "locked", "cancelled"];
 
+  // No admin axis any more. Both surfaces hold an admin to the same window as
+  // everybody else, because the board and the bot are where somebody orders
+  // their own lunch; correcting a finished day is a different job that the
+  // trigger only permits to a write that says `source = 'admin'`.
   for (const status of statuses) {
     for (const [when, now] of [["before cutoff", BEFORE], ["after cutoff", AFTER]] as const) {
-      for (const isAdmin of [false, true]) {
-        it(`${status}, ${when}, ${isAdmin ? "admin" : "member"}`, () => {
-          const m = menu({ status });
-          const web = orderDisabledReason(m, isAdmin, now, TZ);
-          const bot = orderingClosedReason({
-            menu: { serviceDate: m.serviceDate, status: m.status, orderCutoffAt: m.orderCutoffAt },
-            isAdmin,
-            now,
-            timeZone: TZ,
-          });
-          expect(bot === null).toBe(web === null);
+      it(`${status}, ${when}`, () => {
+        const m = menu({ status });
+        const web = orderDisabledReason(m, now, TZ);
+        const bot = orderingClosedReason({
+          menu: { serviceDate: m.serviceDate, status: m.status, orderCutoffAt: m.orderCutoffAt },
+          now,
+          timeZone: TZ,
         });
-      }
+        expect(bot === null).toBe(web === null);
+      });
     }
   }
 
   it("a missing menu closes ordering on both surfaces", () => {
-    expect(orderDisabledReason(null, false, BEFORE, TZ)).not.toBeNull();
-    expect(orderingClosedReason({ menu: null, isAdmin: false, now: BEFORE, timeZone: TZ }))
-      .not.toBeNull();
+    expect(orderDisabledReason(null, BEFORE, TZ)).not.toBeNull();
+    expect(orderingClosedReason({ menu: null, now: BEFORE, timeZone: TZ })).not.toBeNull();
   });
 
   it("names the day and repeats the cutoff exactly as the trigger does", () => {
     const reason = orderingClosedReason({
       menu: { serviceDate: "2026-09-23", status: "published", orderCutoffAt: CUTOFF },
-      isAdmin: false,
       now: AFTER,
       timeZone: TZ,
     });
@@ -390,17 +388,15 @@ function day(over: Partial<DayMessage> = {}): DayMessage {
 
 const QR = "https://img.vietqr.io/image/970415-1-compact2.png?amount=75000";
 
-function statement(over: Partial<StatementMessage> = {}): StatementMessage {
+/** One week eaten, nothing paid: the commonest account there is. */
+function account(over: Partial<AccountMessage> = {}): AccountMessage {
   return {
-    periodStart: "2026-09-21",
-    periodEnd: "2026-09-25",
+    balanceMinor: 95_000,
+    chargedMinor: 95_000,
+    creditedMinor: 0,
     mealCount: 2,
-    mealsMinor: 95_000,
-    carriedInMinor: 0,
-    totalDueMinor: 95_000,
-    paidMinor: 0,
-    status: "open",
-    paymentRef: "L39NEIL",
+    weeksBehind: 1,
+    paymentRef: "LUNCHNEIL",
     unpricedMeals: 0,
     ...over,
   };
@@ -523,43 +519,109 @@ describe("a meal a colleague is handing over", () => {
 });
 
 describe("what /me owes", () => {
-  it("says nothing about prices when every meal has one", () => {
-    const text = renderStatementText(statement(), money, null);
-    expect(text).toContain(`2 meals: ${money(95_000)}`);
-    expect(text).toContain(`<b>Total due: ${money(95_000)}</b>`);
-    expect(text).not.toMatch(/waiting on the caterer/);
+  it("answers with the account, not the newest week", () => {
+    const text = renderAccountText(
+      account({
+        balanceMinor: 180_000, chargedMinor: 405_000, creditedMinor: 225_000,
+        mealCount: 9, weeksBehind: 3,
+      }),
+      money,
+      null,
+    );
+    expect(text).toContain(`<b>You owe ${money(180_000)}.</b>`);
+    expect(text).toContain(
+      `Across 3 weeks. ${money(405_000)} billed, ${money(225_000)} received.`,
+    );
+  });
+
+  it("names the meals rather than the weeks while only one week is short", () => {
+    const text = renderAccountText(account({ creditedMinor: 0 }), money, null);
+    expect(text).toContain(`<b>You owe ${money(95_000)}.</b>`);
+    expect(text).toContain(`2 meals billed, ${money(0)} received.`);
+    expect(text).not.toContain("Across");
+  });
+
+  /**
+   * The case the week could not express at all. `greatest(due - paid, 0)`
+   * turned an overpayment into a zero and the money left the books, so there
+   * was no state for this message to be in.
+   */
+  it("says somebody is in credit, and offers them nothing to pay", () => {
+    const text = renderAccountText(
+      account({
+        balanceMinor: -50_000, chargedMinor: 405_000, creditedMinor: 455_000, mealCount: 9,
+      }),
+      money,
+      QR,
+    );
+    expect(text).toContain(`<b>You are ${money(50_000)} in credit.</b>`);
+    expect(text).toContain("You have paid ahead.");
+    expect(text).not.toContain("LUNCHNEIL");
+    expect(text).not.toContain("Pay by QR");
+    expect(text).not.toContain(PAYMENT_REF_REQUIRED);
+  });
+
+  it("is settled rather than owing nothing, and still offers no way to pay", () => {
+    const text = renderAccountText(
+      account({ balanceMinor: 0, creditedMinor: 95_000 }),
+      money,
+      QR,
+    );
+    expect(text).toContain("<b>Nothing to pay.</b>");
+    expect(text).toContain("2 meals, all settled.");
+    expect(text).not.toContain("Pay by QR");
+  });
+
+  it("counts one meal as one meal", () => {
+    expect(
+      renderAccountText(account({ balanceMinor: 0, mealCount: 1 }), money, null),
+    ).toContain("1 meal, all settled.");
   });
 
   it("says a total is incomplete rather than letting it read as the final word", () => {
-    const text = renderStatementText(statement({ unpricedMeals: 1 }), money, null);
+    const text = renderAccountText(account({ unpricedMeals: 1 }), money, null);
     expect(text).toContain(
       "One meal is still waiting on the caterer's price, so it is not counted here. " +
         "It goes on your bill once the price arrives.",
     );
-    // Directly under the total it qualifies.
+    // Under the number and the line that explains it, so the three read together.
     const lines = text.split("\n");
-    expect(lines[lines.findIndex((l) => l.startsWith("<b>Total due:")) + 1]).toMatch(
+    expect(lines[lines.findIndex((l) => l.startsWith("<b>You owe")) + 2]).toMatch(
       /^One meal is still waiting/,
     );
   });
 
   it("agrees with the count when more than one meal is waiting", () => {
-    expect(renderStatementText(statement({ unpricedMeals: 3 }), money, null)).toContain(
+    expect(renderAccountText(account({ unpricedMeals: 3 }), money, null)).toContain(
       "3 meals are still waiting on the caterer's price, so they are not counted here. " +
         "They go on your bill once the price arrives.",
     );
   });
 
-  it("keeps the payment reference and the QR link", () => {
-    const text = renderStatementText(
-      statement({ paidMinor: 20_000, carriedInMinor: 5_000, unpricedMeals: 1 }),
+  it("does not call an empty account nothing when a meal is waiting on a price", () => {
+    expect(
+      renderAccountText(
+        account({ balanceMinor: 0, chargedMinor: 0, mealCount: 0, weeksBehind: 0 }),
+        money,
+        null,
+      ),
+    ).toContain("Nothing has been billed to you yet.");
+
+    const waiting = renderAccountText(
+      account({
+        balanceMinor: 0, chargedMinor: 0, mealCount: 0, weeksBehind: 0, unpricedMeals: 2,
+      }),
       money,
-      "https://img.vietqr.io/image/970415-1-compact2.png?amount=75000",
+      null,
     );
-    expect(text).toContain(`Owed from before: ${money(5_000)}`);
-    expect(text).toContain(`Paid so far: ${money(20_000)}`);
-    expect(text).toContain("Put <code>L39NEIL</code> in the transfer message.");
-    expect(text).toContain('<a href="https://img.vietqr.io/image/970415-1-compact2.png?amount=75000">Pay by QR</a>');
+    expect(waiting).toContain("Nothing has been billed to you yet.");
+    expect(waiting).toContain("2 meals are still waiting on the caterer's price");
+  });
+
+  it("keeps the payment reference and the QR link", () => {
+    const text = renderAccountText(account({ creditedMinor: 20_000 }), money, QR);
+    expect(text).toContain("Put <code>LUNCHNEIL</code> in the transfer message");
+    expect(text).toContain(`<a href="${QR}">Pay by QR</a>`);
   });
 
   /**
@@ -570,24 +632,33 @@ describe("what /me owes", () => {
    */
   describe("the reference as a requirement", () => {
     it("says it is required and what a transfer without it costs", () => {
-      const text = renderStatementText(statement(), money, null);
+      const text = renderAccountText(account(), money, null);
       expect(text).toContain(
-        "Put <code>L39NEIL</code> in the transfer message. It is required: only " +
-          "transfers carrying it reach the lunch app, so one sent without it leaves " +
-          "your bill unpaid with nothing for an admin to find.",
+        "Put <code>LUNCHNEIL</code> in the transfer message, the same one every " +
+          "week. It is required: only transfers carrying it reach the lunch app, so " +
+          "one sent without it leaves your bill unpaid with nothing for an admin to find.",
       );
     });
 
+    /**
+     * The reference no longer carries an ISO week, so it is the same string to
+     * type every Monday. Said out loud, because everybody holding an old bill
+     * has been taught the opposite.
+     */
+    it("says the reference does not change from week to week", () => {
+      expect(renderAccountText(account(), money, null)).toContain("the same one every week");
+    });
+
     it("says it with the QR as well, and names the QR as the way it is filled in", () => {
-      const text = renderStatementText(statement(), money, QR);
+      const text = renderAccountText(account(), money, QR);
       expect(text).toContain(PAYMENT_REF_REQUIRED);
       expect(text).toContain(`<a href="${QR}">Pay by QR</a> fills it in for you.`);
     });
 
     it("never offers the reference as merely helpful", () => {
       for (const qr of [null, QR]) {
-        const text = renderStatementText(statement(), money, qr);
-        expect(text).toContain("L39NEIL");
+        const text = renderAccountText(account(), money, qr);
+        expect(text).toContain("LUNCHNEIL");
         expect(text).toContain("It is required:");
         expect(text).not.toMatch(/sort .* out by hand|helps|so an admin can/i);
       }
@@ -606,17 +677,8 @@ describe("what /me owes", () => {
         "utf8",
       ).replace(/\/\/.*$/gm, "");
       expect(code.match(/vietQrLink\(/g)).toHaveLength(1);
-      expect(code.match(/renderStatementText\(/g)).toHaveLength(1);
+      expect(code.match(/renderAccountText\(/g)).toHaveLength(1);
     });
-  });
-
-  it("does not call an unbilled week nothing when a meal is waiting on a price", () => {
-    expect(renderNothingBilledText(null, 0)).toBe("Nothing billed to you yet.");
-
-    const waiting = renderNothingBilledText("Test Office", 2);
-    expect(waiting).toContain("<b>Test Office</b>");
-    expect(waiting).toContain("Nothing billed to you yet.");
-    expect(waiting).toContain("2 meals are still waiting on the caterer's price");
   });
 
   it("has nothing to say about zero meals waiting", () => {

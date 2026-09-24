@@ -202,9 +202,11 @@ end $function$;
  * A payment now finds a person, and the person's weeks are redrawn.
  *
  * `matched_statement_id` is still written, because the Payments screen uses it
- * to say which week a payment landed on and because a null there is how
- * "matched nobody" is asked for. It now means "the oldest week this money
- * went to", not "the only week it could have gone to".
+ * to say roughly where a payment landed and because a null there is how
+ * "matched nobody" is asked for. A payment now spreads over several weeks, so
+ * no single week is the honest answer: this picks the newest week the money
+ * reached, preferring one it finished off. Read it as "how far this got", not
+ * as "where this went".
  */
 create or replace function public.trg_payment_apply()
 returns trigger

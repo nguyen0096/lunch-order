@@ -184,16 +184,50 @@ tick to advance it, and an hour is long enough to pass on a meal already eaten.
 
 **Job.** Answer "what do I owe and how do I pay it" in one glance.
 
-Large amount. The `payment_ref` prominent, because it is the thing that gets
-mistyped and a wrong memo means an unmatched payment. VietQR beneath it. Past
-weeks collapsed below.
+**It leads with an account, not a week.** Everything billed minus everything
+received, across every week, is one number and it is the only one anybody can
+act on. Leading with a week meant paying that week: somebody three weeks behind
+read the newest figure and paid it. The weeks are still here, below, as the
+history behind that number rather than as a list of things separately payable.
+
+The amount is large and carries **its own copy button**, because a person
+paying moves two values off this screen into their bank and they go in
+different fields. It copies as plain digits: `45.000 ₫` in an amount field
+fails, and on VND a grouping dot read as a decimal point turns 45.000 into
+forty-five dong.
+
+The `payment_ref` sits under it, prominent and marked **Required**, because it
+is the part that gets mistyped and getting it wrong is not something anybody
+can put right afterwards -- a transfer whose memo omits it never reaches this
+app at all, so it is not unmatched money waiting for an admin, it is money
+nobody here can see. It is **the same reference every week**: it carries no
+week number, so it can be saved in a banking app. VietQR beneath it, carrying
+the amount and the reference both.
+
+**A negative balance is credit, not an error.** It is what a top-up looks like
+once it is on the books, and the screen says so and offers nothing to pay.
+Handing somebody the means to pay what they do not owe is an instruction to
+overpay.
 
 | State | |
 | --- | --- |
-| nothing owed | "Nothing owed yet. This week closes Monday." |
-| unpaid | amount with its own copy button, reference, QR |
-| partial | amount remaining, and what was received |
-| paid | receipt, quiet, no call to action |
+| nothing billed | "Nothing owed yet", and when the open week closes |
+| owing | the balance, its copy button, the reference, the QR |
+| owing across weeks | the same, and how many weeks it is made of |
+| in credit | what is in hand, and that it comes off the next lunches |
+| settled | "Nothing to pay", and how many meals that settled. No call to action |
+
+A meal the caterer has not priced is in no total, so wherever a total appears
+the screen says how many are waiting and that they arrive on a later bill. A
+*failure to find that out* is said too: a total that leaves meals out is only
+honest while the screen can say how many.
+
+Each week below carries its own status and, where it is short, says that its
+remainder is inside the number at the top. Nothing is carried into anything
+else: `carried_in_minor` is permanently 0 and nothing reads it.
+
+The same account answers `/me` in Telegram, in the same three states and the
+same words.
 
 ## Payments (admin)
 
@@ -201,27 +235,47 @@ weeks collapsed below.
 caterer" — and catch the money that arrived and matched nobody.
 
 **Unmatched payments lead the screen**, above the week and outside it, because a
-payment whose memo matched no reference belongs to no period, changes nothing
-anywhere and tells nobody. Each carries the amount, the arrival in the office's
-zone, the provider, and the memo *verbatim and monospaced*: the typo is the clue
-to whose it was.
+payment whose memo matched no reference belongs to nobody's account, changes
+nothing anywhere and tells nobody. "Nobody" is `payments.profile_id is null`,
+not "no statement": a top-up lands on a person and touches no week, so asking
+which statement it hit would put every top-up back at the top of the screen as
+a failure. Each carries the amount, the arrival in the office's zone, the
+provider, and the memo *verbatim and monospaced*: the typo is the clue to whose
+it was.
 
 **All money goes in through `payments`.** Marking somebody paid records a
-payment rather than updating the statement, so one trigger decides the status
+payment rather than updating the statement, so one trigger decides the outcome
 whether the bank or an admin reported it. A hand-recorded payment sets
 `provider` to `manual`, since the column defaults to `sepay`, and generates a
 unique `provider_txn_id` or the second cash payment of the day collides.
 
-**A payment cannot be undone.** The trigger is AFTER INSERT only, nothing
-decrements `paid_minor`, and `amount_minor > 0` forbids a corrective row. So
-recording confirms in two steps, names the amount, the person and the week, and
-says plainly that nothing takes it back. There is no delete. Waiving is not
-money: `status = 'waived'`, `paid_at` null, `paid_minor` untouched.
+**A payment belongs to a person, not to a week.** The memo names the person
+through their own stable reference, and the money credits their account. It
+therefore needs no statement to attach to, which is what makes a top-up
+possible at all: money can arrive before anybody has eaten.
 
-**Two totals, deliberately different.** What people owe carries last week's
-unpaid remainder forward. What the caterer is owed is the sum of `billing_lines`
-and carries no debt, because nobody cooked one. The screen says which is which
-rather than leaving them looking inconsistent.
+**What a week says about itself is an allocation, and it moves.**
+`paid_minor` and a statement's status are that person's credits spread across
+their weeks, oldest week first, recomputed whenever either side moves. So a
+week can change from unpaid to paid because an older week was waived, or
+because a re-bill changed what a different week costs, with nobody touching it.
+"Which weeks are settled" still has an answer; it is derived rather than
+recorded.
+
+**The money is what cannot be undone.** `payments` is append-only: the trigger
+is AFTER INSERT only, `amount_minor > 0` forbids a corrective row, and there is
+no delete. So recording confirms in two steps, names the amount and the person,
+and says plainly that nothing takes it back. That, not `paid_minor`, is the
+invariant -- the older wording confused the record of a payment with the story
+told about it. Waiving is not money: `status = 'waived'`, `paid_at` null, and
+the week is skipped by the allocation entirely, so it consumes none of the
+person's credit.
+
+**Two totals, deliberately different.** What people owe is the sum of their
+account balances, each of which counts every unpaid week exactly once. What the
+caterer is owed is the sum of `billing_lines` and carries no debt, because
+nobody cooked one. The screen says which is which rather than leaving them
+looking inconsistent.
 
 | State | |
 | --- | --- |
@@ -230,7 +284,7 @@ rather than leaving them looking inconsistent.
 | week not billed yet | said plainly, with when it will be. Not an error |
 | week nobody ate in | "Nobody ate this week" |
 | nothing unmatched | "Every payment found its person": the reassurance, not an absence |
-| settled row | the control stays and says recording more would credit money nobody owes |
+| settled row | the control stays; recording more leaves that person in credit rather than destroying the excess |
 | memo lost its reference | warned at the confirm step, before the write |
 
 On a phone the table keeps person, still to pay, status and the control; meals,

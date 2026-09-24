@@ -128,6 +128,67 @@ being cooked, which is a state with no meaning to anybody. Calling lunch off is
 Cancel, which says so. The `published -> draft` transition is still legal in
 `enforce_menu_lifecycle`; nothing in the app reaches it.
 
+## The shape of the money
+
+**Money belongs to a person, not to a week.** A week is a charge, a payment is
+a credit, and what somebody owes is the sum of one minus the sum of the other.
+It used to be neither: `trg_payment_apply` read the memo, found the one
+statement whose `payment_ref` was inside it, and added the whole amount to that
+week's `paid_minor`.
+
+Everything followed from that one line. Measured against production: a 397.000
+statement paid 794.000 carries `greatest(total_due - paid, 0) = 0` into the
+next week, so the other 397.000 simply left the books. Paying three weeks at
+once settled one of them. Paying before you had eaten had nothing to attach to,
+so there was no such thing as a top-up. And the reference changed every Monday,
+so nobody could save the transfer in their banking app.
+
+A negative balance is now money in hand rather than an error, which is the
+whole of the credit feature: no new table, no second sum to keep consistent.
+`public.v_account_balance` is the one place it is computed.
+
+**`paid_minor` survives as an allocation, not as a record.** A person's credits
+are spread across their weeks oldest first and recomputed whenever either side
+moves, so every screen that asked "is this week settled" goes on working and
+goes on having an answer. What changes is that the answer is derived and may
+move. The money may not: `payments` is append-only and nothing deletes from it.
+That is the invariant that was ever worth having. It used to be stated as
+"nothing decrements `paid_minor`", which confused the record of a payment with
+the story told about it.
+
+**One reference per person, for good.** `LUNCH` plus their short code, with no
+ISO week in it. A reference that changes cannot be saved as a repeating
+transfer, and the commonest way to get it wrong was to reuse last week's. It is
+also the SePay sync keyword, so it is load-bearing rather than helpful: a
+transfer whose memo omits it is never synced, never reaches this app, and
+appears in no unmatched list for anybody to chase.
+
+Three surfaces hand it out -- the Bill screen, `/me`, and the weekly bill the
+hourly tick pushes to Telegram -- and all three now quote
+`memberships.payment_ref`. `billing_statements.payment_ref` still carries the
+week it was issued in and is kept only so that references already printed on
+bills people are holding go on matching; `private.payer_from_memo` reads the
+person's first and falls back to it, longest match winning.
+
+**A member can read their own payments.** `v_account_balance` is
+`security_invoker`, so it sums `public.payments` with the reader's own
+privileges, and the only policy on that table was `payments_admin`. Every
+member therefore read `credited_minor = 0` and a balance equal to everything
+they had ever eaten. It worked perfectly for an admin, which is how this kind
+of thing reaches production; it is the same shape as the bug the Payments
+screen was already written around. `payments_select_own` is the fix, own rows
+only, and a payment that matched nobody stays invisible because its
+`profile_id` is null.
+
+**`carried_in_minor` is pinned to zero and nothing reads it.** Carry-forward
+put the same debt on two statements at once, so any sum over weeks counted it
+twice and `leave_office` had a comment explaining that it could not add them
+up. The column is kept rather than dropped because `total_due_minor` is
+generated from it and a generated column cannot be changed in place; a trigger
+zeroes it on write rather than a constraint refusing it, because silently
+zeroing is kinder than failing a whole re-bill over one code path that has not
+caught up.
+
 ## Interface
 
 **Two tabs for a member: Board and Bill.** Telegram took the daily act, so the
@@ -224,7 +285,8 @@ green, and a security fix sat unapplied. `test/migrations.test.ts` now lints wha
 is statically checkable, verified by reintroducing the original bug and watching
 it fail.
 
-**Edge Functions have no type checking in CI.** `tsconfig.json` excludes them and
-`supabase functions deploy` does not check either. `deno check` catches errors
-`tsc` structurally cannot see, proven with a negative control. Not yet wired in;
-it should be.
+**Edge Functions are type checked by `deno check`, not by `tsc`.**
+`tsconfig.json` excludes them and `supabase functions deploy` does not check
+either, so for a while nothing checked them at all. `deno check` catches errors
+`tsc` structurally cannot see, proven with a negative control, and CI runs it
+over `supabase/functions/*/index.ts` on every push.

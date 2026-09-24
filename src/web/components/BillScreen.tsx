@@ -28,10 +28,16 @@ import type { Org } from "../../shared/types.js";
  * step that goes wrong: the scan fills in the account and the amount, the memo
  * is typed, and a memo without the reference is a payment this app never sees.
  *
- * The week the screen leads with is the oldest thing still unsettled rather
- * than simply the newest week. Carry-forward rolls an unpaid remainder into the
- * next statement, so the newest *unsettled* statement is the whole debt --
- * adding the weeks together would charge an unpaid week twice over.
+ * No week leads. The screen opens on the ACCOUNT: charges minus credits across
+ * every week, which is one number and the only one anybody should pay. It used
+ * to lead with a week, and carry-forward existed to make that week's total
+ * right by rolling every older remainder into it -- at the cost of the same
+ * debt sitting on two statements, and of somebody three weeks behind paying
+ * the newest number they were shown.
+ *
+ * The weeks below are history. Each says what it cost and what has been
+ * allocated to it, and a week that is short says it is part of the total above
+ * rather than claiming to have been carried into its neighbour.
  */
 export function BillScreen({ me, org }: ScreenProps) {
   const [bill, setBill] = useState<Bill | null>(null);

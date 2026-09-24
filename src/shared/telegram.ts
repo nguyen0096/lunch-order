@@ -243,7 +243,6 @@ export type MenuLike = {
  */
 export function orderingClosedReason(args: {
   menu: MenuLike | null;
-  isAdmin: boolean;
   now: Date;
   timeZone: string;
 }): string | null {
@@ -251,7 +250,11 @@ export function orderingClosedReason(args: {
   if (menu === null) return "There's no menu for that day yet.";
   const day = formatServiceDate(menu.serviceDate);
   if (menu.status === "cancelled") return `Lunch on ${day} is cancelled.`;
-  if (args.isAdmin) return null;
+  // No admin exemption here either. This mirrors `orderDisabledReason` on the
+  // web and the trigger under both: an admin ordering their own lunch is an
+  // ordinary eater, and only a write that says `source = 'admin'` is outside
+  // the window. The test that pins these two together is what keeps the bot
+  // from quietly offering what the database will refuse.
   if (menu.status === "draft") return `The menu for ${day} isn't published yet.`;
   if (menu.status === "locked") {
     return `Orders for ${day} are closed and have gone to the caterer.`;
@@ -276,7 +279,7 @@ export function orderingClosedReason(args: {
  */
 export function targetMenu<T extends MenuLike>(
   menus: T[],
-  args: { today: string; isAdmin: boolean; now: Date; timeZone: string },
+  args: { today: string; now: Date; timeZone: string },
 ): { menu: T; closedReason: string | null } | null {
   const upcoming = menus
     .filter((m) => m.serviceDate >= args.today)
@@ -429,15 +432,22 @@ export function renderOfferText(o: OfferMessage, money: Money): string {
     consequence;
 }
 
-export type StatementMessage = {
-  periodStart: string | null;
-  periodEnd: string | null;
+export type AccountMessage = {
+  /**
+   * `v_account_balance.balance_minor` unclamped: positive is a debt, negative
+   * is credit, which is what a top-up looks like once it is on the books.
+   */
+  balanceMinor: number;
+  chargedMinor: number;
+  creditedMinor: number;
+  /** Meals on every week billed so far, so a settled account can name them. */
   mealCount: number;
-  mealsMinor: number;
-  carriedInMinor: number;
-  totalDueMinor: number;
-  paidMinor: number;
-  status: string;
+  /** Billed weeks with something still outstanding. */
+  weeksBehind: number;
+  /**
+   * The person's own reference, which carries no week number and so is the
+   * same string to type every time.
+   */
   paymentRef: string;
   /**
    * Meals of this member's that run_billing() could not cost, so they are in
@@ -456,48 +466,66 @@ export const PAYMENT_REF_REQUIRED =
   "It is required: only transfers carrying it reach the lunch app, so one sent " +
   "without it leaves your bill unpaid with nothing for an admin to find.";
 
-/** What the member owes, and what is not in that number yet. */
-export function renderStatementText(
-  s: StatementMessage, money: Money, qrUrl: string | null,
+/**
+ * What the member owes, and what is not in that number yet.
+ *
+ * The account, not the newest week. A week is a charge, a payment is a credit,
+ * and the difference is the one number anybody can act on. Answering with the
+ * newest statement asked somebody three weeks behind for the newest week
+ * alone, and had no way at all to say that money was in hand.
+ *
+ * The reference and the QR appear only where something is owed, as on the Bill
+ * screen: handing somebody the means to pay what they do not owe is an
+ * instruction to overpay.
+ */
+export function renderAccountText(
+  a: AccountMessage, money: Money, qrUrl: string | null,
 ): string {
-  const lines = [
-    `<b>${
-      s.periodStart !== null && s.periodEnd !== null
-        ? `${formatServiceDate(s.periodStart)} to ${formatServiceDate(s.periodEnd)}`
-        : "Latest week"
-    }</b>`,
-    `${s.mealCount} meals: ${escapeHtml(money(s.mealsMinor))}`,
-  ];
-  if (s.carriedInMinor > 0) {
-    lines.push(`Owed from before: ${escapeHtml(money(s.carriedInMinor))}`);
-  }
-  lines.push(`<b>Total due: ${escapeHtml(money(s.totalDueMinor))}</b>`);
+  const owed = Math.max(a.balanceMinor, 0);
+  const credit = Math.max(-a.balanceMinor, 0);
+  const meals = `${a.mealCount} ${a.mealCount === 1 ? "meal" : "meals"}`;
+  const lines: string[] = [];
 
-  // Directly under the total it qualifies, so the two are never read apart.
-  const waiting = unpricedMealsNote(s.unpricedMeals);
+  if (credit > 0) {
+    lines.push(`<b>You are ${escapeHtml(money(credit))} in credit.</b>`);
+    lines.push(
+      "You have paid ahead. This comes off your next lunches, and there is " +
+      "nothing to transfer.",
+    );
+  } else if (owed === 0) {
+    lines.push("<b>Nothing to pay.</b>");
+    lines.push(
+      a.mealCount === 0 ? "Nothing has been billed to you yet." : `${meals}, all settled.`,
+    );
+  } else {
+    lines.push(`<b>You owe ${escapeHtml(money(owed))}.</b>`);
+    lines.push(
+      a.weeksBehind <= 1
+        ? `${meals} billed, ${escapeHtml(money(a.creditedMinor))} received.`
+        : `Across ${a.weeksBehind} weeks. ${escapeHtml(money(a.chargedMinor))} billed, ` +
+          `${escapeHtml(money(a.creditedMinor))} received.`,
+    );
+  }
+
+  // Directly under the number it qualifies, so the two are never read apart.
+  const waiting = unpricedMealsNote(a.unpricedMeals);
   if (waiting !== null) lines.push(waiting);
 
-  if (s.paidMinor > 0) lines.push(`Paid so far: ${escapeHtml(money(s.paidMinor))}`);
-  lines.push(`Status: ${escapeHtml(s.status)}`);
+  if (owed === 0) return lines.join("\n");
+
   lines.push("");
   // Stated as required, not as a courtesy. SePay syncs only transactions whose
   // memo carries LUNCH, so a transfer sent without the reference never arrives
   // here at all: no admin sees it, and nobody can chase what nobody can see.
   lines.push(
-    `Put <code>${escapeHtml(s.paymentRef)}</code> in the transfer message. ${PAYMENT_REF_REQUIRED}`,
+    `Put <code>${escapeHtml(a.paymentRef)}</code> in the transfer message, the same ` +
+    `one every week. ${PAYMENT_REF_REQUIRED}`,
   );
   if (qrUrl !== null) {
     lines.push(`<a href="${escapeHtml(qrUrl)}">Pay by QR</a> fills it in for you.`);
   }
 
   return lines.join("\n");
-}
-
-/** Nothing billed, which is not the same as nothing owing. */
-export function renderNothingBilledText(orgName: string | null, unpricedMeals: number): string {
-  const waiting = unpricedMealsNote(unpricedMeals);
-  return `${orgHeading(orgName)}Nothing billed to you yet.` +
-    (waiting === null ? "" : `\n${waiting}`);
 }
 
 /* ----------------------------------------------- leaving and disconnecting */
@@ -624,6 +652,10 @@ export const NOTHING_TO_LEAVE = [
  * organizations.payment_config holds non-secret VietQR parameters, and nothing
  * in the schema constrains their spelling, so read both conventions rather
  * than making one office's row the standard by accident.
+ *
+ * `addInfo` becomes the transfer's memo, so it is the payer's own reference.
+ * A statement's reference still carries the week it was issued in, and a memo
+ * that changes every Monday is one nobody can save in a banking app.
  */
 export function vietQrLink(
   paymentConfig: unknown,

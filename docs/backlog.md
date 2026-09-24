@@ -35,44 +35,25 @@ Three possible meanings, and they are genuinely different products:
 - *Lunch happened but is not on this menu.* Nothing should change, which is
   today's behaviour and probably not what the word means to anybody.
 
-## Known defect: a skipped week strands its debt
+## A debt is not chased in a week somebody did not eat
 
-**Not a presentation problem. The bill can understate what somebody owes.**
+**Solved in the data, not yet in the reminder.** A skipped week used to strand
+its debt: carry-forward read the immediately preceding period, found no
+statement for somebody who had eaten nothing, and rolled forward nothing, so
+the newest statement understated what they owed. Money belongs to a person now,
+`v_account_balance` sums every unpaid week exactly once, and the Bill screen
+and `/me` both lead with that number. Reproduced against production before the
+change: week 1 45.000 unpaid, week 2 nothing eaten, week 3 50.000 billed as
+50.000 rather than 95.000.
 
-`run_billing` step 3 builds statements `from billing_lines ... group by
-payer_profile_id`, so a statement exists only for a week you ate in.
-Carry-forward then reads the immediately preceding period, finds no statement
-for you, and rolls forward nothing.
-
-Reproduced against production in a rolled-back transaction. One member eats in
-week 1 (45.000, unpaid), eats nothing in week 2, eats in week 3 (50.000):
-
-| | result |
-| --- | --- |
-| week 2 statement | none created |
-| week 3 `carried_in_minor` | 0, not 45.000 |
-| week 3 `total_due_minor` | 50.000, not 95.000 |
-| actually outstanding | 140.000 |
-
-So no single statement is the truth, which is why people end up paying week by
-week. Summing the unsettled ones is *also* wrong: it double-counts every week
-where carry-forward did work, and it does work whenever somebody eats in
-consecutive weeks.
-
-The fix is in the database, not the screen: carry an unpaid remainder into the
-next period whether or not the person ate, which restores the invariant the Bill
-screen already assumes -- that the newest statement carries everything. The
-`delete` that prunes zero-line statements has to learn the same exception.
-
-Only then does the screen work follow: one outstanding total at the top with one
-QR, amount and reference, and the weeks below as history with per-week status,
-each saying whether its remainder was rolled into the total above rather than
-offering itself as separately payable.
-
-Two smaller things on the same screen:
-
-- `BillScreen`'s block comment claims it leads with "the oldest thing still
-  unsettled" while the code takes the newest. The code is right.
+What remains is the push. The weekly bill built in `private.run_hourly_tick`
+selects `from billing_statements` for the week that just closed, so it reaches
+somebody only if they ate in it. Their account is stated correctly when it does
+reach them, and somebody who ate nothing all week hears nothing at all while
+still owing. Fixing it means driving that insert from the balance rather than
+from the statement and writing a second sentence for the person with no meals
+in the week, which is a different message rather than the same one with a zero
+in it.
 
 ## A board for adjusting what was recorded
 
@@ -104,22 +85,27 @@ than a screen in every way except that nobody can reach it by accident.
 
 ## Paying in advance
 
-Somebody wants to top up before they have eaten.
+**Mostly done.** Somebody can top up, and the money stays money. A payment
+carries `profile_id` and credits the person's account rather than a week, so it
+needs no statement to attach to; `v_account_balance` reports a negative balance
+as credit, and the Bill screen and `/me` both say "in credit" and offer nothing
+to transfer. The SePay webhook is the way in, and `private.payer_from_memo`
+finds the person from their own stable reference without a statement existing.
 
-The schema is most of the way there and it is worth not inventing a second
-mechanism: `carried_in_minor` has **no non-negative constraint**,
-`total_due_minor` is generated as `meals_minor + carried_in_minor`, and
-`outstandingMinor` in `api/billing.ts` already clamps at zero. So credit is
-simply a negative carry-forward -- money rolls into next week exactly the way
-debt does, with no new table and no second sum to keep consistent.
+Two things remain, and the first is a product decision that has never been
+taken:
 
-What is missing is a way to record money that arrives against no statement,
-which is the same webhook the SePay entry needs. Do them together or the credit
-has no way in.
-
-Decide one thing first: whether a credit is refundable. "Roll it forward
-forever" and "give it back when somebody leaves" are different products, and the
-second needs a payout path this app has never had.
+- **Whether a credit is refundable.** "Roll it forward forever" and "give it
+  back when somebody leaves" are different products, and the second needs a
+  payout path this app has never had. `leave_office` refuses on a positive
+  balance and says nothing about a negative one, so today somebody in credit
+  can walk away from it.
+- **Nothing invites a top-up.** The reference and the QR appear only where
+  something is owed, deliberately, because offering somebody a way to pay what
+  they do not owe is an instruction to overpay. That leaves the person who
+  genuinely wants to pay ahead typing the transfer by hand from a reference the
+  screen is not showing them. A separate, explicitly-labelled control is the
+  shape of the answer, not loosening the rule above.
 
 ## An office is stuck with the settings it was born with
 
@@ -149,15 +135,16 @@ Two halves, and the first is mostly done.
 
 **The QR already carries the amount and the note.** `src/shared/vietqr.ts`
 builds the EMVCo payload with field `54` set to the outstanding amount and
-`62/08` set to the statement's `payment_ref`, so a payer scans and confirms
+`62/08` set to the payer's own `payment_ref`, so a payer scans and confirms
 rather than typing. Verified against an independent implementation of the spec;
 **never scanned by a real banking app**, which is the one check still owed.
 
-**Showing that money arrived** is the actual work, and the schema was built for
-it: `payments` has `provider` (defaulting to `'sepay'`), `provider_txn_id`,
-`amount_minor`, `memo` and `raw`; `trg_payment_apply` matches the memo against
-`payment_ref` on insert and moves `paid_minor`; the Bill and Payments screens
-already render `partial` and `paid`. What is missing is the endpoint.
+**Showing that money arrived** now has an endpoint:
+`supabase/functions/sepay` records a delivery as a payment, routed by the
+account number and authenticated against that office's own webhook secret.
+`private.payer_from_memo` finds whose money it is and the account takes it from
+there. What remains is which of the two ways an office is connected to it,
+below, and a delivery from the real SePay rather than from a test.
 
 ### What the docs say (read 2026-09-23)
 
