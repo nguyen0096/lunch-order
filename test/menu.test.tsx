@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { MenuScreen } from "../src/web/components/MenuScreen.js";
 import * as api from "../src/web/api.js";
 import type { EditableMenu, PublishImpact } from "../src/web/api.js";
+import type { CatererOrder } from "../src/shared/catererOrder.js";
 import { cutoffLabel, longDay, shortDay, weekdayName } from "../src/web/components/menu/labels.js";
 import { addDays, isoWeekday, todayIn, zonedTimeToInstant } from "../src/shared/dates.js";
 import type { Me, Org } from "../src/shared/types.js";
@@ -24,6 +25,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchMenuCalendar: vi.fn(),
     fetchPublishImpact: vi.fn(),
     fetchDishTakers: vi.fn(),
+    fetchCatererOrder: vi.fn(),
     publishMenu: vi.fn(),
     assistParse: vi.fn(),
     setMenuStatus: vi.fn(),
@@ -34,6 +36,7 @@ const fetchMenuEditor = vi.mocked(api.fetchMenuEditor);
 const fetchMenuCalendar = vi.mocked(api.fetchMenuCalendar);
 const fetchPublishImpact = vi.mocked(api.fetchPublishImpact);
 const fetchDishTakers = vi.mocked(api.fetchDishTakers);
+const fetchCatererOrder = vi.mocked(api.fetchCatererOrder);
 const publishMenu = vi.mocked(api.publishMenu);
 const setMenuStatus = vi.mocked(api.setMenuStatus);
 const assistParse = vi.mocked(api.assistParse);
@@ -126,12 +129,20 @@ function impact(over: Partial<PublishImpact> = {}): PublishImpact {
 }
 
 function serve(
-  over: { menu?: EditableMenu | null; impact?: PublishImpact; takers?: Map<number, string[]> } = {},
+  over: {
+    menu?: EditableMenu | null;
+    impact?: PublishImpact;
+    takers?: Map<number, string[]>;
+    caterer?: CatererOrder;
+  } = {},
 ) {
   fetchMenuEditor.mockResolvedValue(over.menu === undefined ? null : over.menu);
   fetchMenuCalendar.mockResolvedValue(new Map());
   fetchPublishImpact.mockResolvedValue(over.impact ?? impact());
   fetchDishTakers.mockResolvedValue(over.takers ?? new Map());
+  fetchCatererOrder.mockResolvedValue(
+    over.caterer ?? { serviceDate: DATE, lines: [], unchosen: 0 },
+  );
 }
 
 function renderMenu() {
@@ -837,6 +848,75 @@ describe("Where a row's messages appear", () => {
   });
 });
 
+describe("The order for the caterer", () => {
+  const CATERER: CatererOrder = {
+    serviceDate: DATE,
+    lines: [
+      {
+        itemId: 101,
+        name: "C\u01a1m g\u00e0",
+        count: 2,
+        notes: [{ text: "\u00edt c\u01a1m", who: "T\u00e8o" }],
+      },
+      { itemId: 102, name: "B\u00fan b\u00f2", count: 1, notes: [] },
+    ],
+    unchosen: 0,
+  };
+
+  it("writes the order out ready to paste, with the notes under their dish", async () => {
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    const note = await screen.findByRole("heading", { name: "The order for the caterer" });
+    expect(note).toBeInTheDocument();
+    // The text exactly as it goes into the chat, not a tidied-up list.
+    const pasted = screen.getByText(/\u0110\u1eb7t c\u01a1m/);
+    expect(pasted.textContent).toContain("- C\u01a1m g\u00e0: 2 ph\u1ea7n");
+    expect(pasted.textContent).toContain("  + T\u00e8o: \u00edt c\u01a1m");
+    expect(pasted.textContent).toContain("T\u1ed5ng: 3 ph\u1ea7n");
+  });
+
+  it("copies the message rather than a prettified version of it", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText }, configurable: true,
+    });
+
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    await user.click(await screen.findByRole("button", { name: "Copy the message" }));
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    expect(writeText.mock.calls[0]![0]).toContain("  + T\u00e8o: \u00edt c\u01a1m");
+  });
+
+  it("warns that a head with no dish is missing from the count", async () => {
+    serve({
+      menu: menu({ status: "published" }),
+      caterer: { ...CATERER, unchosen: 1 },
+    });
+    renderMenu();
+    await ready();
+
+    expect(
+      await screen.findByText(/1 person is down as eating without a dish/),
+    ).toBeInTheDocument();
+  });
+
+  it("is not offered on a day with no published menu, because there is nothing to send", async () => {
+    serve({ menu: menu({ status: "draft" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.queryByRole("heading", { name: "The order for the caterer" }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe("Who is having each dish", () => {
   it("names them under the dish, so the admin knows who to ring", async () => {
     serve({
@@ -900,6 +980,7 @@ describe("Changing the menu's status", () => {
     fetchMenuCalendar.mockResolvedValue(new Map());
     fetchPublishImpact.mockResolvedValue(impact(over));
     fetchDishTakers.mockResolvedValue(new Map());
+    fetchCatererOrder.mockResolvedValue({ serviceDate: DATE, lines: [], unchosen: 0 });
   }
 
   const reopenButton = () => screen.getByRole("button", { name: "Reopen ordering" });

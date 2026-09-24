@@ -5,6 +5,7 @@
 
 import { supabase } from "../supabase.js";
 import { isoWeekday } from "../../shared/dates.js";
+import type { CatererLine, CatererOrder } from "../../shared/catererOrder.js";
 import type { MenuStatus } from "../../shared/types.js";
 
 /* ------------------------------------------------------- admin: publishing */
@@ -291,6 +292,79 @@ export async function fetchDishTakers(menuId: number): Promise<Map<number, strin
   }
   for (const [, list] of out) list.sort((a, b) => a.localeCompare(b));
   return out;
+}
+
+/**
+ * The day's orders, shaped for the message that goes to the caterer.
+ *
+ * One query for the orders with their dishes embedded, because the thing that
+ * matters most is the order with NO dish on it: that person is a real head the
+ * caterer cannot cook for, and a query that joined through `order_items` would
+ * drop them silently. Counted separately and said out loud in the message.
+ */
+export async function fetchCatererOrder(args: {
+  orgId: number;
+  menuId: number;
+  serviceDate: string;
+  items: Array<{ id: number; name: string }>;
+}): Promise<CatererOrder> {
+  const { data, error } = await supabase
+    .from("orders")
+    .select("profile_id, order_items ( menu_item_id, note )")
+    .eq("menu_id", args.menuId)
+    .eq("status", "placed");
+  if (error) throw error;
+
+  const rows = (data ?? []) as Array<{
+    profile_id: string;
+    order_items: Array<{ menu_item_id: number | null; note: string | null }> | null;
+  }>;
+
+  const ids = [...new Set(rows.map((r) => r.profile_id))];
+  const names = new Map<string, string>();
+  if (ids.length > 0) {
+    const { data: people, error: peopleError } = await supabase
+      .from("memberships")
+      .select("profile_id, display_name")
+      .eq("org_id", args.orgId)
+      .in("profile_id", ids);
+    if (peopleError) throw peopleError;
+    for (const m of people ?? []) {
+      names.set(m.profile_id as string, (m.display_name as string | null) ?? "");
+    }
+  }
+
+  const byItem = new Map<number, CatererLine>();
+  for (const item of args.items) {
+    byItem.set(item.id, { itemId: item.id, name: item.name, count: 0, notes: [] });
+  }
+
+  let unchosen = 0;
+  for (const row of rows) {
+    const chosen = (row.order_items ?? []).filter((i) => i.menu_item_id !== null);
+    if (chosen.length === 0) {
+      unchosen += 1;
+      continue;
+    }
+    for (const item of chosen) {
+      const line = byItem.get(item.menu_item_id as number);
+      // A dish removed from the menu after somebody ordered it cannot happen
+      // -- the trigger refuses it -- but an order for another day's item would
+      // be a bug worth not hiding behind a crash.
+      if (line === undefined) continue;
+      line.count += 1;
+      const note = item.note?.trim();
+      if (note) {
+        line.notes.push({ text: note, who: names.get(row.profile_id) || "Chưa có tên" });
+      }
+    }
+  }
+
+  return {
+    serviceDate: args.serviceDate,
+    lines: [...byItem.values()],
+    unchosen,
+  };
 }
 
 /* -------------------------------------------------- LLM parse assist */

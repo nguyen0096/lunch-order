@@ -29,6 +29,7 @@ import { StatusActions } from "./menu/StatusActions.js";
 import { CutoffFields } from "./menu/CutoffFields.js";
 import { WeekNav } from "./WeekNav.js";
 import { DayStages } from "./DayStages.js";
+import { CatererOrderNote } from "./menu/CatererOrderNote.js";
 import { weekRangeLabel } from "./boardModel.js";
 import {
   cutoffInstant,
@@ -713,6 +714,19 @@ export function MenuScreen({ me, org }: ScreenProps) {
           </div>
         </section>
       </div>
+
+      {/* Below the editor, because it is the OUTPUT of this screen: the dishes
+          go up, the order comes out. Only once there is a published menu with
+          something on it, since there is nothing to send otherwise. */}
+      {menu !== null && (status === "published" || status === "locked") && rows.length > 0 && (
+        <CatererOrderNote
+          orgId={org.id}
+          menuId={menu.id}
+          serviceDate={serviceDate}
+          items={menu.items.map((i) => ({ id: i.id, name: i.name }))}
+          final={Date.parse(cutoffAt) <= appNow().getTime()}
+        />
+      )}
 
       {confirming && (
         <PublishDialog
