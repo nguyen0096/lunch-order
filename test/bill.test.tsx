@@ -622,8 +622,33 @@ describe("Bill, the meals behind the total", () => {
  */
 describe("Bill, the reference as a requirement", () => {
   const REQUIRED =
-    "Put this in the transfer message. Only transfers carrying it reach this app, " +
-    "so one sent without it leaves your bill unpaid with nothing for an admin to find.";
+    "Put this in the transfer message. It is yours for good, the same every week. " +
+    "Only transfers carrying it reach this app, so one sent without it leaves your " +
+    "bill unpaid with nothing for an admin to find.";
+
+  /** The top-up instruction, on the screen of somebody who owes something. */
+  const EXTRA =
+    "Send more than this if you like. Anything above what you owe stays on your " +
+    "account and comes off your next lunches.";
+
+  it("tells somebody who owes money how to pay ahead, where they already are", async () => {
+    // The likeliest person to pay ahead is somebody already making a transfer,
+    // and the Pay ahead block is only offered to accounts with nothing owing.
+    // Newly true, too: until the account landed the extra was clamped away by
+    // `greatest(due - paid, 0)` and left the books entirely.
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByText(EXTRA)).toBeInTheDocument();
+  });
+
+  it("says nothing about paying extra where nothing is owed, because there is no extra", async () => {
+    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+    expect(screen.queryByText(EXTRA)).not.toBeInTheDocument();
+  });
 
   /** The heading's own row, so "Required" is read as labelling the reference. */
   function referenceHeading(): HTMLElement {

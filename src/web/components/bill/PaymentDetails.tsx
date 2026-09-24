@@ -79,8 +79,18 @@ export function PaymentDetails({
           </Action>
         </div>
         <p className="max-w-prose text-sm text-muted">
-          Put this in the transfer message. Only transfers carrying it reach this app, so
-          one sent without it leaves your bill unpaid with nothing for an admin to find.
+          Put this in the transfer message. It is yours for good, the same every week. Only
+          transfers carrying it reach this app, so one sent without it leaves your bill
+          unpaid with nothing for an admin to find.
+        </p>
+        {/* The top-up instruction, and it belongs here rather than behind a
+            separate control: the person most likely to pay ahead is somebody
+            already making a transfer. It is also newly true. Until the account
+            landed, the extra was clamped away by `greatest(due - paid, 0)` and
+            simply left the books, so this sentence would have been a lie. */}
+        <p className="max-w-prose text-sm text-muted">
+          Send more than this if you like. Anything above what you owe stays on your account
+          and comes off your next lunches.
         </p>
       </div>
 

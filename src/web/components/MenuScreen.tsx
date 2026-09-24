@@ -443,18 +443,6 @@ export function MenuScreen({ me, org }: ScreenProps) {
         )}
       </div>
 
-      {/* The same line the board shows, on the screen that sets the cutoff
-          that moves it. An admin choosing when orders close is choosing where
-          this day sits on it. */}
-      <DayStages
-        serviceDate={serviceDate}
-        status={status}
-        orderCutoffAt={menu?.orderCutoffAt ?? null}
-        org={org}
-        now={appNow()}
-        className="max-w-md"
-      />
-
       <WeekNav
         label={weekRangeLabel(strip[0] ?? weekOf, strip[strip.length - 1] ?? weekOf)}
         away={weekOf !== thisWeek}
@@ -503,6 +491,21 @@ export function MenuScreen({ me, org }: ScreenProps) {
           );
         })}
       </ul>
+
+      {/* Below the strip, not above it. The strip is what chooses the day, so
+          above it this line was explaining a choice the reader had not made
+          yet. It is the same line the board shows, on the screen that sets the
+          cutoff that moves it. */}
+      {status !== null && (
+        <DayStages
+          serviceDate={serviceDate}
+          status={status}
+          orderCutoffAt={menu?.orderCutoffAt ?? null}
+          org={org}
+          now={appNow()}
+          className="max-w-md"
+        />
+      )}
     </header>
   );
 
