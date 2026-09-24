@@ -164,11 +164,28 @@ transfer whose memo omits it is never synced, never reaches this app, and
 appears in no unmatched list for anybody to chase.
 
 Three surfaces hand it out -- the Bill screen, `/me`, and the weekly bill the
-hourly tick pushes to Telegram -- and all three now quote
+hourly tick pushes to Telegram -- and all three quote
 `memberships.payment_ref`. `billing_statements.payment_ref` still carries the
 week it was issued in and is kept only so that references already printed on
 bills people are holding go on matching; `private.payer_from_memo` reads the
 person's first and falls back to it, longest match winning.
+
+**What a person is shown is that core with their office in front of it.**
+`TEST LUNCH DINH`, composed by `composePaymentRef` in
+`src/shared/paymentRef.ts` and stored nowhere. The prefix is for the human
+reading a bank statement: a SePay account is often also somebody's own, or
+serves two offices, and `LUNCHDINH` alone does not say which. Separated by
+spaces, because a Vietnamese transfer note carries letters, digits and spaces
+intact while `_`, `-` and `/` are dropped or refused. Matching is untouched:
+`payer_from_memo` folds a memo to letters and digits before looking for the
+core, so `TEST LUNCH DINH` arrives as `TESTLUNCHDINH` and still contains
+`LUNCHDINH`, and `vietQrPayload` was widened to accept a space rather than the
+composition being bent to fit it.
+
+An ISO week was tried on the end of that and removed within the day. Somebody
+three weeks behind has no single true week to name, which is precisely the
+person the suffix was for, and a reference that changes weekly cannot be saved
+as a repeating transfer -- which is this entry's own rule, restated.
 
 **A member can read their own payments.** `v_account_balance` is
 `security_invoker`, so it sums `public.payments` with the reader's own

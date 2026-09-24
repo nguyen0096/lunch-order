@@ -1,4 +1,5 @@
 import { crc16CcittFalse, vietQrPayload } from "../src/shared/vietqr.js";
+import { composePaymentRef } from "../src/shared/paymentRef.js";
 
 /**
  * The expectations below are literals, computed by an independent
@@ -147,11 +148,25 @@ describe("vietQrPayload, refusals", () => {
   });
 
   it("refuses a reference the bank memo could not carry", () => {
-    // The same shape the database constrains payment_ref to.
     expect(vietQrPayload({ ...ok, paymentRef: "lunch7neyu" })).toBeNull();
     expect(vietQrPayload({ ...ok, paymentRef: "ABC" })).toBeNull();
-    expect(vietQrPayload({ ...ok, paymentRef: "LUNCH NEYU" })).toBeNull();
     expect(vietQrPayload({ ...ok, paymentRef: "LUNCHNGUYỄN" })).toBeNull();
+    // A separator several Vietnamese banks drop or reject outright, which is
+    // why the composed reference uses a space.
+    expect(vietQrPayload({ ...ok, paymentRef: "TEST_LUNCH_NEYU" })).toBeNull();
+    expect(vietQrPayload({ ...ok, paymentRef: "TEST LUNCH NEYUNEYUNEYUNEYU" })).toBeNull();
+  });
+
+  it("takes a space between words and refuses one that is doubled", () => {
+    // A space is what a transfer note carries intact, so the displayed
+    // reference is composed with it. A doubled one is refused rather than
+    // sent: a bank that collapses it credits a memo this code did not promise.
+    expect(vietQrPayload({ ...ok, paymentRef: "TEST LUNCH NEYU" })).not.toBeNull();
+    expect(vietQrPayload({ ...ok, paymentRef: "TEST  LUNCH NEYU" })).toBeNull();
+    // Trimmed rather than refused, as a pasted value is everywhere else here.
+    expect(vietQrPayload({ ...ok, paymentRef: " TEST LUNCH NEYU " })).toBe(
+      vietQrPayload({ ...ok, paymentRef: "TEST LUNCH NEYU" }),
+    );
   });
 
   it("refuses an amount that is not a whole, non-negative number of dong", () => {
@@ -232,5 +247,66 @@ describe("the payload a bank actually receives", () => {
     const crc = walk(payload).find(([id]) => id === "63")![1];
     expect(crc16CcittFalse(payload.slice(0, -4)).toString(16).toUpperCase().padStart(4, "0"))
       .toBe(crc);
+  });
+});
+
+/**
+ * The same walk over a composed reference, which carries spaces.
+ *
+ * A space inside field 62-08 changes that field's length byte and the length
+ * of everything wrapping it. A decoder reads those bytes rather than looking
+ * for a separator, so one length left behind by a character count taken before
+ * the spaces existed would silently corrupt every field after it and the CRC
+ * would be computed over the wrong string.
+ */
+describe("a composed reference on the wire", () => {
+  const REF = composePaymentRef({ officeCode: "TEST", memberCode: "DINH" });
+  const payload = vietQrPayload({
+    bankBin: "970416",
+    accountNumber: "4286427",
+    amountMinor: 275_000,
+    paymentRef: REF,
+  })!;
+
+  it("is the reference a member is shown, spaces and all", () => {
+    expect(REF).toBe("TEST LUNCH DINH");
+    expect(payload).not.toBeNull();
+  });
+
+  it("parses end to end, with every declared length still the real one", () => {
+    expect(walk(payload).map(([id]) => id)).toEqual([
+      "00", "01", "38", "53", "54", "58", "62", "63",
+    ]);
+  });
+
+  it("hands the bank the reference whole, spaces included", () => {
+    const f62 = walk(payload).find(([id]) => id === "62")![1];
+    expect(walk(f62)).toEqual([["08", "TEST LUNCH DINH"]]);
+    // 15 characters, so 62 is 19 and its own length byte says so.
+    expect(f62).toBe(`0815${REF}`);
+  });
+
+  it("still checks its CRC over the whole string", () => {
+    const crc = walk(payload).find(([id]) => id === "63")![1];
+    expect(crc16CcittFalse(payload.slice(0, -4)).toString(16).toUpperCase().padStart(4, "0"))
+      .toBe(crc);
+  });
+
+  it("stays ASCII, because the bank checksums bytes and not characters", () => {
+    // eslint-disable-next-line no-control-regex
+    expect(payload).toMatch(/^[\x20-\x7e]+$/);
+  });
+
+  it("carries the same reference on a static code, where the payer picks the sum", () => {
+    const topUp = vietQrPayload({
+      bankBin: "970416",
+      accountNumber: "4286427",
+      paymentRef: REF,
+    })!;
+    expect(walk(topUp).find(([id]) => id === "01")![1]).toBe("11");
+    expect(walk(topUp).some(([id]) => id === "54")).toBe(false);
+    expect(walk(walk(topUp).find(([id]) => id === "62")![1])).toEqual([
+      ["08", "TEST LUNCH DINH"],
+    ]);
   });
 });

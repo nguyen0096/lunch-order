@@ -170,6 +170,10 @@ export function nextOrderableDay(
 /**
  * Null when this meal can still be handed to somebody else, otherwise why not.
  *
+ * Always asked about the reader's own meal. Giving your own lunch away is the
+ * only handover the board offers anybody, admin or not; moving a meal between
+ * two other people is a correction, and it has no screen.
+ *
  * The window is the **open billing week**, not today onward. The old screen
  * asked the database for orders from `today`, so a Tuesday meal could not be
  * handed over on Thursday although the trigger permits it: it refuses only a
@@ -184,10 +188,8 @@ export function passOnReason(args: {
   openWeekStart: string;
   /** A live offer already sitting on this meal. */
   offeredTo: string | null;
-  mayAct: boolean;
 }): string | null {
-  const { cell, serviceDate, openWeekStart, offeredTo, mayAct } = args;
-  if (!mayAct) return "Only an admin can pass on somebody else's meal";
+  const { cell, serviceDate, openWeekStart, offeredTo } = args;
   if (cell === null || cell.status !== "placed") return "There is no meal here to pass on";
   // An optimistic cell has no server id yet, so there is nothing to offer.
   if (cell.orderId <= 0) return "Still saving this order";

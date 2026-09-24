@@ -13,6 +13,7 @@ import type {
 } from "../src/web/api.js";
 import { formatMoney } from "../src/shared/money.js";
 import { formatDay } from "../src/shared/dates.js";
+import { foldMemo } from "../src/shared/sepay.js";
 import type { PaymentConfig } from "../src/shared/payment.js";
 import type { Me, Org } from "../src/shared/types.js";
 
@@ -49,6 +50,7 @@ const ORG: Org = {
   currency: { code: "VND", minorUnits: 0, locale: "vi-VN" },
   defaultCutoffLocalTime: "21:00:00",
   billingWeekStartsOn: 1,
+  shortCode: "TEST",
   businessDayStartsAt: "08:30",
   businessDayEndsAt: "17:30",
 };
@@ -59,6 +61,15 @@ const ME: Me = {
   email: "neyu@example.com",
   orgs: [{ org: ORG, role: "member", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
+
+/**
+ * The reference as the screen composes it: the office, the word, the person.
+ * One string in every state, so it can be saved as a repeating transfer.
+ *
+ * `LUNCHNEYU` remains what the database matches on, and this still contains it
+ * once a bank memo is folded to letters and digits.
+ */
+const REF = "TEST LUNCH NEYU";
 
 const PAYMENT: PaymentConfig = {
   vietqr: {
@@ -197,9 +208,9 @@ describe("Bill, nothing owed", () => {
     serve({ weeks: [OPEN_WEEK] });
     renderBill();
 
-    expect(await screen.findByRole("heading", { name: "Nothing owed yet" })).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
     // 21 to 27 September 2026 is a Monday to Sunday week, so it closes Monday.
-    expect(screen.getByText("This week closes Monday.")).toBeInTheDocument();
+    expect(screen.getByText("This week is still open. It closes Monday.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 
@@ -207,8 +218,43 @@ describe("Bill, nothing owed", () => {
     serve({ weeks: [] });
     renderBill();
 
-    expect(await screen.findByRole("heading", { name: "Nothing owed yet" })).toBeInTheDocument();
-    expect(screen.getByText(/first bill arrives at the end of a week you eat in/i)).toBeInTheDocument();
+    expect(await screen.findByText("Nothing has been billed to you yet.")).toBeInTheDocument();
+    expect(
+      screen.getByText(/first bill arrives at the end of a week you eat in/i),
+    ).toBeInTheDocument();
+  });
+
+  /**
+   * Reported from production by a member of an office that had never billed:
+   * "I still don't see any topup QR or balance in any of my screen". The
+   * screen short-circuited to an empty state with no figure and no code on it,
+   * so the people with the most reason to pay ahead were the only ones who
+   * could not.
+   */
+  it("shows the account and a way to pay with no statement and no payment", async () => {
+    serve({ weeks: [] });
+    renderBill();
+
+    expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
+    expect(screen.getByText("Nothing to pay")).toBeInTheDocument();
+    expect(screen.getByText("Nothing has been billed to you yet.")).toBeInTheDocument();
+    // Nothing to open and nothing to reveal: the transfer block is the card.
+    expect(screen.getByText(REF)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
+    expect(screen.getByText("Any amount")).toBeInTheDocument();
+  });
+
+  it("still hands out the reference when the office has set no bank details", async () => {
+    serve({ weeks: [], payment: { vietqr: null, note: null } });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+
+    expect(screen.getByText(REF)).toBeInTheDocument();
+    expect(screen.getByText(/has not set up bank transfer yet/i)).toBeInTheDocument();
+    // No code, and no list either: every row of it would be blank.
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Amount")).not.toBeInTheDocument();
   });
 });
 
@@ -221,14 +267,14 @@ describe("Bill, unpaid", () => {
     // and somebody three weeks behind paid the newest number.
     expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(180_000));
-    expect(screen.getByText("LUNCHNEYU")).toBeInTheDocument();
+    expect(screen.getByText(REF)).toBeInTheDocument();
     expect(screen.getAllByText("Unpaid").length).toBeGreaterThan(0);
 
     // The code is built here, so what it encodes is assertable: the amount the
     // member still owes and the reference that matches the payment back.
     const qr = screen.getByRole("img", { name: /VietQR code/ });
     expect(qr).toHaveTextContent(
-      `VietQR code for ${money(180_000)} to CONG TY ABC, reference LUNCHNEYU`,
+      `VietQR code for ${money(180_000)} to CONG TY ABC, reference ${REF}`,
     );
     expect(screen.getByText("113366668888")).toBeInTheDocument();
     // 970415 is VietinBank. A phone that will not scan leaves somebody typing
@@ -256,7 +302,7 @@ describe("Bill, unpaid", () => {
 
     expect(await screen.findByText("You owe")).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(270_000));
-    expect(screen.getByText(/Across 2 weeks/)).toBeInTheDocument();
+    expect(screen.getByText("8 meals across 2 weeks.")).toBeInTheDocument();
   });
 
   it("says a week is in the total above rather than carried into another week", async () => {
@@ -272,7 +318,7 @@ describe("Bill, unpaid", () => {
     serve({ payment: { vietqr: null, note: null } });
     renderBill();
 
-    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
+    expect(await screen.findByText(REF)).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
     expect(screen.getByText(/has not set up bank transfer yet/i)).toBeInTheDocument();
   });
@@ -309,7 +355,7 @@ describe("Bill, partial", () => {
     // The code carries the remainder, not the original total: a second
     // transfer for the full amount is an overpayment nobody asked for.
     expect(screen.getByRole("img", { name: /VietQR code/ })).toHaveTextContent(
-      `VietQR code for ${money(80_000)} to CONG TY ABC, reference LUNCHNEYU`,
+      `VietQR code for ${money(80_000)} to CONG TY ABC, reference ${REF}`,
     );
   });
 });
@@ -330,13 +376,17 @@ describe("Bill, paid", () => {
     renderBill();
 
     expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
+    // The figure stays. The label says whether there is anything to do; the
+    // figure says how much you have got, and it is the same number in the
+    // same place in all three states.
     expect(headline("Nothing to pay")).toHaveTextContent(money(0));
     expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
     // 03:00Z is mid-morning in Ho Chi Minh City, which is the office's day.
     expect(screen.getByText("Settled 22 September.")).toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    expect(screen.queryByText("LUNCHNEYU")).not.toBeInTheDocument();
+    // A static code, because the amount is the payer's to choose.
+    expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
+    expect(screen.getByText("Any amount")).toBeInTheDocument();
+    expect(screen.getByText(/Your bank will ask for this/)).toBeInTheDocument();
   });
 
   it("still says the current week is running", async () => {
@@ -359,7 +409,6 @@ describe("Bill, paid", () => {
     renderBill();
 
     expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
-    expect(headline("Nothing to pay")).toHaveTextContent(money(0));
     // The meals happened; the charge did not. Nothing to pay, and the week
     // below still says Waived so it is clear why.
     expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
@@ -367,7 +416,7 @@ describe("Bill, paid", () => {
     // The sentence moved to the week it is about: the account says only that
     // there is nothing to pay, because for the account there is not.
     expect(screen.queryByText(/An admin waived this week/)).not.toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(headline("Nothing to pay")).toHaveTextContent(money(0));
   });
 });
 
@@ -403,8 +452,14 @@ describe("Bill, the account and the weeks", () => {
 
     const weeks = within(screen.getByRole("list")).getAllByRole("listitem");
     expect(weeks).toHaveLength(2);
-    expect(within(weeks[0]!).getByRole("heading", { name: "21–27 September" })).toBeInTheDocument();
-    expect(within(weeks[1]!).getByRole("heading", { name: "14–20 September" })).toBeInTheDocument();
+    // The ISO week leads: it is what a bank statement and the caterer's own
+    // messages name, and the dates say which days that was.
+    expect(
+      within(weeks[0]!).getByRole("heading", { name: "Week 39, 21–27 September" }),
+    ).toBeInTheDocument();
+    expect(
+      within(weeks[1]!).getByRole("heading", { name: "Week 38, 14–20 September" }),
+    ).toBeInTheDocument();
   });
 
   it("shows credit rather than clamping an overpayment to nothing", async () => {
@@ -417,24 +472,24 @@ describe("Bill, the account and the weeks", () => {
     renderBill();
 
     await screen.findByRole("heading", { name: "Your account" });
-    const card = screen.getByRole("article");
-    expect(within(card).getAllByText("In credit")).toHaveLength(2); // badge and label
-    expect(
-      within(card).getAllByText("In credit").map((n) => n.closest("p")).find(Boolean),
-    ).toHaveTextContent(money(100_000));
-    expect(screen.getByText(/comes off your next lunches/)).toBeInTheDocument();
-    // Nothing to transfer, so nothing to transfer with.
-    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("LUNCHNEYU")).not.toBeInTheDocument();
+    expect(headline("In credit")).toHaveTextContent(money(100_000));
+    expect(screen.getByText("This comes off your next lunches.")).toBeInTheDocument();
+    // Nothing is owed, so the code carries no amount. It is still offered:
+    // somebody already in credit is the likeliest person to add to it.
+    expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
+    expect(screen.getByText(REF)).toBeInTheDocument();
   });
 
   it("uses the person's own reference, not the week's", async () => {
     serve({ weeks: [week()] });
     renderBill();
 
-    // It carried the ISO week and changed every Monday, so nobody could save
-    // the transfer in their banking app.
-    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
+    // The old reference welded the ISO week into the core, `LUNCH38NEYU`, so
+    // it changed every Monday and nobody could save the transfer in their
+    // banking app. What is shown now names the office and the person and
+    // nothing else, and still carries the core the database matches on.
+    const shown = await screen.findByText(REF);
+    expect(foldMemo(shown.textContent ?? "")).toContain("LUNCHNEYU");
     expect(screen.queryByText(/LUNCH\d\d/)).not.toBeInTheDocument();
   });
 });
@@ -474,7 +529,9 @@ describe("Bill, past weeks", () => {
     // Both weeks, newest first. The list is the whole history now, not
     // "everything except the one at the top".
     expect(past).toHaveLength(2);
-    expect(within(past[1]!).getByRole("heading", { name: "7–13 September" })).toBeInTheDocument();
+    expect(
+      within(past[1]!).getByRole("heading", { name: "Week 37, 7–13 September" }),
+    ).toBeInTheDocument();
     expect(within(past[1]!).getByText(money(135_000))).toBeInTheDocument();
     expect(within(past[1]!).getByText("Paid")).toBeInTheDocument();
   });
@@ -621,72 +678,43 @@ describe("Bill, the meals behind the total", () => {
  * payer believes they have paid and the bill goes on saying unpaid.
  */
 describe("Bill, the reference as a requirement", () => {
-  const REQUIRED =
-    "Put this in the transfer message. It is yours for good, the same every week. " +
-    "Only transfers carrying it reach this app, so one sent without it leaves your " +
-    "bill unpaid with nothing for an admin to find.";
+  const KEEP =
+    "Keep this in the transfer message. Without it the payment never reaches your " +
+    "account here.";
 
-  /** The top-up instruction, on the screen of somebody who owes something. */
-  const EXTRA =
-    "Send more than this if you like. Anything above what you owe stays on your " +
-    "account and comes off your next lunches.";
-
-  it("tells somebody who owes money how to pay ahead, where they already are", async () => {
-    // The likeliest person to pay ahead is somebody already making a transfer,
-    // and the Pay ahead block is only offered to accounts with nothing owing.
-    // Newly true, too: until the account landed the extra was clamped away by
-    // `greatest(due - paid, 0)` and left the books entirely.
-    serve({ weeks: [week()] });
-    renderBill();
-
-    expect(await screen.findByText(EXTRA)).toBeInTheDocument();
-  });
-
-  it("says nothing about paying extra where nothing is owed, because there is no extra", async () => {
-    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
-    renderBill();
-
-    await screen.findByRole("heading", { name: "Your account" });
-    expect(screen.queryByText(EXTRA)).not.toBeInTheDocument();
-  });
-
-  /** The heading's own row, so "Required" is read as labelling the reference. */
-  function referenceHeading(): HTMLElement {
-    const node = screen.getByRole("heading", { name: "Payment reference" }).parentElement;
-    if (node === null) throw new Error("no row around the reference heading");
-    return node;
-  }
-
-  it("labels the reference required and says what a transfer without it costs", async () => {
+  it("says what a transfer without the reference costs", async () => {
+    // "Keep", not "put": with a code filling the memo in, the mistake that
+    // actually happens is typing over the reference rather than forgetting it.
     serve();
     renderBill();
 
-    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
-    expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
-    expect(screen.getByText(REQUIRED)).toBeInTheDocument();
+    expect(await screen.findByText(REF)).toBeInTheDocument();
+    expect(screen.getByText(KEEP)).toBeInTheDocument();
+  });
+
+  it("says it with no code to fill the memo in, too", async () => {
+    serve({ payment: { vietqr: null, note: null } });
+    renderBill();
+
+    expect(await screen.findByText(REF)).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(screen.getByText(KEEP)).toBeInTheDocument();
   });
 
   it("no longer promises an admin will sort an unreferenced transfer out", async () => {
     serve();
     renderBill();
-    await screen.findByText("LUNCHNEYU");
+    await screen.findByText(REF);
 
     expect(screen.queryByText(/sort out by hand/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/waits for an admin/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/matched to your name/i)).not.toBeInTheDocument();
   });
 
-  it("says it wherever the reference is offered, code or no code", async () => {
-    serve({ payment: { vietqr: null, note: null } });
-    renderBill();
-
-    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
-    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
-    expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
-    expect(screen.getByText(REQUIRED)).toBeInTheDocument();
-  });
-
-  it("says nothing about it on a week with nothing left to pay", async () => {
+  it("hands it out on a settled account too, because paying ahead needs it", async () => {
+    // It used to be withheld from anybody who owed nothing, on the grounds
+    // that handing somebody the means to pay what they do not owe is an
+    // instruction to overpay. A top-up is not an overpayment.
     serve({
       weeks: [
         week({
@@ -701,62 +729,115 @@ describe("Bill, the reference as a requirement", () => {
     renderBill();
 
     expect(await screen.findByText("Paid")).toBeInTheDocument();
-    expect(screen.queryByText("Required")).not.toBeInTheDocument();
-    expect(screen.queryByText(REQUIRED)).not.toBeInTheDocument();
+    expect(screen.getByText(REF)).toBeInTheDocument();
+    expect(screen.getByText(KEEP)).toBeInTheDocument();
   });
 });
 
-describe("Bill, paying ahead", () => {
-  it("offers a code with no amount when there is nothing to pay", async () => {
+/* ==========================================================================
+   The transfer block: one code, and the four fields it encodes
+   ========================================================================== */
+
+describe("Bill, the amount to send", () => {
+  it("shows what is owed and copies it as bare digits", async () => {
     const user = userEvent.setup();
-    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
-    renderBill();
-
-    await screen.findByRole("heading", { name: "Your account" });
-    // Folded away: somebody who owes nothing came here to confirm that.
-    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
-
-    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
-    // A static code, because the whole point of paying ahead is that the
-    // payer picks the sum. A dynamic one would fix it at scan time.
-    expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
-    expect(screen.getByText(/You type the amount/)).toBeInTheDocument();
-  });
-
-  it("offers it to somebody already in credit, who is the likeliest to use it", async () => {
-    const user = userEvent.setup();
-    serve({
-      weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })],
-      account: { chargedMinor: 180_000, creditedMinor: 280_000, balanceMinor: -100_000 },
-    });
-    renderBill();
-
-    await screen.findByRole("heading", { name: "Your account" });
-    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
-    expect(await screen.findByRole("img", { name: /VietQR code/ })).toBeInTheDocument();
-  });
-
-  it("says why there is no code rather than showing a broken one", async () => {
-    const user = userEvent.setup();
-    serve({
-      weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })],
-      payment: { vietqr: null, note: null },
-    });
-    renderBill();
-
-    await screen.findByRole("heading", { name: "Your account" });
-    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
-    expect(screen.getByText(/has not set up bank transfer yet/i)).toBeInTheDocument();
-  });
-
-  it("does not offer it while something is still owed, because the bill above is the code", async () => {
     serve({ weeks: [week()] });
     renderBill();
 
-    await screen.findByText("You owe");
-    expect(screen.queryByRole("button", { name: "Pay ahead" })).not.toBeInTheDocument();
+    await screen.findByText("Amount");
+    await user.click(screen.getByRole("button", { name: "Copy the amount" }));
+
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Amount copied"));
+    // Digits only. A grouping dot in a bank's amount field is read as a
+    // decimal point by some of them, and on VND that is 180 dong.
+    expect(await navigator.clipboard.readText()).toBe("180000");
+  });
+
+  it("answers the top-up question in one line, under the number it is about", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(
+      await screen.findByText("Send more if you like; anything above this stays on your account."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the row but offers no figure when nothing is owed", async () => {
+    // "How much?" is asked in every state, so the row stays and says who
+    // answers it. There is nothing to copy, because there is no figure.
+    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
+    renderBill();
+
+    expect(await screen.findByText("Any amount")).toBeInTheDocument();
+    expect(screen.getByText(/Your bank will ask for this/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy the amount" })).not.toBeInTheDocument();
+  });
+
+  it("puts the figure in the code, and leaves it out when there is none", async () => {
+    // Scan and confirm is the common case, so the code suggests the sum. The
+    // payer's own bank is where it is finally settled either way.
+    serve({ weeks: [week()] });
+    const { unmount } = renderBill();
+    expect(await screen.findByRole("img", { name: /VietQR code/ })).toHaveTextContent(
+      `VietQR code for ${money(180_000)} to CONG TY ABC, reference ${REF}`,
+    );
+    unmount();
+
+    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
+    renderBill();
+    expect(await screen.findByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
+  });
+});
+
+describe("Bill, the four fields of the payload", () => {
+  it("lists what the code says, in the order a transfer is filled in", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    await screen.findByText("Amount");
+    // Amount (54), Reference (62-08), Account (38-01-01), Bank (38-01-00):
+    // what you put in, then where it goes.
+    const labels = ["Amount", "Reference", "Account", "Bank"];
+    for (const label of labels) expect(screen.getByText(label)).toBeInTheDocument();
+    expect(screen.getByText("113366668888")).toBeInTheDocument();
+    // 970415 is VietinBank. A BIN is not something a person can type into a
+    // banking app.
+    expect(screen.getByText("VietinBank")).toBeInTheDocument();
+  });
+
+  it("copies each field and says which one it copied", async () => {
+    const user = userEvent.setup();
+    serve({ weeks: [week()] });
+    renderBill();
+    await screen.findByText("Amount");
+
+    for (const [name, toast, value] of [
+      ["Copy the reference", "Reference copied", REF],
+      ["Copy the account number", "Account number copied", "113366668888"],
+      ["Copy the bank", "Bank copied", "VietinBank"],
+    ] as const) {
+      await user.click(screen.getByRole("button", { name }));
+      await waitFor(() => expect(success).toHaveBeenCalledWith(toast));
+      expect(await navigator.clipboard.readText()).toBe(value);
+    }
+  });
+
+  it("shows the account name but does not offer to copy it", async () => {
+    // It is not in the payload at all: NAPAS resolves it at the bank. It is
+    // here to catch a mistyped BIN, which otherwise produces a code that scans
+    // perfectly and pays a stranger.
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByText("CONG TY ABC")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /account name/i })).not.toBeInTheDocument();
+  });
+
+  it("keeps the office's own note under the block", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByText(PAYMENT.note!)).toBeInTheDocument();
   });
 });
 
@@ -767,9 +848,11 @@ describe("Bill, copying the reference", () => {
     renderBill();
     await screen.findByText("You owe");
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
-    await waitFor(() => expect(success).toHaveBeenCalledWith("Copied"));
-    expect(await navigator.clipboard.readText()).toBe("LUNCHNEYU");
+    await user.click(screen.getByRole("button", { name: "Copy the reference" }));
+    // Named, not "Copied": four buttons on this card copy four things, and a
+    // toast that does not say which one is a toast that answers nothing.
+    await waitFor(() => expect(success).toHaveBeenCalledWith("Reference copied"));
+    expect(await navigator.clipboard.readText()).toBe(REF);
   });
 
   it("stays reachable and explains itself when the browser has no clipboard", async () => {
@@ -783,7 +866,7 @@ describe("Bill, copying the reference", () => {
       serve();
       renderBill();
 
-      const button = await screen.findByRole("button", { name: "Copy" });
+      const button = await screen.findByRole("button", { name: "Copy the reference" });
       expect(button).toHaveAttribute("aria-disabled", "true");
       expect(button).toHaveAccessibleDescription(
         "Your browser will not let the page copy. Select the reference and copy it by hand.",

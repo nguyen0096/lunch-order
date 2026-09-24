@@ -12,3 +12,8 @@ supabase/.temp/
 
 # Written by `deno check`, which runs against Deno rather than this package.
 deno.lock
+
+# QA screenshots. Every browser pass leaves a pile of these at the repo root
+# or under .playwright-mcp, and one has been committed by accident before.
+*.png
+.playwright-mcp/

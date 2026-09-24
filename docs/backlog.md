@@ -61,11 +61,20 @@ The five stages stop a member changing a finished day. An admin is exempt, and
 deliberately so: correcting a past day is most of why an admin touches an order
 at all. What is missing is a place to do it.
 
-Today an admin corrects a past day through the same board everybody uses, which
-is the board for ordering your own lunch. The two jobs read alike and are not
-alike: one is "what am I eating", the other is "what did Quy actually eat on the
-14th, because the caterer says five and we say four". They want different
+An admin used to correct a past day through the same board everybody uses,
+which is the board for ordering your own lunch. The two jobs read alike and are
+not alike: one is "what am I eating", the other is "what did Quy actually eat on
+the 14th, because the caterer says five and we say four". They want different
 screens, and the second one wants an audit trail the first does not.
+
+The Board no longer does the second job at all. `Pass <name>'s <dish> to
+someone` has been removed from the handover sheet, and it was the only way, from
+any screen, to record a swap between two other people. That is accepted rather
+than overlooked: the alternative was one admin-only control on the screen whose
+whole rule is that it has none. The database still allows it -- an admin is
+exempt in `enforce_transfer_rules`, and the recorded swap still lands as
+`accepted` -- so this screen has nothing to unlock when it is built, only
+somewhere to put it. Until then the capability has no home.
 
 What it needs:
 

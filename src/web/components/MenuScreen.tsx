@@ -52,7 +52,14 @@ import {
 import type { ScreenProps } from "./screenProps.js";
 import { parseMenu, type ParsedMenu } from "../../shared/menuParser.js";
 import { publishDisabledReason } from "../../shared/gating.js";
-import { addDays, daysApart, isoWeekday, todayIn, weekStart } from "../../shared/dates.js";
+import {
+  addDays,
+  daysApart,
+  isoWeekday,
+  todayIn,
+  weekNumberOf,
+  weekStart,
+} from "../../shared/dates.js";
 import { now as appNow } from "../../shared/clock.js";
 import { dayStage, stageWord } from "../../shared/gating.js";
 import type { MenuStatus } from "../../shared/types.js";
@@ -445,6 +452,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
       <WeekNav
         label={weekRangeLabel(strip[0] ?? weekOf, strip[strip.length - 1] ?? weekOf)}
+        weekNumber={weekNumberOf(weekOf)}
         away={weekOf !== thisWeek}
         onPrev={() => goToWeek(addDays(weekOf, -7))}
         onNext={() => goToWeek(addDays(weekOf, 7))}

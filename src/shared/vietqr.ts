@@ -75,10 +75,14 @@ export function vietQrPayload(req: VietQrRequest): string | null {
 
   if (!/^\d{6}$/.test(bankBin)) return null;
   if (!/^[0-9A-Za-z]{1,19}$/.test(accountNumber)) return null;
-  // The same shape `billing_statements.payment_ref` is constrained to. A memo
-  // outside it would not survive the bank's own transliteration, so a code
-  // carrying one would produce a payment nobody can match.
-  if (!/^[A-Z0-9]{4,24}$/.test(paymentRef)) return null;
+  // Letters, digits and single interior spaces: what a Vietnamese transfer
+  // note carries through intact, and what the displayed reference is composed
+  // from (`TEST LUNCH DINH 39`). A memo outside this set would not survive the
+  // bank's own transliteration, so a code carrying one produces a payment
+  // nobody can match, and an edge or doubled space is refused rather than
+  // sent because a bank that collapses it credits a memo this code did not
+  // promise. 24 still holds: 4 + " LUNCH " + 8 + " 39" is 22.
+  if (!/^(?=.{4,24}$)[A-Z0-9]+( [A-Z0-9]+)*$/.test(paymentRef)) return null;
   if (!Number.isInteger(amountMinor) || amountMinor < 0) return null;
 
   const withAmount = amountMinor > 0;

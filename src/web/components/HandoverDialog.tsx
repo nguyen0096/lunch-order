@@ -1,13 +1,10 @@
-import { useState } from "react";
 import {
   Action,
-  Combobox,
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  type ComboboxOption,
 } from "@/ui";
 import type { BoardCell, BoardDay, BoardMember, TransferRow } from "../api.js";
 import { formatMoney } from "../../shared/money.js";
@@ -25,20 +22,14 @@ export type HandoverDialogProps = {
   theirCell: BoardCell | null;
   /** My own meal that day, which is the one I can give them. */
   myCell: BoardCell | null;
-  admin: boolean;
   /** Null when I can give them my meal, otherwise the sentence saying why not. */
   giveReason: string | null;
-  /** Null when their meal can go to somebody else, otherwise why not. */
-  passReason: string | null;
-  /** Everyone their meal could go to: colleagues minus whoever holds it. */
-  colleagues: BoardMember[];
   /** A live offer already sitting on their meal. */
   offer: TransferRow | null;
-  /** Only the person who made an offer, or an admin, may take it back. */
+  /** Only the person who made an offer may take it back. */
   mayWithdraw: boolean;
   pending: boolean;
   onGive: () => void;
-  onPassOn: (toProfileId: string, toName: string) => void;
   onWithdraw: (transferId: number) => void;
 };
 
@@ -49,10 +40,9 @@ export type HandoverDialogProps = {
  * where that happens, on a filled cell and on an empty one alike: "I am out,
  * you have mine" is usually said to somebody who was not already eating.
  *
- * Two directions are possible on one cell, and they differ in grammar rather
- * than in appearance, so each is a sentence naming its own direction. Two
- * arrows would need a legend, and a legend is a confession that the icons do
- * not say what they mean.
+ * One direction, and one for everybody: you give away a meal of your own.
+ * Moving a meal between two other people is a correction of what was recorded
+ * rather than an arrangement, and this board does not do it for anybody.
  */
 export function HandoverDialog(props: HandoverDialogProps) {
   const { org, day, member, theirCell, myCell, offer } = props;
@@ -122,79 +112,7 @@ export function HandoverDialog(props: HandoverDialogProps) {
             )}
           </section>
         )}
-
-        {props.admin && theirCell !== null && (
-          <PassOnForm {...props} theirDish={theirDish} />
-        )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-/**
- * The one place a recipient still has to be named: an admin recording a swap
- * between two other people, where neither cell on the board is the answer.
- */
-function PassOnForm({
-  member,
-  theirDish,
-  colleagues,
-  passReason,
-  pending,
-  onPassOn,
-}: HandoverDialogProps & { theirDish: string | null }) {
-  // Reset per cell comes from the caller remounting this dialog, not from an
-  // effect on the props: the board re-renders on its own clock, and an effect
-  // would wipe a half-made choice every thirty seconds.
-  const [to, setTo] = useState<string | null>(null);
-
-  const options: ComboboxOption[] = colleagues.map((c) => ({
-    value: c.profileId,
-    label: c.name,
-    keywords: [c.shortCode],
-  }));
-  const chosen = colleagues.find((c) => c.profileId === to) ?? null;
-
-  return (
-    <section className="flex flex-col gap-3 border-t border-border pt-4">
-      <h3 className="text-sm font-medium">
-        {theirDish === null
-          ? `Pass ${member.name}'s meal to someone`
-          : `Pass ${member.name}'s ${theirDish} to someone`}
-      </h3>
-      <p className="text-sm text-muted">
-        Recording a swap the two of them already agreed. It takes effect immediately, so confirm it
-        with both first.
-      </p>
-
-      {colleagues.length === 0 ? (
-        <p className="text-sm text-muted">
-          There is nobody else in this office yet. Add a colleague from People first.
-        </p>
-      ) : (
-        <>
-          <label className="flex flex-col gap-1.5 text-sm font-medium">
-            Goes to
-            <Combobox
-              options={options}
-              value={to}
-              onChange={setTo}
-              placeholder="Pass to…"
-              searchPlaceholder="Type a name"
-              emptyMessage="Nobody by that name is in this office."
-            />
-          </label>
-
-          <Action
-            reason={passReason ?? (chosen === null ? "Choose who it goes to" : null)}
-            pending={pending}
-            className="w-fit"
-            onClick={() => chosen && onPassOn(chosen.profileId, chosen.name)}
-          >
-            Pass on
-          </Action>
-        </>
-      )}
-    </section>
   );
 }

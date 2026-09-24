@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Action, Badge, Button, EmptyState, Skeleton, useAction } from "@/ui";
+import { Badge, Button, EmptyState, Skeleton } from "@/ui";
 import {
   fetchBill,
   fetchUnpricedMeals,
@@ -14,11 +14,11 @@ import {
   type UnpricedMeal,
 } from "../api.js";
 import { BillLines } from "./bill/BillLines.js";
-import { PaymentDetails } from "./bill/PaymentDetails.js";
-import { PayAhead } from "./bill/PayAhead.js";
+import { Transfer } from "./bill/Transfer.js";
 import type { ScreenProps } from "./screenProps.js";
-import { formatMoney, plainAmount, type Currency } from "../../shared/money.js";
-import { addDays } from "../../shared/dates.js";
+import { formatMoney, type Currency } from "../../shared/money.js";
+import { addDays, weekNumberOf } from "../../shared/dates.js";
+import { displayPaymentRef } from "../../shared/paymentRef.js";
 import type { Org } from "../../shared/types.js";
 
 /**
@@ -108,23 +108,21 @@ export function BillScreen({ me, org }: ScreenProps) {
   const openWeek = bill.weeks.find((w) => w.periodStatus === "open" && w.statement === null);
 
   const owed = owedMinor(bill.account);
-  const credit = creditMinor(bill.account);
-  const ref = me.orgs.find((o) => o.org.id === org.id)?.paymentRef ?? "";
 
-  if (billed.length === 0 && owed === 0 && credit === 0) {
-    return (
-      <section className="flex max-w-2xl flex-col gap-4">
-        <EmptyState heading="Nothing owed yet">
-          {openWeek
-            ? `This week closes ${weekdayName(addDays(openWeek.periodEnd, 1))}.`
-            : "Nothing has been billed to you yet. Your first bill arrives at the end of a week you eat in."}
-        </EmptyState>
-        {/* Otherwise "nothing owed" reads as "you ate nothing", and somebody
-            who ate all week is told the opposite of the truth. */}
-        <WaitingNote waiting={waiting} error={waitingError} nothingBilled />
-      </section>
-    );
-  }
+  const membership = me.orgs.find((o) => o.org.id === org.id);
+  // One string, in every state: what the office is, and who this is. It names
+  // no week, so it can be saved as a repeating transfer, and somebody three
+  // weeks behind is not asked which week they are paying for.
+  const ref = displayPaymentRef({
+    officeCode: org.shortCode ?? "",
+    memberCode: membership?.shortCode ?? "",
+    paymentRef: membership?.paymentRef ?? "",
+  });
+
+  // No early return for an empty account. An office that has never billed, or
+  // a member who joined this week, used to get an empty state with no balance
+  // and no way to pay ahead at all, which is the one thing a new member needs.
+  const nothingBilled = billed.length === 0;
 
   return (
     <section className="flex max-w-2xl flex-col gap-8">
@@ -134,33 +132,33 @@ export function BillScreen({ me, org }: ScreenProps) {
           and paid it, which is exactly what carry-forward was invented to
           paper over. */}
       <article className="flex flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
-        <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h1 className="text-lg font-semibold">Your account</h1>
-          <AccountBadge account={bill.account} />
-        </header>
+        <h1 className="text-lg font-semibold">Your account</h1>
 
         <AccountAmount account={bill.account} currency={org.currency} weeks={billed} />
 
         {/* The count is not repeated here: every billed week below carries its
             own note against the week the meal was eaten in, which is the
             question somebody actually has. A failure to check at all belongs
-            up here, because it undermines this number rather than one week's. */}
-        <WaitingNote waiting={[]} error={waitingError} />
+            up here, because it undermines this number rather than one week's.
+            With nothing billed there is no week below to carry it, and
+            "nothing to pay" alone would tell somebody who ate all week the
+            opposite of the truth. */}
+        <WaitingNote
+          waiting={nothingBilled ? waiting : []}
+          error={waitingError}
+          nothingBilled={nothingBilled}
+        />
 
-        {owed > 0 ? (
-          <PaymentDetails
-            paymentRef={ref}
-            amountMinor={owed}
-            currency={org.currency}
-            payment={bill.payment}
-          />
-        ) : (
-          // Nothing is owed, so there is no sum to put in a code. The option
-          // to send one anyway is still worth offering, and it is the only
-          // way a member tops themselves up without asking an admin.
-          <PayAhead paymentRef={ref} payment={bill.payment} />
-        )}
-
+        {/* One block in all three states. Somebody who owes nothing is not a
+            different kind of payer: the amount is simply theirs to choose,
+            which is also the only way a member tops up without asking an
+            admin. */}
+        <Transfer
+          paymentRef={ref}
+          owedMinor={owed}
+          currency={org.currency}
+          payment={bill.payment}
+        />
       </article>
 
       {openWeek && (
@@ -171,9 +169,11 @@ export function BillScreen({ me, org }: ScreenProps) {
 
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold">Your weeks</h2>
-        {billed.length === 0 ? (
+        {nothingBilled ? (
+          // The sentence the old empty state carried, kept where it answers
+          // the question it was answering: when a first bill turns up.
           <EmptyState heading="No weeks yet">
-            A week appears here once it has been billed.
+            Your first bill arrives at the end of a week you eat in.
           </EmptyState>
         ) : (
           <ul className="flex flex-col gap-3">
@@ -199,10 +199,21 @@ export function BillScreen({ me, org }: ScreenProps) {
 /**
  * The one number, and what it is made of.
  *
- * Three states, and the third is new: owing, settled, and in credit. A credit
- * is what a top-up looks like once it is on the books, and it used to be
- * arithmetically impossible -- `greatest(due - paid, 0)` turned every
- * overpayment into a zero and the money disappeared.
+ * Three states: owing, settled, and in credit. A credit is what a top-up looks
+ * like once it is on the books, and it used to be arithmetically impossible --
+ * `greatest(due - paid, 0)` turned every overpayment into a zero and the money
+ * disappeared.
+ *
+ * One path, and the figure is always drawn. The label and the figure answer
+ * different questions: the label says whether there is anything to do, the
+ * figure says how much you have got. Somebody who paid ahead watches that
+ * number come down over weeks, and a settled screen that dropped it stopped
+ * answering exactly when the answer changed. Same size and same place in every
+ * state, so it reads as one number changing rather than three treatments.
+ *
+ * A fact, not a control. The copy button that used to sit beside it has gone
+ * to the Amount row below, which is the figure somebody pays with; copying a
+ * credit balance into a bank's amount field would be paying it again.
  */
 function AccountAmount({
   account,
@@ -219,63 +230,36 @@ function AccountAmount({
   const behind = weeks.filter(
     (w) => w.statement !== null && outstandingMinor(w.statement) > 0,
   ).length;
+  const mealWord = `${meals} ${meals === 1 ? "meal" : "meals"}`;
 
   if (credit > 0) {
     return (
-      <div className="flex flex-col gap-1">
-        <Headline
-          label="In credit"
-          amount={formatMoney(credit, currency)}
-          copy={plainAmount(credit, currency)}
-        />
-        <p className="text-sm text-muted">
-          You have paid ahead. This comes off your next lunches, and there is
-          nothing to transfer.
-        </p>
-      </div>
+      <Headline label="In credit" amount={formatMoney(credit, currency)}>
+        This comes off your next lunches.
+      </Headline>
     );
   }
 
   if (owed === 0) {
     return (
-      <div className="flex flex-col gap-1">
-        <Headline label="Nothing to pay" amount={formatMoney(0, currency)} />
-        <p className="text-sm text-muted">
-          {meals === 0
-            ? "Nothing has been billed to you yet."
-            : `${meals} ${meals === 1 ? "meal" : "meals"}, all settled.`}
-        </p>
-      </div>
+      <Headline label="Nothing to pay" amount={formatMoney(0, currency)}>
+        {meals === 0 ? "Nothing has been billed to you yet." : `${mealWord}, all settled.`}
+      </Headline>
     );
   }
 
   return (
-    <div className="flex flex-col gap-1">
-      <Headline
-        label="You owe"
-        amount={formatMoney(owed, currency)}
-        copy={plainAmount(owed, currency)}
-      />
-      <p className="text-sm text-muted">
-        {behind <= 1
-          ? `${meals} ${meals === 1 ? "meal" : "meals"} billed, ${formatMoney(
-              account.creditedMinor,
-              currency,
-            )} received.`
-          : `Across ${behind} weeks. ${formatMoney(
-              account.chargedMinor,
-              currency,
-            )} billed, ${formatMoney(account.creditedMinor, currency)} received.`}
-      </p>
-    </div>
+    <Headline label="You owe" amount={formatMoney(owed, currency)}>
+      {/* "0 d received" is not information, it is an accusation. Somebody who
+          has paid nothing yet knows that; saying it back to them in the one
+          line that explains their balance spends the line on nothing. */}
+      {behind > 1
+        ? `${mealWord} across ${behind} weeks.`
+        : account.creditedMinor > 0
+          ? `${mealWord} billed, ${formatMoney(account.creditedMinor, currency)} received.`
+          : `${mealWord} billed.`}
+    </Headline>
   );
-}
-
-/** Owing, settled, or in credit. */
-function AccountBadge({ account }: { account: Account }) {
-  if (creditMinor(account) > 0) return <Badge variant="success">In credit</Badge>;
-  if (owedMinor(account) === 0) return <Badge variant="success">Settled</Badge>;
-  return <Badge variant="warn">Unpaid</Badge>;
 }
 
 function WaitingNote({
@@ -315,67 +299,27 @@ function waitingIn(week: BillWeek, waiting: UnpricedMeal[]): UnpricedMeal[] {
   );
 }
 
-/**
- * One sentence, two sizes. The label and the number are a single paragraph so
- * that a screen reader says "you owe 180.000 ₫" rather than reading a stray
- * figure with no idea what it is.
- */
-
 function Headline({
   label,
   amount,
-  copy,
+  children,
 }: {
   label: string;
+  /** Always printed, including the zero: it is the standing, not a call to act. */
   amount: string;
-  /** Digits only, for a banking app's amount field. Omitted when nothing is due. */
-  copy?: string;
+  /** What the figure is made of, in one sentence. */
+  children: React.ReactNode;
 }) {
-  // Still one paragraph, and the wrapper is a span: a button is phrasing
-  // content and may sit inside a <p>, a div may not.
+  // One paragraph for the label and the figure, so a screen reader says "you
+  // owe 180.000 ₫" rather than reading a stray number with no idea what it is.
   return (
-    <p className="flex flex-col gap-1">
-      <span className="text-sm text-muted">{label}</span>
-      <span className="flex flex-wrap items-center gap-3">
+    <div className="flex flex-col gap-1">
+      <p className="flex flex-col gap-1">
+        <span className="text-sm text-muted">{label}</span>
         <span className="tabular text-3xl font-semibold">{amount}</span>
-        {copy !== undefined && <CopyAmount amount={copy} />}
-      </span>
-    </p>
-  );
-}
-
-/**
- * Copies the number without the currency glyph.
- *
- * The reference has its own button because it is typed into the memo; this one
- * exists because the amount is typed into a different field, and a person
- * paying is moving two values from this screen into their bank. Pasting
- * `45.000 ₫` into an amount field fails on every bank we have tried.
- */
-function CopyAmount({ amount }: { amount: string }) {
-  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-  const copy = useAction(
-    async () => {
-      await clipboard?.writeText(amount);
-    },
-    { success: "Amount copied" },
-  );
-
-  return (
-    <Action
-      variant="outline"
-      size="sm"
-      reason={
-        clipboard
-          ? null
-          : "Your browser will not let the page copy. Select the amount and copy it by hand."
-      }
-      pending={copy.pending}
-      aria-label={`Copy the amount, ${amount}`}
-      onClick={() => void copy.run()}
-    >
-      Copy
-    </Action>
+      </p>
+      <p className="max-w-prose text-sm text-muted">{children}</p>
+    </div>
   );
 }
 
@@ -451,8 +395,17 @@ function BillSkeleton() {
           <Skeleton className="h-10 w-52" />
           <Skeleton className="h-4 w-36" />
         </div>
-        <Skeleton className="h-8 w-40" />
-        <Skeleton className="size-42" />
+        {/* The code, then the four fields it encodes: the same two columns the
+            block lands in, so nothing moves sideways when it does. */}
+        <div className="flex flex-col gap-6 sm:flex-row sm:gap-8">
+          <Skeleton className="size-48 shrink-0" />
+          <div className="flex min-w-0 flex-1 flex-col gap-5">
+            <Skeleton className="h-11 w-full max-w-56" />
+            <Skeleton className="h-7 w-44" />
+            <Skeleton className="h-6 w-40" />
+            <Skeleton className="h-6 w-28" />
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -479,9 +432,13 @@ function weekLabel(week: BillWeek): string {
   });
   const start = utcDate(week.periodStart);
   const end = utcDate(week.periodEnd);
-  return week.periodStart.slice(0, 7) === week.periodEnd.slice(0, 7)
-    ? `${dayOnly.format(start)}–${dayMonth.format(end)}`
-    : `${dayMonth.format(start)} – ${dayMonth.format(end)}`;
+  // The ISO week leads, because it is what a person reads on a bank statement
+  // and in the caterer's messages; the dates say which days that was.
+  const days =
+    week.periodStart.slice(0, 7) === week.periodEnd.slice(0, 7)
+      ? `${dayOnly.format(start)}–${dayMonth.format(end)}`
+      : `${dayMonth.format(start)} – ${dayMonth.format(end)}`;
+  return `Week ${weekNumberOf(week.periodStart)}, ${days}`;
 }
 
 function weekdayName(isoDate: string): string {

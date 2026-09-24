@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays,
+  daysApart,
   formatDay,
+  isoWeek,
   isoWeekday,
   todayIn,
+  weekNumberOf,
   weekStart,
   zonedTimeToInstant,
 } from "../src/shared/dates.js";
@@ -62,6 +65,70 @@ describe("isoWeekday", () => {
 
   it("rejects a non-ISO date", () => {
     expect(() => isoWeekday("nope")).toThrow(TypeError);
+  });
+});
+
+describe("isoWeek", () => {
+  const cases: Array<[string, number]> = [
+    ["2026-01-01", 1],
+    ["2026-09-21", 39],
+    ["2026-09-23", 39],
+    ["2026-09-27", 39],
+    ["2026-09-28", 40],
+  ];
+
+  it.each(cases)("%s is week %d", (iso, week) => {
+    expect(isoWeek(iso)).toBe(week);
+  });
+
+  /**
+   * The whole reason this is not `ceil(dayOfYear / 7)`. A week belongs to the
+   * year holding its Thursday, so the last days of December can be week 1 and
+   * the first days of January can be week 52 or 53. 2026 is a 53-week year,
+   * which the commoner off-by-one implementations get wrong here specifically.
+   */
+  const boundary: Array<[string, number]> = [
+    ["2026-12-27", 52],
+    ["2026-12-28", 53],
+    ["2026-12-31", 53],
+    ["2027-01-01", 53],
+    ["2027-01-03", 53],
+    ["2027-01-04", 1],
+    ["2025-12-29", 1],
+    ["2024-12-30", 1],
+    ["2021-01-01", 53],
+    ["2023-01-01", 52],
+  ];
+
+  it.each(boundary)("%s is week %d, by the Thursday rule", (iso, week) => {
+    expect(isoWeek(iso)).toBe(week);
+  });
+
+  it("counts every day of a 53-week year, end to end", () => {
+    // Intl has no ISO week, so the oracle is the definition: week 1 is the one
+    // holding 4 January, and each week after it is seven days on. ISO 2026
+    // therefore runs Mon 29/12/2025 to Sun 03/01/2027, 371 days.
+    const firstMonday = weekStart("2026-01-04");
+    let seen = 0;
+    for (let d = firstMonday; d <= "2027-01-03"; d = addDays(d, 1)) {
+      expect(isoWeek(d)).toBe(Math.floor(daysApart(firstMonday, d) / 7) + 1);
+      seen += 1;
+    }
+    expect(seen).toBe(53 * 7);
+  });
+});
+
+describe("weekNumberOf", () => {
+  it("names the week its weekdays are in, whatever day the office starts on", () => {
+    expect(weekNumberOf("2026-09-21")).toBe(39);
+    // An office whose billing week starts on Sunday: 20/09 is the tail of week
+    // 38, but the lunches it shows are week 39's.
+    expect(weekNumberOf("2026-09-20")).toBe(39);
+  });
+
+  it("carries the boundary week with it", () => {
+    expect(weekNumberOf("2026-12-28")).toBe(53);
+    expect(weekNumberOf("2027-01-04")).toBe(1);
   });
 });
 

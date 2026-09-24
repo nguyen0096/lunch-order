@@ -51,8 +51,9 @@ import {
 } from "./boardModel.js";
 import { now as appNow } from "../../shared/clock.js";
 import { formatPrice } from "../../shared/money.js";
-import { addDays, formatDay, todayIn, weekStart } from "../../shared/dates.js";
-import { isAdmin, type Me, type MyOrder, type Org, type Role } from "../../shared/types.js";
+import { addDays, formatDay, todayIn, weekNumberOf, weekStart } from "../../shared/dates.js";
+import type { MyOrder, Org } from "../../shared/types.js";
+import type { ScreenProps } from "./screenProps.js";
 
 type Transfers = Awaited<ReturnType<typeof fetchTransfers>>;
 type Focus = { profileId: string; serviceDate: string };
@@ -73,8 +74,7 @@ type Focus = { profileId: string; serviceDate: string };
  * week of people by days cannot also carry five days of dish lists, and a cell
  * that shows the menu is a cell that cannot show the order.
  */
-export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role }) {
-  const admin = isAdmin(role);
+export function BoardScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
   const thisWeek = weekStart(today, org.billingWeekStartsOn);
 
@@ -330,18 +330,16 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
 
   // The days this reader cannot act on. One rule feeds the recessive column,
   // the panel's opening day and the column the grid scrolls to, so the three
-  // cannot drift apart. An admin is inside the window on every day, so for
-  // them nothing recedes.
+  // cannot drift apart. The rule is the same for everybody: this board is
+  // where an admin orders their own lunch, so the clock binds them too.
   const closedDays = useMemo(
     () =>
       new Set(
         days
-          .filter(
-            (d) => cellReason({ day: d, now, timeZone: org.timezone }) !== null,
-          )
+          .filter((d) => cellReason({ day: d, now, timeZone: org.timezone }) !== null)
           .map((d) => d.serviceDate),
       ),
-    [days, admin, now, org.timezone],
+    [days, now, org.timezone],
   );
 
   const panelDay = useMemo(
@@ -413,6 +411,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
   const nav = (
     <WeekNav
       label={weekRangeLabel(days[0]?.serviceDate ?? from, days[days.length - 1]?.serviceDate ?? to)}
+      weekNumber={weekNumberOf(weekOf)}
       away={weekOf !== thisWeek}
       onPrev={() => setWeekOf(addDays(weekOf, -7))}
       onNext={() => setWeekOf(addDays(weekOf, 7))}
@@ -700,8 +699,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
 
       {focused?.member && focused.day && !focused.member.isMe && (
         <HandoverDialog
-          // Remounted per cell, so a half-made choice cannot follow you to the
-          // next colleague.
           key={`${focus?.profileId}|${focus?.serviceDate}`}
           open
           onOpenChange={(open) => !open && setFocus(null)}
@@ -710,7 +707,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
           member={focused.member}
           theirCell={focusedLive}
           myCell={focusedMine}
-          admin={admin}
           giveReason={
             focusedMine === null
               ? `You have nothing ordered on ${formatDay(focused.day.serviceDate)}`
@@ -719,27 +715,17 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                   serviceDate: focused.day.serviceDate,
                   openWeekStart: thisWeek,
                   offeredTo: transfers?.live.get(focusedMine.orderId)?.toName ?? null,
-                  mayAct: true,
                 })
           }
-          passReason={passOnReason({
-            cell: focusedLive,
-            serviceDate: focused.day.serviceDate,
-            openWeekStart: thisWeek,
-            offeredTo: focusedLive ? transfers?.live.get(focusedLive.orderId)?.toName ?? null : null,
-            mayAct: admin,
-          })}
-          colleagues={board.members.filter((m) => m.profileId !== focused.member?.profileId)}
           offer={
             focusedLive && focusedLive.transferredToName === null
               ? transfers?.live.get(focusedLive.orderId) ?? null
               : null
           }
           mayWithdraw={
-            admin ||
-            (focusedLive
+            focusedLive
               ? transfers?.live.get(focusedLive.orderId)?.fromProfileId === me.profileId
-              : false)
+              : false
           }
           pending={busy}
           onGive={() => {
@@ -752,10 +738,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                 toName: member.name,
               }),
             );
-          }}
-          onPassOn={(toProfileId, toName) => {
-            if (!focusedLive) return;
-            void enqueue(() => pass.run({ orderId: focusedLive.orderId, toProfileId, toName }));
           }}
           onWithdraw={(id) => void enqueue(() => decide.run({ id, status: "cancelled" }))}
         />
@@ -788,9 +770,9 @@ function MenuPanel({
   // The reason, when there is one, already says the window is shut and when it
   // shut, in the database's own words.
   //
-  // An admin never gets a reason -- they are inside the window on every day --
-  // so without the tense this panel told the one person who watches cutoffs
-  // that a day "closes" at a time that went by this morning.
+  // A day with no menu, or one still open, gets no reason at all, so without
+  // the tense this panel told somebody that a day "closes" at a time that went
+  // by this morning.
   const shut = day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt);
   const when =
     reason ??

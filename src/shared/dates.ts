@@ -49,6 +49,38 @@ export function daysApart(a: string, b: string): number {
   );
 }
 
+/**
+ * ISO 8601 week number, 1 to 53. The same answer Postgres gives for
+ * `to_char(d, 'IW')`, which is where the number on a billing statement's
+ * reference comes from.
+ *
+ * Takes a service date, so the week is the office's rather than the reader's:
+ * a service date is already a day in the org's zone and never becomes a local
+ * `Date` on the way through here.
+ *
+ * The year at the boundary is decided by the week's Thursday, because ISO week
+ * 1 is the week holding the first Thursday of the year. So 28/12/2026 is week
+ * 53 of 2026 and 04/01/2027 is week 1 of 2027, and neither is week 1 of the
+ * year its own digits name.
+ */
+export function isoWeek(isoDate: string): number {
+  const thursday = addDays(isoDate, 4 - isoWeekday(isoDate));
+  return Math.floor(daysApart(`${thursday.slice(0, 4)}-01-01`, thursday) / 7) + 1;
+}
+
+/**
+ * The ISO week a displayed week of seven days belongs to, given the day the
+ * office's week starts on.
+ *
+ * Read from the middle of the range rather than its first day. An office whose
+ * billing week starts on Sunday shows Sunday to Saturday, and that Sunday is
+ * the tail of the ISO week that has just ended rather than the one its lunches
+ * are in.
+ */
+export function weekNumberOf(weekStartIso: string): number {
+  return isoWeek(addDays(weekStartIso, 3));
+}
+
 /** Start of the billing week containing `isoDate`, given the org's week start. */
 export function weekStart(isoDate: string, weekStartsOn = 1): string {
   const shift = (isoWeekday(isoDate) - weekStartsOn + 7) % 7;

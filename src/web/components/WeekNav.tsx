@@ -12,6 +12,7 @@ import { Button } from "@/ui";
  */
 export function WeekNav({
   label,
+  weekNumber,
   away,
   onPrev,
   onNext,
@@ -19,6 +20,11 @@ export function WeekNav({
   children,
 }: {
   label: string;
+  /**
+   * The ISO week the range sits in. Its own prop rather than part of `label`,
+   * because the two are not read the same way and this component decides that.
+   */
+  weekNumber: number;
   /** Whether the reader has navigated off the current week. */
   away: boolean;
   onPrev: () => void;
@@ -32,7 +38,17 @@ export function WeekNav({
       <Button variant="ghost" size="icon" aria-label="Previous week" onClick={onPrev}>
         <ChevronLeftIcon />
       </Button>
-      <h1 className="min-w-32 text-center text-lg font-semibold tabular">{label}</h1>
+      {/* The range is where you are; the week number is how the rest of the
+          system names the same week, in the middle of a payment reference.
+          Under it and quiet, because it is there to be looked up rather than
+          read. `min-w-32` moves to the block, which is what is sized now;
+          measured over every week of 2026 in both ranges this screen builds,
+          the week line is never the widest line, so it adds no width of its
+          own. */}
+      <div className="min-w-32 text-center">
+        <h1 className="text-lg font-semibold tabular">{label}</h1>
+        <p className="text-xs text-muted tabular">Week {weekNumber}</p>
+      </div>
       <Button variant="ghost" size="icon" aria-label="Next week" onClick={onNext}>
         <ChevronRightIcon />
       </Button>

@@ -17,6 +17,12 @@ export type Org = {
   currency: Currency;
   defaultCutoffLocalTime: string;
   billingWeekStartsOn: number;
+  /**
+   * Four characters from the slug, the office's half of a payment reference.
+   * Optional because a payload written before the column existed has none, and
+   * a reference simply drops the segment rather than inventing one.
+   */
+  shortCode?: string;
   /** HH:MM. When the kitchen starts cooking, after which a day cannot reopen. */
   businessDayStartsAt: string;
   /** HH:MM. When lunch is over, after which a member cannot pass a meal on. */
@@ -31,7 +37,11 @@ export type Me = {
     org: Org;
     role: Role;
     shortCode: string;
-    /** `LUNCH` + the short code. Stable for good: the bank memo they reuse. */
+    /**
+     * `LUNCH` + the short code, exactly as the database matches on it. What a
+     * member is shown is composed from it by `composePaymentRef`, and what
+     * arrives back from the bank is folded down to this.
+     */
     paymentRef: string;
     displayName: string;
   }>;

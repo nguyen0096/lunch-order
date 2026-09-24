@@ -6,7 +6,14 @@ import { cellKey, type Board, type BoardDay, type TransferRow } from "../src/web
 import * as api from "../src/web/api.js";
 import { columnLabel, longDayLabel } from "../src/web/components/boardModel.js";
 import { formatMoney } from "../src/shared/money.js";
-import { addDays, formatDay, todayIn, weekStart, zonedTimeToInstant } from "../src/shared/dates.js";
+import {
+  addDays,
+  formatDay,
+  todayIn,
+  weekNumberOf,
+  weekStart,
+  zonedTimeToInstant,
+} from "../src/shared/dates.js";
 import type { Me, Org, Role } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -527,7 +534,14 @@ describe("Board, handing a meal over", () => {
     expect(createTransfer).not.toHaveBeenCalled();
   });
 
-  it("adds the recording form for an admin, which is the one picker left", async () => {
+  /**
+   * The inverse of what this asserted. An admin used to get a
+   * `Pass Tèo's Phở bò to someone` form here, with the last recipient picker
+   * on the board. This screen is where an admin orders their own lunch and
+   * has no admin-only behaviour, so the form is gone; the absence is the rule,
+   * which is why the test stayed and turned around.
+   */
+  it("gives an admin the same one direction, and no recording form", async () => {
     const cells = myCell();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -544,23 +558,23 @@ describe("Board, handing a meal over", () => {
 
     await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
     const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByRole("heading", { name: "Pass Tèo's Phở bò to someone" }),
-    ).toBeInTheDocument();
-    expect(within(dialog).getByText(/takes effect immediately/)).toBeInTheDocument();
-    // Ordering for somebody else is not on offer here; the handover is.
-    expect(within(dialog).queryByRole("button", { name: "Surprise me" })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("heading", { name: /^Pass Tèo's/ })).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/takes effect immediately/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("combobox")).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole("button", { name: "Pass on" })).not.toBeInTheDocument();
 
-    await userEvent.click(within(dialog).getByRole("combobox"));
-    await userEvent.type(await screen.findByPlaceholderText("Type a name"), "Din");
-    await userEvent.click(await screen.findByRole("option", { name: "Dinh" }));
-    await userEvent.click(within(dialog).getByRole("button", { name: "Pass on" }));
-
+    // What is left moves the admin's own meal, exactly as it would a member's.
+    await userEvent.click(within(dialog).getByRole("button", { name: "Give Tèo my Cơm gà" }));
     await waitFor(() => expect(createTransfer).toHaveBeenCalledTimes(1));
-    expect(createTransfer.mock.calls[0]?.[0]).toMatchObject({ orderId: 8, toProfileId: "dinh" });
+    expect(createTransfer.mock.calls[0]?.[0]).toMatchObject({ orderId: 42, toProfileId: "teo" });
   });
 
-  it("refuses to send a meal nowhere, and says so on the control", async () => {
+  /**
+   * This asserted the recording form's own refusal, `Choose who it goes to`.
+   * With the form gone the question worth asking is what an admin gets
+   * instead, and the answer is a member's sentence about a member's own meal.
+   */
+  it("tells an admin with nothing ordered what it tells anybody else", async () => {
     const cells = new Map<string, import("../src/web/api.js").BoardCell>();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -576,11 +590,22 @@ describe("Board, handing a meal over", () => {
     renderBoard("admin");
 
     await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
-    const send = within(await screen.findByRole("dialog")).getByRole("button", { name: "Pass on" });
-    expect(send).toHaveAccessibleDescription("Choose who it goes to");
+    const dialog = await screen.findByRole("dialog");
+    const give = within(dialog).getByRole("button", { name: "Give Tèo my lunch" });
+    expect(give).toHaveAccessibleDescription(`You have nothing ordered on ${formatDay(WED)}`);
+    expect(within(dialog).queryByRole("button", { name: "Pass on" })).not.toBeInTheDocument();
+
+    await userEvent.click(give);
+    expect(createTransfer).not.toHaveBeenCalled();
   });
 
-  it("keeps a pending offer legible on the board, and reachable to withdraw", async () => {
+  /**
+   * Half of this is unchanged: an offer is legible on the board in words.
+   * The withdraw half is inverted. It used to open this sheet as an admin and
+   * take back somebody else's offer; an offer belongs to the person who made
+   * it, and that person takes it back from their own cell.
+   */
+  it("keeps a pending offer legible on the board, and leaves it to whoever made it", async () => {
     const cells = new Map<string, import("../src/web/api.js").BoardCell>();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -621,6 +646,38 @@ describe("Board, handing a meal over", () => {
     expect(within(cell).getByText("to Dinh")).toBeInTheDocument();
 
     await userEvent.click(cell);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Tèo offered this to Dinh");
+    expect(within(dialog).queryByRole("button", { name: "Withdraw" })).not.toBeInTheDocument();
+    expect(decideTransfer).not.toHaveBeenCalled();
+  });
+
+  it("lets the person who made an offer take it back, from their own cell", async () => {
+    const offer: TransferRow = {
+      id: 3,
+      orderId: 42,
+      serviceDate: WED,
+      status: "pending",
+      fromProfileId: "me",
+      fromName: "Neyu",
+      toProfileId: "teo",
+      toName: "Tèo",
+      dishName: "Cơm gà",
+      amountMinor: 45_000,
+      reason: null,
+      createdAt: "2026-09-22T09:00:00Z",
+    };
+    serve(makeBoard({ cells: myCell() }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      outgoing: [offer],
+      live: new Map([[42, offer]]),
+    }));
+    renderBoard();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: `${formatDay(WED)}: Cơm gà. Offered to Tèo` }),
+    );
     await userEvent.click(
       within(await screen.findByRole("dialog")).getByRole("button", { name: "Withdraw" }),
     );
@@ -683,11 +740,12 @@ describe("Board, handing a meal over", () => {
       transferredToName: null,
     });
     serve(makeBoard({ cells }));
-    renderBoard("admin");
+    renderBoard();
 
     await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
-    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("combobox"));
-    await userEvent.click(await screen.findByRole("option", { name: "Dinh" }));
+    expect(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Give Tèo my Cơm gà" }),
+    ).toBeInTheDocument();
     await userEvent.keyboard("{Escape}");
 
     await userEvent.click(
@@ -980,6 +1038,22 @@ describe("Board, week navigation", () => {
     await waitFor(() =>
       expect(screen.queryByRole("button", { name: "This week" })).not.toBeInTheDocument(),
     );
+  });
+
+  /**
+   * The digits on a billing statement's reference are this number, and this is
+   * the only place in the app that spells it out. A payer looking at their own
+   * bank history has nothing else to match it against.
+   */
+  it("names the ISO week under the range, and keeps it in step with the arrows", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await screen.findByRole("table");
+
+    expect(screen.getByText(`Week ${weekNumberOf(MONDAY)}`)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    expect(await screen.findByText(`Week ${weekNumberOf(addDays(MONDAY, 7))}`)).toBeInTheDocument();
   });
 
   it("asks the database for the week it moved to", async () => {

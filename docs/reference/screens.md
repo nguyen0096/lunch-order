@@ -90,10 +90,10 @@ called off on, so the commonest reading of it -- these are the days with a menu
 -- was not one of the three things it meant. Colour here means one thing now,
 and that is *ordered*.
 
-An admin is inside the ordering window on every day, so `Closed` is not news to
-them and is not shown. `Cooking` and `Served` are: those two belong to the
-clock rather than the cutoff, and they bind an admin's reopen and a member's
-meal pass. See [the five stages](#the-five-stages-of-a-day).
+Every word is the same for everybody. This board is where an admin orders
+their own lunch, so the clock binds them exactly as it binds a member, and
+there is nothing here an admin sees that a member does not. See
+[the five stages](#the-five-stages-of-a-day).
 
 **The menu panel** under the grid names one day's dishes with prices and when it
 closes, so nobody has to tap a cell to find out what is on offer. It opens on the
@@ -101,6 +101,12 @@ next day you can still order for, and a tap on any column head moves it.
 
 **Week navigation** is `‹ 22–26 Sept ›` with a "This week" reset that appears only
 once you have navigated away. One control, not a strip plus a legend plus a label.
+
+Under the range, quieter, is `Week 39`. The range is where you are; the number
+is how the rest of the system names the same week, and a person who has only
+ever seen it in the middle of a statement's payment reference has had nowhere
+to look it up. It is the ISO week of the middle of the range, so an office
+whose billing week starts on a Sunday still gets the week its lunches are in.
 
 ### Ordering
 
@@ -136,13 +142,20 @@ am out, you have mine" is usually said to somebody who was not eating anyway:
 
 | Control | Who sees it |
 | --- | --- |
-| `Give Tèo my Bún bò` | everyone. It carries `passOnReason`'s sentence when there is nothing to give |
-| `Pass Tèo's Cơm gà to someone` | admins, when that person has a meal. The one place a recipient is still picked from a list |
-| `Withdraw` | whoever made the offer, and admins, when one is pending |
+| `Give Tèo my Bún bò` | everyone, and it is the only control on a colleague's cell. It carries `passOnReason`'s sentence when there is nothing to give |
+| `Withdraw` | whoever made the offer, on their own cell, when one is pending |
+
+There is no admin row, here or anywhere else on this screen. An admin orders
+their own lunch from this board exactly as a member does, and the one control
+that was theirs -- `Pass Tèo's Cơm gà to someone`, a recipient picked from a
+list -- is gone with the rest. Recording a swap between two other people is a
+correction of what was written down rather than an arrangement between two
+people, and it has no screen yet: see
+[the backlog](../backlog.md#a-board-for-adjusting-what-was-recorded).
 
 An incoming offer appears on your own cell, with Accept and Decline inline. A
-pending offer is legible on the board as the recipient's name on the cell, so an
-admin has a reason to open it.
+pending offer is legible on the board as the recipient's name on the cell, so
+nobody offers a meal that is already spoken for.
 
 Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would
@@ -151,8 +164,8 @@ need a legend, and a board that needs a legend has already lost.
 The window for a member ends when the day does, at the office's end of day.
 People remember on Thursday that Tuesday's lunch went to somebody else, but by
 Thursday Tuesday's lunch has been eaten, and recording it then is bookkeeping
-rather than an arrangement. An admin keeps the whole open billing week, which
-is what makes the correction possible at all.
+rather than an arrangement. The database keeps an admin's window open for the
+whole billing week, and nothing on this screen spends it.
 
 | State | |
 | --- | --- |

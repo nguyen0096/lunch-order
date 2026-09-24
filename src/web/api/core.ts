@@ -11,6 +11,7 @@ type OrgRow = {
   currency: string; currency_minor_units: number; locale: string;
   default_cutoff_local_time: string; billing_week_starts_on: number;
   business_day_starts_at: string; business_day_ends_at: string;
+  short_code: string | null;
 };
 
 function toOrg(r: OrgRow): Org {
@@ -26,6 +27,9 @@ function toOrg(r: OrgRow): Org {
     // stages existed reads back null until it is next written.
     businessDayStartsAt: (r.business_day_starts_at ?? "08:30").slice(0, 5),
     businessDayEndsAt: (r.business_day_ends_at ?? "17:30").slice(0, 5),
+    // Null only for a row written before the trigger existed. The reference
+    // drops the segment rather than guessing, and still matches.
+    shortCode: r.short_code ?? undefined,
   };
 }
 
@@ -48,7 +52,7 @@ export async function fetchMe(): Promise<Me | null> {
       `role, short_code, display_name, payment_ref,
        organizations ( id, slug, name, timezone, currency, currency_minor_units,
                        locale, default_cutoff_local_time, billing_week_starts_on,
-                       business_day_starts_at, business_day_ends_at )`,
+                       business_day_starts_at, business_day_ends_at, short_code )`,
     )
     .eq("profile_id", auth.user.id)
     .eq("status", "active");

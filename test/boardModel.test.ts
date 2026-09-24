@@ -198,7 +198,6 @@ describe("passOnReason", () => {
       serviceDate: "2026-09-23",
       openWeekStart: "2026-09-21",
       offeredTo: null,
-      mayAct: true,
       ...over,
     });
 
@@ -241,8 +240,17 @@ describe("passOnReason", () => {
     expect(ask({ offeredTo: "Dinh" })).toBe("Already offered to Dinh");
   });
 
-  it("refuses a member acting on somebody else's meal", () => {
-    expect(ask({ mayAct: false })).toBe("Only an admin can pass on somebody else's meal");
+  /**
+   * This used to answer "Only an admin can pass on somebody else's meal" when
+   * a `mayAct` flag was false, for the form an admin had for recording a swap
+   * between two other people. The form is gone, so the flag is gone with it:
+   * the board only ever asks this about the reader's own meal. Asserted at
+   * runtime as well as by the compiler, so a flag reintroduced by name cannot
+   * quietly start refusing people again.
+   */
+  it("has no flag for who is asking, so nothing here refuses a non-admin", () => {
+    const stale: object = { mayAct: false };
+    expect(ask({ ...stale })).toBeNull();
   });
 });
 

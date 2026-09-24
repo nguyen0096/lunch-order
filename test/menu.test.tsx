@@ -6,7 +6,14 @@ import * as api from "../src/web/api.js";
 import type { EditableMenu, PublishImpact } from "../src/web/api.js";
 import type { CatererOrder } from "../src/shared/catererOrder.js";
 import { cutoffLabel, longDay, shortDay, weekdayName } from "../src/web/components/menu/labels.js";
-import { addDays, isoWeekday, todayIn, zonedTimeToInstant } from "../src/shared/dates.js";
+import {
+  addDays,
+  isoWeekday,
+  todayIn,
+  weekNumberOf,
+  weekStart,
+  zonedTimeToInstant,
+} from "../src/shared/dates.js";
 import type { Me, Org } from "../src/shared/types.js";
 
 vi.mock("sonner", () => ({
@@ -429,6 +436,18 @@ describe("Checking the list", () => {
 });
 
 describe("Changing the service date", () => {
+  // `WeekNav` is one control on two screens, so the week number the board
+  // shows is the week number here.
+  it("carries the week number the board carries", async () => {
+    serve();
+    renderMenu();
+    await ready();
+
+    expect(
+      screen.getByText(`Week ${weekNumberOf(weekStart(DATE, ORG.billingWeekStartsOn))}`),
+    ).toBeInTheDocument();
+  });
+
   it("loads that day's dishes but keeps the message somebody just pasted", async () => {
     const user = userEvent.setup();
     serve();
