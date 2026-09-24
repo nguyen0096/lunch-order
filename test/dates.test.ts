@@ -114,3 +114,42 @@ describe("formatDay", () => {
     expect(() => formatDay("")).toThrow(TypeError);
   });
 });
+
+describe("zonedTimeToInstant across a DST seam", () => {
+  /**
+   * The hour that does not exist, and the hour that happens twice.
+   *
+   * America/New_York springs forward at 02:00 on 8 March 2026 and falls back
+   * at 02:00 on 1 November 2026. These are the two mornings a year where
+   * guessing the instant and correcting it once by the offset at the guess
+   * lands on the wrong side. Vietnam has no DST, so nothing in this office
+   * would ever have shown it.
+   */
+  it("resolves a wall time inside the skipped hour to a real instant", () => {
+    // 02:30 on the spring-forward morning never happens. There is no correct
+    // answer, only a defensible one, and what matters is that it is a real
+    // instant on that morning rather than one an hour outside it.
+    const at = zonedTimeToInstant("2026-03-08", "02:30", "America/New_York");
+    expect(Number.isNaN(at.getTime())).toBe(false);
+    expect(at.toISOString().slice(0, 10)).toBe("2026-03-08");
+  });
+
+  it("puts each side of the repeated hour on its own offset", () => {
+    // 01:30 happens twice on the fall-back morning: once at UTC-4, once at
+    // UTC-5. Either is a defensible answer; an instant on the wrong DAY is not.
+    const at = zonedTimeToInstant("2026-11-01", "01:30", "America/New_York");
+    expect(at.toISOString().slice(0, 10)).toBe("2026-11-01");
+    // An hour either side of the seam has to keep its own offset.
+    expect(zonedTimeToInstant("2026-11-01", "00:30", "America/New_York").toISOString())
+      .toBe("2026-11-01T04:30:00.000Z");
+    expect(zonedTimeToInstant("2026-11-01", "03:30", "America/New_York").toISOString())
+      .toBe("2026-11-01T08:30:00.000Z");
+  });
+
+  it("is exact on either side of the spring-forward seam", () => {
+    expect(zonedTimeToInstant("2026-03-08", "01:30", "America/New_York").toISOString())
+      .toBe("2026-03-08T06:30:00.000Z");
+    expect(zonedTimeToInstant("2026-03-08", "03:30", "America/New_York").toISOString())
+      .toBe("2026-03-08T07:30:00.000Z");
+  });
+});

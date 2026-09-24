@@ -3,7 +3,14 @@
  * instant. The database stores them as `date` and the server runs in UTC, so
  * anything that reaches for the system date is wrong for part of every day.
  * These helpers are the only sanctioned way to ask "what day is it there".
+ *
+ * The calendar arithmetic below stays on ISO strings and UTC, because a
+ * service date is a label rather than an instant and converting it to a local
+ * `Date` is how it picks up a timezone it never had. Anything that genuinely
+ * involves a zone goes through `@date-fns/tz`, which knows about the two hours
+ * a year that hand-rolled offset arithmetic gets wrong.
  */
+import { TZDate } from "@date-fns/tz";
 
 /** YYYY-MM-DD in the given IANA zone. en-CA gives ISO ordering natively. */
 export function todayIn(timeZone: string, now: Date = new Date()): string {
@@ -52,38 +59,27 @@ export function weekStart(isoDate: string, weekStartsOn = 1): string {
  * The instant a local wall-clock time occurs in a given zone, as a Date.
  * Used to turn an org's "16:00 cutoff" into a real timestamptz.
  *
- * Built by probing rather than by arithmetic on a fixed offset: zones change
- * their offset, and Vietnam having no DST is not a property other customers share.
+ * `TZDate` from `@date-fns/tz` rather than arithmetic of our own. This used to
+ * guess the instant as if the wall time were UTC and then correct it by the
+ * zone's offset at that guess, in a single pass. One pass is right for every
+ * hour of the year except the ones a DST transition moves, where the offset at
+ * the guess is not the offset at the answer: an hour that is skipped forward
+ * has no instant at all, and an hour that repeats has two. Vietnam has no DST
+ * so this office would never have noticed, which is exactly the kind of bug
+ * that waits for the first customer somewhere else.
  */
 export function zonedTimeToInstant(isoDate: string, hhmm: string, timeZone: string): Date {
   const [h, min] = hhmm.split(":").map(Number);
-  if (h === undefined || min === undefined) {
+  if (h === undefined || min === undefined || Number.isNaN(h) || Number.isNaN(min)) {
     throw new TypeError(`not a HH:MM time: ${hhmm}`);
   }
   const [y, mo, d] = isoDate.split("-").map(Number);
   if (y === undefined || mo === undefined || d === undefined) {
     throw new TypeError(`not an ISO date: ${isoDate}`);
   }
-  // First guess treats the wall time as UTC, then correct by the zone's offset
-  // at that instant. One correction pass is enough for every real zone.
-  const guess = Date.UTC(y, mo - 1, d, h, min);
-  const offset = zoneOffsetMs(new Date(guess), timeZone);
-  return new Date(guess - offset);
-}
-
-function zoneOffsetMs(at: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hour12: false,
-    year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", second: "2-digit",
-  }).formatToParts(at);
-  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value);
-  const asUTC = Date.UTC(
-    get("year"), get("month") - 1, get("day"),
-    get("hour") % 24, get("minute"), get("second"),
-  );
-  return asUTC - at.getTime();
+  // Constructed IN the zone, so the fields are read as that zone's wall clock
+  // and the epoch value comes out of the library's own tz handling.
+  return new Date(new TZDate(y, mo - 1, d, h, min, 0, 0, timeZone).getTime());
 }
 
 /** Human "Mon 14 Sep" for message bodies and table headers. */
