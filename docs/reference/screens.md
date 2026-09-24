@@ -183,9 +183,9 @@ way, from `dayStage` in `shared/gating.ts` mirroring `private.day_stage`.
 | --- | --- | --- | --- |
 | `No menu` | nothing published | nothing | publish one, for a past day too |
 | `Open` | published, cutoff ahead | order, change, cancel, pass a meal | the same |
-| `Closed` | the cutoff passed | pass a meal | order for anybody, reopen |
-| `Cooking` | the office's start of day | pass a meal | order for anybody |
-| `Served` | the office's end of day | nothing | order for anybody, record a pass |
+| `Closed` | the cutoff passed | pass a meal | correct the record, never on the Board |
+| `Cooking` | the office's start of day | pass a meal | correct the record |
+| `Served` | the office's end of day | nothing | correct the record, record a pass |
 | `Cancelled` | lunch is off | nothing | nothing; no status leaves cancelled |
 
 `Cooking` and `Served` come from `business_day_starts_at` and
@@ -356,7 +356,7 @@ the date and how many people it will notify.
 | draft | editable, Publish enabled once a dish is available |
 | published | editable with a warning naming who has ordered each dish |
 | locked | read only, with the reason: orders have gone to the caterer |
-| cooking, served | as locked, and reopening is no longer offered |
+| cooking, served | the same; nothing on this screen reopens a day |
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |
 | cutoff after the meal, or being moved into the past | Publish unavailable, carrying the reason. The database refuses neither |
 

@@ -437,28 +437,22 @@ export async function fetchMenuCalendar(args: {
 }
 
 /**
- * Move a menu between statuses, for the transitions the app never offered.
+ * Call lunch off for a day.
  *
- * `enforce_menu_lifecycle` is the authority on which are legal and refuses the
+ * The only status change the app makes. Un-publishing went first (a published
+ * menu is editable in place, so it only ever hid a day that was still being
+ * cooked) and reopening after it: a day whose ordering can reopen is a day
+ * whose headcount was never final, and the caterer already has that count.
+ *
+ * `enforce_menu_lifecycle` is the authority on what is legal and refuses the
  * rest with a sentence written for a person, so this sends the status and lets
- * the database answer. The three that matter here were all permitted from the
- * first migration and reachable from nowhere:
- *
- *   published -> draft      take it back, only while nobody has ordered
- *   locked    -> published  reopen a day the cutoff closed
- *   published/locked -> cancelled   lunch is off
- *
- * Un-publishing with orders on it is refused by the trigger, not by a check
- * here: the count can change between reading it and pressing the button, and
- * the database is the only place that sees both at once.
+ * the database answer. Cancelling after the cutoff is refused there, not by a
+ * check here: the cutoff can pass between reading it and pressing the button.
  */
-export async function setMenuStatus(args: {
-  menuId: number;
-  status: "draft" | "published" | "cancelled";
-}): Promise<void> {
+export async function cancelMenu(args: { menuId: number }): Promise<void> {
   const { error } = await supabase
     .from("menus")
-    .update({ status: args.status })
+    .update({ status: "cancelled" })
     .eq("id", args.menuId);
   if (error) throw error;
 }

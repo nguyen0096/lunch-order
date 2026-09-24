@@ -13,8 +13,8 @@ import type { Org } from "../../shared/types.js";
  *
  * Four points, not the five stages the database keeps. `locked` and `closed`
  * are one thing to the person reading this -- the headcount has gone to the
- * caterer and nothing can change -- and they differ only in whether an admin
- * may still reopen, which is an admin's business and not a dot on a line.
+ * caterer and nothing can change -- and what separates them is bookkeeping,
+ * not a dot on a line.
  */
 const POINTS = [
   { key: "ordering", label: "Ordering", of: ["draft", "open"] },

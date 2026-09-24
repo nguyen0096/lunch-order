@@ -737,6 +737,38 @@ describe("Bill, the reference as a requirement", () => {
    The transfer block: one code, and the four fields it encodes
    ========================================================================== */
 
+describe("Bill, what the code is for", () => {
+  it("is a payment while something is owed", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByRole("heading", { name: "Pay by transfer" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Top up" })).not.toBeInTheDocument();
+  });
+
+  it("is a top-up once there is nothing to pay", async () => {
+    // The same code under a balance of zero reads as a demand for money
+    // nobody owes. It is the same transfer; what it is for has changed.
+    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
+    renderBill();
+
+    expect(await screen.findByRole("heading", { name: "Top up" })).toBeInTheDocument();
+    expect(
+      screen.getByText("What you send sits on your account and comes off your next lunches."),
+    ).toBeInTheDocument();
+  });
+
+  it("is a top-up for somebody already in credit, who is the likeliest to send more", async () => {
+    serve({
+      weeks: [week({ statement: statement({ paidMinor: 280_000, status: "paid" }) })],
+    });
+    renderBill();
+
+    expect(await screen.findByText("In credit")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Top up" })).toBeInTheDocument();
+  });
+});
+
 describe("Bill, the amount to send", () => {
   it("shows what is owed and copies it as bare digits", async () => {
     const user = userEvent.setup();

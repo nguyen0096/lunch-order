@@ -105,11 +105,10 @@ is long enough for somebody to hand on a meal that is already on a plate.
 -- and remains the thing a person sets. These two stages belong to the clock,
 and the clock needs no column.
 
-**What each stage forbids.** After `locked`, a member cannot change an order;
-that was already true and `enforce_order_window` already enforced it. After
-`closed`, an admin can no longer reopen ordering, because the count has been
-spent on food. After `done`, a member can no longer record a meal passed to
-somebody else.
+**What each stage forbids.** After `locked`, nobody changes an order, admin
+included: the count has gone to the caterer, and `enforce_order_window` already
+enforced that for members. After `done`, a member can no longer record a meal
+passed to somebody else.
 
 That last rule is the one that was missing entirely. `enforce_transfer_rules`
 bounded a member's pass by the billing period and by nothing else, so a member
@@ -127,6 +126,14 @@ place, so un-publishing only ever hid a day from members while lunch went on
 being cooked, which is a state with no meaning to anybody. Calling lunch off is
 Cancel, which says so. The `published -> draft` transition is still legal in
 `enforce_menu_lifecycle`; nothing in the app reaches it.
+
+**Reopening went the same way, and further: the database refuses it.** It
+existed for the cutoff that closed a day by mistake, and it paid for that with
+a headcount that was never final, because the day an admin can reopen is a day
+the caterer has already been told about. `refuse_reopen` now refuses
+`locked -> published` outright for everybody but the service role. A day that
+was got wrong is corrected against what was actually eaten, where it reaches
+the bill, rather than by reopening ordering and calling a correction an order.
 
 ## The shape of the money
 

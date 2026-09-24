@@ -108,14 +108,13 @@ export function statusWord(status: MenuStatus): string {
 /**
  * The whole sentence a frozen menu's notice carries.
  *
- * Not `readOnlyReason` with a full stop after it: what a frozen day can still
- * become differs by status, and that is the half the old copy got wrong. A
- * locked day is exactly the day reopening exists for; a cancelled one has no
- * transition out of it at all.
+ * Not `readOnlyReason` with a full stop after it: a locked day and a cancelled
+ * one are both frozen for different reasons, and saying which is the half the
+ * old copy got wrong.
  */
 export function frozenNotice(status: MenuStatus): string | null {
   if (status === "locked") {
-    return "Orders are closed and have gone to the caterer. Reopen ordering to change dishes or prices again.";
+    return "Orders are closed and have gone to the caterer. Nothing here changes that: what actually got eaten is corrected against the day itself.";
   }
   if (status === "cancelled") {
     return "Lunch is cancelled for this day. Dishes and prices can no longer be changed, and a cancelled day cannot be reopened.";

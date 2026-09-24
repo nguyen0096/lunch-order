@@ -12,10 +12,9 @@ import {
   useAction,
   type ActionHandle,
 } from "@/ui";
-import { cutoffLabel, longDay, peopleHave, weekdayName } from "./labels.js";
-import { setMenuStatus } from "../../api.js";
+import { longDay, peopleHave, weekdayName } from "./labels.js";
+import { cancelMenu } from "../../api.js";
 import { now as appNow } from "../../../shared/clock.js";
-import { todayIn } from "../../../shared/dates.js";
 import type { MenuStatus } from "../../../shared/types.js";
 
 /**
@@ -26,9 +25,12 @@ import type { MenuStatus } from "../../../shared/types.js";
  * migration and nothing here re-implements it: each control sends a status and
  * lets the trigger answer.
  *
- * Reopening is what an admin reaches for when the cutoff closed a day by
- * mistake, so it is offered only while the day is still ahead: there is nothing
- * to order for a lunch that has already been eaten.
+ * Reopening used to sit here and is gone. Once the cutoff passes the headcount
+ * has gone to the caterer, and a day that can be reopened is a day whose count
+ * is not final for anybody: the admin who reopens it is ordering after the
+ * kitchen was told. A day that was got wrong is corrected on the admin's own
+ * screen, against what was actually eaten, where it reaches the bill directly
+ * rather than by pretending ordering is still open.
  *
  * Un-publishing used to sit here and no longer does. A published menu is
  * editable in place, so the only thing un-publishing added was hiding a day
@@ -52,7 +54,6 @@ export function StatusActions({
   serviceDate,
   orders,
   cutoffAt,
-  timeZone,
   onSettled,
 }: {
   status: MenuStatus;
@@ -62,20 +63,13 @@ export function StatusActions({
   orders: number | null;
   /** The menu's STORED cutoff, not the one being edited: this is about the day as it is. */
   cutoffAt: string;
-  timeZone: string;
   /** The status the database accepted, or null when it refused. Either way, reload. */
   onSettled: (applied: MenuStatus | null) => void;
 }) {
-  const [reopening, setReopening] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [typed, setTyped] = useState("");
 
-  const reopen = useAction(async () => setMenuStatus({ menuId, status: "published" }), {
-    success: "Reopened · people can order again",
-    onSuccess: () => setReopening(false),
-  });
-
-  const cancel = useAction(async () => setMenuStatus({ menuId, status: "cancelled" }), {
+  const cancel = useAction(async () => cancelMenu({ menuId }), {
     success: "Cancelled · lunch is off for this day",
     onSuccess: () => openCancel(false),
   });
@@ -103,24 +97,8 @@ export function StatusActions({
   // true; it is asked rather than assumed because the answer changes the sentence.
   const cutoffPassed = Date.parse(cutoffAt) <= appNow().getTime();
 
-  // The office's day, not the reader's: an admin on a trip must see the same
-  // day the kitchen is cooking for.
-  const dayHasPassed = serviceDate < todayIn(timeZone, appNow());
-
   return (
     <>
-      {status === "locked" && !dayHasPassed && (
-        <Action
-          reason={null}
-          pending={reopen.pending}
-          variant="outline"
-          size="sm"
-          onClick={() => setReopening(true)}
-        >
-          Reopen ordering
-        </Action>
-      )}
-
       {/* Outline, not danger. The loud red belongs on the button that does it,
           inside the dialog; out here it made calling lunch off the most
           prominent thing on a screen whose job is publishing a menu. */}
@@ -136,43 +114,6 @@ export function StatusActions({
           Cancel lunch
         </Action>
       )}
-
-      <Dialog open={reopening} onOpenChange={setReopening}>
-        <DialogContent className="max-h-[85dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{`Reopen ordering for ${longDay(serviceDate)}?`}</DialogTitle>
-            <DialogDescription>
-              This day goes back to published, and everybody can order from it again.
-            </DialogDescription>
-          </DialogHeader>
-
-          {cutoffPassed ? (
-            <p className="rounded-md bg-warn-subtle px-3 py-2 text-sm text-warn-subtle-fg">
-              {`Orders closed ${cutoffLabel(
-                cutoffAt,
-                timeZone,
-              )}. The hourly check locks every published day whose cutoff has gone, so move the cutoff later once this reopens, or it closes itself again within the hour.`}
-            </p>
-          ) : (
-            <p className="text-sm text-muted">
-              {`Anybody with a standing ${day} and no order yet is ordered for again.`}
-            </p>
-          )}
-
-          <DialogFooter>
-            <DialogClose asChild>
-              <Button variant="outline">Leave it closed</Button>
-            </DialogClose>
-            <Action
-              reason={null}
-              pending={reopen.pending}
-              onClick={() => void apply(reopen, "published")}
-            >
-              {reopen.pending ? "Reopening…" : "Reopen ordering"}
-            </Action>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <Dialog open={cancelling} onOpenChange={openCancel}>
         <DialogContent className="max-h-[85dvh] overflow-y-auto">

@@ -23,7 +23,7 @@ export type Org = {
    * a reference simply drops the segment rather than inventing one.
    */
   shortCode?: string;
-  /** HH:MM. When the kitchen starts cooking, after which a day cannot reopen. */
+  /** HH:MM. When the kitchen starts cooking, so the day reads as Cooking. */
   businessDayStartsAt: string;
   /** HH:MM. When lunch is over, after which a member cannot pass a meal on. */
   businessDayEndsAt: string;

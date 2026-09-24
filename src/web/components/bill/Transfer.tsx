@@ -27,6 +27,11 @@ import type { PaymentConfig } from "../../../shared/payment.js";
  * anyway. The code still carries the figure when something is owed, because
  * scan-and-confirm is the common case; it carries none when nothing is, and
  * the bank then asks.
+ *
+ * It says which of the two it is. The same code under a balance of zero reads
+ * as a demand for money nobody owes, and somebody in credit is the likeliest
+ * person of all to top up again: the heading is the difference between a bill
+ * to settle and an account to put money on.
  */
 export function Transfer({
   paymentRef,
@@ -52,128 +57,141 @@ export function Transfer({
       })
     : null;
 
+  const owing = owedMinor > 0;
+
   return (
-    <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
-      {account === null ? null : payload === null ? (
-        <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
-          The bank details saved for this office are not a valid account, so the code
-          cannot be built. Ask an admin to check them.
-        </p>
-      ) : (
-        /* The plate keeps dark modules on a light field in BOTH themes, which
-           is the polarity every scanner assumes. Inheriting `surface` would
-           invert the code after dark, and an inverted QR is one a banking app
-           may simply refuse to read. */
-        <div className="w-fit shrink-0 rounded-lg bg-accent-subtle p-3 text-accent-subtle-fg dark:bg-accent dark:text-accent-fg">
-          <QRCodeSVG
-            value={payload}
-            // The specification's four-module quiet zone. The library defaults
-            // to none, which produces a code that reads on a phone held still
-            // and fails on one held at an angle.
-            marginSize={4}
-            // M survives a fingerprint on the screen; H would push the code to
-            // a denser version for no benefit at this size.
-            level="M"
-            size={168}
-            bgColor="transparent"
-            fgColor="currentColor"
-            title={
-              owedMinor > 0
-                ? `VietQR code for ${formatMoney(owedMinor, currency)} to ${
-                    account.accountName || account.accountNumber
-                  }, reference ${paymentRef}`
-                : `VietQR code to ${
-                    account.accountName || account.accountNumber
-                  }, reference ${paymentRef}, amount up to you`
-            }
-            // `size` is the intrinsic geometry of the drawing, not a layout
-            // choice; the class is what keeps it inside a 390px screen.
-            className="h-auto max-w-full"
-          />
-        </div>
-      )}
-
-      <div className="flex min-w-0 flex-1 flex-col gap-5">
-        {/* Only when there is a figure. A row reading "Any amount" with a
-            caption explaining that your bank will ask for it restated the
-            headline directly above it, which already says there is nothing to
-            pay. The list drops to three rows and says nothing false. */}
-        {account !== null && owedMinor > 0 && (
-          <Row label="Amount">
-            <div className="flex flex-wrap items-center gap-3">
-              <p className="tabular text-text">{formatMoney(owedMinor, currency)}</p>
-              <CopyButton
-                thing="amount"
-                // Digits only. A grouping dot in a bank's amount field is
-                // read as a decimal point by some of them, and on VND that
-                // turns 180.000 into a hundred and eighty dong.
-                value={plainAmount(owedMinor, currency)}
-                success="Amount copied"
-              />
-            </div>
-            <p className="max-w-prose text-sm text-muted">
-              Send more if you like; anything above this stays on your account.
-            </p>
-          </Row>
-        )}
-
-        <Row label="Reference">
-          <div className="flex flex-wrap items-center gap-3">
-            <p className="tabular font-semibold tracking-wide text-text">{paymentRef}</p>
-            <CopyButton thing="reference" value={paymentRef} success="Reference copied" />
-          </div>
-          {/* The failure moved. With a code filling the memo in, the common
-              mistake is no longer forgetting to type the reference, it is
-              typing over it. SePay syncs only memos carrying LUNCH, so a
-              transfer without it is not money an admin can chase: it is money
-              nobody here can see. */}
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <h3 className="font-semibold text-text">{owing ? "Pay by transfer" : "Top up"}</h3>
+        {!owing && (
           <p className="max-w-prose text-sm text-muted">
-            Keep this in the transfer message. Without it the payment never reaches your
-            account here.
+            What you send sits on your account and comes off your next lunches.
           </p>
-        </Row>
+        )}
+      </div>
 
-        {account === null ? (
-          <p className="max-w-prose text-sm text-muted">
-            This office has not set up bank transfer yet. Ask an admin how they would like
-            to be paid.
+      <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
+        {account === null ? null : payload === null ? (
+          <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
+            The bank details saved for this office are not a valid account, so the code
+            cannot be built. Ask an admin to check them.
           </p>
         ) : (
-          <>
-            <Row label="Account">
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="tabular text-text">{account.accountNumber}</p>
-                <CopyButton
-                  thing="account number"
-                  value={account.accountNumber}
-                  success="Account number copied"
-                />
-              </div>
-              {/* Not a row and not copyable: the name is not in the payload at
-                  all, NAPAS resolves it at the bank. It is here to catch a
-                  mistyped BIN, which otherwise produces a code that scans
-                  perfectly and pays a stranger. */}
-              {account.accountName !== "" && (
-                <p className="text-sm text-muted">{account.accountName}</p>
-              )}
-            </Row>
-
-            <Row label="Bank">
-              <div className="flex flex-wrap items-center gap-3">
-                <p className="text-text">{bankName(account.bankBin)}</p>
-                <CopyButton
-                  thing="bank"
-                  value={bankName(account.bankBin)}
-                  success="Bank copied"
-                />
-              </div>
-            </Row>
-          </>
+          /* The plate keeps dark modules on a light field in BOTH themes, which
+             is the polarity every scanner assumes. Inheriting `surface` would
+             invert the code after dark, and an inverted QR is one a banking app
+             may simply refuse to read. */
+          <div className="w-fit shrink-0 rounded-lg bg-accent-subtle p-3 text-accent-subtle-fg dark:bg-accent dark:text-accent-fg">
+            <QRCodeSVG
+              value={payload}
+              // The specification's four-module quiet zone. The library defaults
+              // to none, which produces a code that reads on a phone held still
+              // and fails on one held at an angle.
+              marginSize={4}
+              // M survives a fingerprint on the screen; H would push the code to
+              // a denser version for no benefit at this size.
+              level="M"
+              size={168}
+              bgColor="transparent"
+              fgColor="currentColor"
+              title={
+                owedMinor > 0
+                  ? `VietQR code for ${formatMoney(owedMinor, currency)} to ${
+                      account.accountName || account.accountNumber
+                    }, reference ${paymentRef}`
+                  : `VietQR code to ${
+                      account.accountName || account.accountNumber
+                    }, reference ${paymentRef}, amount up to you`
+              }
+              // `size` is the intrinsic geometry of the drawing, not a layout
+              // choice; the class is what keeps it inside a 390px screen.
+              className="h-auto max-w-full"
+            />
+          </div>
         )}
 
-        {payment.note !== null && (
-          <p className="max-w-prose text-sm text-muted">{payment.note}</p>
-        )}
+        <div className="flex min-w-0 flex-1 flex-col gap-5">
+          {/* Only when there is a figure. A row reading "Any amount" with a
+              caption explaining that your bank will ask for it restated the
+              headline directly above it, which already says there is nothing to
+              pay. The list drops to three rows and says nothing false. */}
+          {account !== null && owedMinor > 0 && (
+            <Row label="Amount">
+              <div className="flex flex-wrap items-center gap-3">
+                <p className="tabular text-text">{formatMoney(owedMinor, currency)}</p>
+                <CopyButton
+                  thing="amount"
+                  // Digits only. A grouping dot in a bank's amount field is
+                  // read as a decimal point by some of them, and on VND that
+                  // turns 180.000 into a hundred and eighty dong.
+                  value={plainAmount(owedMinor, currency)}
+                  success="Amount copied"
+                />
+              </div>
+              <p className="max-w-prose text-sm text-muted">
+                Send more if you like; anything above this stays on your account.
+              </p>
+            </Row>
+          )}
+
+          <Row label="Reference">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="tabular font-semibold tracking-wide text-text">{paymentRef}</p>
+              <CopyButton thing="reference" value={paymentRef} success="Reference copied" />
+            </div>
+            {/* The failure moved. With a code filling the memo in, the common
+                mistake is no longer forgetting to type the reference, it is
+                typing over it. SePay syncs only memos carrying LUNCH, so a
+                transfer without it is not money an admin can chase: it is money
+                nobody here can see. */}
+            <p className="max-w-prose text-sm text-muted">
+              Keep this in the transfer message. Without it the payment never reaches your
+              account here.
+            </p>
+          </Row>
+
+          {account === null ? (
+            <p className="max-w-prose text-sm text-muted">
+              This office has not set up bank transfer yet. Ask an admin how they would like
+              to be paid.
+            </p>
+          ) : (
+            <>
+              <Row label="Account">
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="tabular text-text">{account.accountNumber}</p>
+                  <CopyButton
+                    thing="account number"
+                    value={account.accountNumber}
+                    success="Account number copied"
+                  />
+                </div>
+                {/* Not a row and not copyable: the name is not in the payload at
+                    all, NAPAS resolves it at the bank. It is here to catch a
+                    mistyped BIN, which otherwise produces a code that scans
+                    perfectly and pays a stranger. */}
+                {account.accountName !== "" && (
+                  <p className="text-sm text-muted">{account.accountName}</p>
+                )}
+              </Row>
+
+              <Row label="Bank">
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="text-text">{bankName(account.bankBin)}</p>
+                  <CopyButton
+                    thing="bank"
+                    value={bankName(account.bankBin)}
+                    success="Bank copied"
+                  />
+                </div>
+              </Row>
+            </>
+          )}
+
+          {payment.note !== null && (
+            <p className="max-w-prose text-sm text-muted">{payment.note}</p>
+          )}
+        </div>
       </div>
     </div>
   );

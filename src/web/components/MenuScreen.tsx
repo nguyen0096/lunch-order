@@ -443,7 +443,6 @@ export function MenuScreen({ me, org }: ScreenProps) {
               serviceDate={serviceDate}
               orders={impact?.orders ?? null}
               cutoffAt={menu.orderCutoffAt}
-              timeZone={org.timezone}
               onSettled={statusSettled}
             />
           </div>

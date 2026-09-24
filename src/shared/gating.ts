@@ -29,9 +29,9 @@ export type DayStage =
 /**
  * Which stage a day is in.
  *
- * `locked` is the cutoff. `closed` is the office's start of day, when the
- * kitchen begins and ordering can no longer be reopened. `done` is its end of
- * day, after which a member cannot record a meal passed to somebody else.
+ * `locked` is the cutoff, after which nobody orders. `closed` is the office's
+ * start of day, when the kitchen begins. `done` is its end of day, after which
+ * a member cannot record a meal passed to somebody else.
  *
  * The last two are derived from the clock rather than stored, so they are
  * right to the second rather than right to the last hourly tick -- which

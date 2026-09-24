@@ -35,7 +35,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchCatererOrder: vi.fn(),
     publishMenu: vi.fn(),
     assistParse: vi.fn(),
-    setMenuStatus: vi.fn(),
+    cancelMenu: vi.fn(),
   };
 });
 
@@ -45,7 +45,7 @@ const fetchPublishImpact = vi.mocked(api.fetchPublishImpact);
 const fetchDishTakers = vi.mocked(api.fetchDishTakers);
 const fetchCatererOrder = vi.mocked(api.fetchCatererOrder);
 const publishMenu = vi.mocked(api.publishMenu);
-const setMenuStatus = vi.mocked(api.setMenuStatus);
+const cancelMenu = vi.mocked(api.cancelMenu);
 const assistParse = vi.mocked(api.assistParse);
 const success = vi.mocked(toast.success);
 const failure = vi.mocked(toast.error);
@@ -182,8 +182,21 @@ function workingDayAfter(from: string): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // TODAY and DATE are read off the clock once, as this file loads, and every
+  // fixture hangs off them: the default cutoff is 21:00 the evening before
+  // DATE. Left on the real clock the suite reports the hour it ran at -- past
+  // 21:00 that cutoff has elapsed, so the screen bumps the default it offers
+  // and StatusActions stops offering Cancel lunch. The morning of TODAY puts
+  // the clock back where the fixtures assume it is. `shouldAdvanceTime` is
+  // what keeps user-event's own waits moving.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(zonedTimeToInstant(TODAY, "08:00", TZ));
   publishMenu.mockResolvedValue({ menuId: 11, dishes: 3, standingOrders: 3, wasUpdate: false });
-  setMenuStatus.mockResolvedValue(undefined);
+  cancelMenu.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 /* --------------------------------------------------------- loading, failure */
@@ -554,13 +567,12 @@ describe("When orders close", () => {
   });
 
   it("publishes the cutoff the admin typed", async () => {
-    // The clock is pinned, and it has to be. DATE is tomorrow, so the cutoff
-    // day below is today -- and once the wall clock passed 12:00 in the office's
-    // zone, cutoffProblem correctly called this cutoff elapsed, Publish went
-    // unavailable and the test failed. It was green all morning and red every
-    // afternoon: a test that reports the time of day rather than the code.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(zonedTimeToInstant(addDays(DATE, -1), "08:00", TZ));
+    // The clock has to be pinned, and the file-wide freeze is what pins it.
+    // DATE is tomorrow, so the cutoff day below is today -- and once the wall
+    // clock passed 12:00 in the office's zone, cutoffProblem correctly called
+    // this cutoff elapsed, Publish went unavailable and the test failed. It was
+    // green all morning and red every afternoon: a test that reports the time
+    // of day rather than the code.
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     serve({ menu: menu() });
     renderMenu();
@@ -580,14 +592,15 @@ describe("When orders close", () => {
     expect(publishMenu.mock.calls[0]?.[0].cutoffAt).toBe(
       zonedTimeToInstant(addDays(DATE, -1), "12:00", TZ).toISOString(),
     );
-    vi.useRealTimers();
   });
 
   it("offers a cutoff that has not already passed for a menu written today", async () => {
     // The default is "the evening before", which for a menu written on the day
     // itself is already gone. Offering it and then refusing to publish it is
     // the screen creating the problem and blaming the person for it.
-    vi.useFakeTimers({ shouldAdvanceTime: true });
+    //
+    // Moved off the file-wide morning on purpose: the bump only happens when
+    // the evening before has gone, so an afternoon is the whole test.
     vi.setSystemTime(zonedTimeToInstant(TODAY, "15:36", TZ));
     serve({ menu: null });
     renderMenu();
@@ -602,7 +615,6 @@ describe("When orders close", () => {
     // Publish is still unavailable, but for the honest reason -- there are no
     // dishes yet -- and no longer because of a cutoff the screen chose itself.
     expect(screen.getByText("Add at least one dish")).toBeInTheDocument();
-    vi.useRealTimers();
   });
 
   it("does not call an elapsed cutoff a mistake on a day that is already over", async () => {
@@ -1002,118 +1014,42 @@ describe("Changing the menu's status", () => {
     fetchCatererOrder.mockResolvedValue({ serviceDate: DATE, lines: [], unchosen: 0 });
   }
 
-  const reopenButton = () => screen.getByRole("button", { name: "Reopen ordering" });
   const cancelButton = () => screen.getByRole("button", { name: "Cancel lunch" });
 
-  /* ------------------------------------------------------------- reopening */
+  /* --------------------------------------------------- reopening, removed */
 
-  it("reopens a locked day, and the badge stops saying Locked", async () => {
-    const user = userEvent.setup();
-    serveChange(
-      menu({ status: "locked", orderCutoffAt: past() }),
-      menu({ status: "published", orderCutoffAt: past() }),
-    );
+  it("offers no way to reopen a day the cutoff has closed", async () => {
+    // Reopening let an admin take back a count the caterer already has, which
+    // is ordering after the kitchen was told. A day got wrong is corrected
+    // against what was eaten, not by pretending ordering is still open.
+    serve({ menu: menu({ status: "locked", orderCutoffAt: past() }) });
     renderMenu();
     await ready();
 
     expect(screen.getByText("Locked")).toBeInTheDocument();
-    await user.click(reopenButton());
-
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByRole("heading")).toHaveTextContent(
-      /^Reopen ordering for \w+ \d+ \w+\?$/,
-    );
-    expect(setMenuStatus).not.toHaveBeenCalled();
-
-    await user.click(within(dialog).getByRole("button", { name: "Reopen ordering" }));
-
-    await waitFor(() =>
-      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "published" }),
-    );
-    expect(await screen.findByText("Published")).toBeInTheDocument();
-    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
-    expect(success).toHaveBeenCalledWith("Reopened · people can order again");
+    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
   });
 
-  it("shows the new status at once rather than a stale badge while the reload runs", async () => {
-    const user = userEvent.setup();
-    fetchMenuEditor
-      .mockResolvedValueOnce(menu({ status: "locked", orderCutoffAt: past() }))
-      .mockReturnValue(new Promise(() => {}));
-    fetchMenuCalendar.mockResolvedValue(new Map());
-    fetchPublishImpact.mockResolvedValue(impact());
+  it("offers no way to reopen even while the day is still ahead", async () => {
+    serve({ menu: menu({ status: "locked", orderCutoffAt: future() }) });
     renderMenu();
     await ready();
 
-    await user.click(reopenButton());
-    await user.click(
-      within(await screen.findByRole("dialog")).getByRole("button", { name: "Reopen ordering" }),
-    );
-
-    // The reload has not landed and never will here. A badge still reading
-    // Locked over a menu the database has already published is the lie.
-    expect(await screen.findByText("Published")).toBeInTheDocument();
-    expect(screen.queryByText("Locked")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reopen/i })).not.toBeInTheDocument();
   });
 
-  it("says the hourly check will close the day again unless the cutoff moves", async () => {
-    const user = userEvent.setup();
-    serveChange(
-      menu({ status: "locked", orderCutoffAt: past() }),
-      menu({ status: "published", orderCutoffAt: past() }),
-    );
-    renderMenu();
-    await ready();
-
-    await user.click(reopenButton());
-    const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByText(/locks every published day whose cutoff has gone/),
-    ).toBeInTheDocument();
-  });
-
-  it("names the standing orders instead when the cutoff has not passed", async () => {
-    const user = userEvent.setup();
-    serveChange(
-      menu({ status: "locked", orderCutoffAt: future() }),
-      menu({ status: "published", orderCutoffAt: future() }),
-    );
-    renderMenu();
-    await ready();
-
-    await user.click(reopenButton());
-    const dialog = await screen.findByRole("dialog");
-    expect(
-      within(dialog).getByText(`Anybody with a standing ${DAY} and no order yet is ordered for again.`),
-    ).toBeInTheDocument();
-    expect(within(dialog).queryByText(/hourly check/)).not.toBeInTheDocument();
-  });
-
-  it("writes nothing when the reopen confirmation is refused", async () => {
-    const user = userEvent.setup();
-    serve({ menu: menu({ status: "locked" }) });
-    renderMenu();
-    await ready();
-
-    await user.click(reopenButton());
-    const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Leave it closed" }));
-
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(setMenuStatus).not.toHaveBeenCalled();
-  });
-
-  it("locked: the read-only notice points at reopening rather than calling it final", async () => {
+  it("locked: the read-only notice is final rather than pointing at a way back", async () => {
     serve({ menu: menu({ status: "locked" }) });
     renderMenu();
     await ready();
 
     expect(
       screen.getByText(
-        "Orders are closed and have gone to the caterer. Reopen ordering to change dishes or prices again.",
+        "Orders are closed and have gone to the caterer. Nothing here changes that: " +
+          "what actually got eaten is corrected against the day itself.",
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/can no longer be changed/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Reopen ordering/)).not.toBeInTheDocument();
   });
 
   /* ------------------------------------------------- un-publishing, removed */
@@ -1146,13 +1082,13 @@ describe("Changing the menu's status", () => {
       "true",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
-    expect(setMenuStatus).not.toHaveBeenCalled();
+    expect(cancelMenu).not.toHaveBeenCalled();
 
     await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY);
     await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
 
     await waitFor(() =>
-      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "cancelled" }),
+      expect(cancelMenu).toHaveBeenCalledWith({ menuId: 11 }),
     );
   });
 
@@ -1167,7 +1103,7 @@ describe("Changing the menu's status", () => {
     await user.type(within(dialog).getByLabelText(`Type ${DAY} to confirm`), DAY.toLowerCase());
     await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
 
-    expect(setMenuStatus).not.toHaveBeenCalled();
+    expect(cancelMenu).not.toHaveBeenCalled();
     expect(
       within(dialog).getAllByText(`Type ${DAY} exactly to confirm`).length,
     ).toBeGreaterThan(0);
@@ -1197,7 +1133,8 @@ describe("Changing the menu's status", () => {
     await ready();
 
     expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
-    expect(reopenButton()).toBeInTheDocument();
+    // And nothing in its place: a locked day has no control on this screen.
+    expect(screen.queryByRole("button", { name: /reopen/i })).not.toBeInTheDocument();
   });
 
   it("cancels a day that is still open, and the badge says Cancelled", async () => {
@@ -1212,7 +1149,7 @@ describe("Changing the menu's status", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel lunch" }));
 
     await waitFor(() =>
-      expect(setMenuStatus).toHaveBeenCalledWith({ menuId: 11, status: "cancelled" }),
+      expect(cancelMenu).toHaveBeenCalledWith({ menuId: 11 }),
     );
     expect(await screen.findByText("Cancelled")).toBeInTheDocument();
     expect(screen.queryByText("Locked")).not.toBeInTheDocument();
@@ -1233,7 +1170,7 @@ describe("Changing the menu's status", () => {
     await user.click(cancelButton());
     dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByLabelText(`Type ${DAY} to confirm`)).toHaveValue("");
-    expect(setMenuStatus).not.toHaveBeenCalled();
+    expect(cancelMenu).not.toHaveBeenCalled();
   });
 
   /* ------------------------------------------- which states offer which ways */
@@ -1257,17 +1194,7 @@ describe("Changing the menu's status", () => {
     expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
   });
 
-  it("locked: reopen, while the day is still ahead", async () => {
-    serve({ menu: menu({ status: "locked" }) });
-    renderMenu();
-    await ready();
-
-    expect(reopenButton()).toBeInTheDocument();
-  });
-
-  it("locked and already eaten: nothing to reopen and nothing to cancel", async () => {
-    // Reopening a day in the past invites orders for a lunch that has been
-    // served. The cutoff is what an admin reopens past, not the calendar.
+  it("locked and already eaten: nothing to cancel either", async () => {
     let gone = addDays(TODAY, -3);
     while (isoWeekday(gone) > 5) gone = addDays(gone, -1);
     serve({ menu: menu({ status: "locked" }) });
