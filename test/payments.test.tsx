@@ -144,7 +144,7 @@ const ME: Me = {
   profileId: "admin",
   fullName: "Chi",
   email: "chi@example.com",
-  orgs: [{ org: ORG, role: "admin", shortCode: "CHI", displayName: "Chi" }],
+  orgs: [{ org: ORG, role: "admin", shortCode: "CHI", paymentRef: "LUNCHCHI", displayName: "Chi" }],
 };
 
 // Testing Library collapses whitespace before matching and `formatMoney` puts a

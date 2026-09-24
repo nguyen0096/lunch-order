@@ -72,7 +72,7 @@ const ME: Me = {
   profileId: "me",
   fullName: "Nguyễn Văn A",
   email: "neyu@example.com",
-  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", displayName: "Neyu" }],
+  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
 
 const LINK = { membershipId: 3, linkToken: "tok-1", linked: false };

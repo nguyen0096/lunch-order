@@ -4,8 +4,10 @@ import {
   fetchBill,
   fetchUnpricedMeals,
   humanError,
-  isSettled,
+  creditMinor,
   outstandingMinor,
+  owedMinor,
+  type Account,
   type Bill,
   type BillStatement,
   type BillWeek,
@@ -96,14 +98,13 @@ export function BillScreen({ me, org }: ScreenProps) {
   if (bill === null) return <BillSkeleton />;
 
   const billed = bill.weeks.filter((w) => w.statement !== null);
-  // The newest unsettled week already carries every older remainder with it.
-  const lead = billed.find((w) => w.statement !== null && !isSettled(w.statement)) ?? billed[0];
-  // The week in progress, which normally has no statement yet. That absence is
-  // "nothing owed yet", not a missing row.
   const openWeek = bill.weeks.find((w) => w.periodStatus === "open" && w.statement === null);
-  const past = billed.filter((w) => w !== lead);
 
-  if (lead === undefined || lead.statement === null) {
+  const owed = owedMinor(bill.account);
+  const credit = creditMinor(bill.account);
+  const ref = me.orgs.find((o) => o.org.id === org.id)?.paymentRef ?? "";
+
+  if (billed.length === 0 && owed === 0 && credit === 0) {
     return (
       <section className="flex max-w-2xl flex-col gap-4">
         <EmptyState heading="Nothing owed yet">
@@ -118,59 +119,53 @@ export function BillScreen({ me, org }: ScreenProps) {
     );
   }
 
-  const statement = lead.statement;
-  const outstanding = outstandingMinor(statement);
-  const leadWaiting = waitingIn(lead, waiting);
-
   return (
     <section className="flex max-w-2xl flex-col gap-8">
+      {/* The account, not a week. One number settles up, one code pays it, and
+          the weeks below are the history behind it. Leading with a week meant
+          paying that week: somebody three weeks behind saw the newest number
+          and paid it, which is exactly what carry-forward was invented to
+          paper over. */}
       <article className="flex flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
         <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-          <h1 className="text-lg font-semibold">{weekLabel(lead)}</h1>
-          <StatusBadge statement={statement} />
+          <h1 className="text-lg font-semibold">Your account</h1>
+          <AccountBadge account={bill.account} />
         </header>
 
-        <Amount statement={statement} currency={org.currency} timeZone={org.timezone} />
+        <AccountAmount account={bill.account} currency={org.currency} weeks={billed} />
 
-        <WaitingNote waiting={leadWaiting} error={waitingError} />
+        {/* The count is not repeated here: every billed week below carries its
+            own note against the week the meal was eaten in, which is the
+            question somebody actually has. A failure to check at all belongs
+            up here, because it undermines this number rather than one week's. */}
+        <WaitingNote waiting={[]} error={waitingError} />
 
-        {outstanding > 0 && (
+        {owed > 0 && (
           <PaymentDetails
-            paymentRef={statement.paymentRef}
-            amountMinor={outstanding}
+            paymentRef={ref}
+            amountMinor={owed}
             currency={org.currency}
             payment={bill.payment}
           />
         )}
 
-        <BillLines
-          orgId={org.id}
-          periodId={lead.periodId}
-          profileId={me.profileId}
-          currency={org.currency}
-          lineCount={lead.lineCount}
-          waiting={leadWaiting}
-        />
       </article>
 
-      {/* Said even when the lead week is settled: "you owe nothing" and "this
-          week is still running" are two different pieces of news, and somebody
-          reading a receipt still wants to know when the next one lands. */}
-      {openWeek && openWeek !== lead && (
+      {openWeek && (
         <p className="text-sm text-muted">
           {`This week is still open. It closes ${weekdayName(addDays(openWeek.periodEnd, 1))}.`}
         </p>
       )}
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-lg font-semibold">Past weeks</h2>
-        {past.length === 0 ? (
-          <EmptyState heading="No earlier weeks">
-            A week appears here once it has been billed and the next one has started.
+        <h2 className="text-lg font-semibold">Your weeks</h2>
+        {billed.length === 0 ? (
+          <EmptyState heading="No weeks yet">
+            A week appears here once it has been billed.
           </EmptyState>
         ) : (
           <ul className="flex flex-col gap-3">
-            {past.map((week) => (
+            {billed.map((week) => (
               <li key={week.periodId}>
                 <PastWeek
                   week={week}
@@ -189,39 +184,54 @@ export function BillScreen({ me, org }: ScreenProps) {
 
 /* ------------------------------------------------------------------- parts */
 
-function Amount({
-  statement,
+/**
+ * The one number, and what it is made of.
+ *
+ * Three states, and the third is new: owing, settled, and in credit. A credit
+ * is what a top-up looks like once it is on the books, and it used to be
+ * arithmetically impossible -- `greatest(due - paid, 0)` turned every
+ * overpayment into a zero and the money disappeared.
+ */
+function AccountAmount({
+  account,
   currency,
-  timeZone,
+  weeks,
 }: {
-  statement: BillStatement;
+  account: Account;
   currency: Currency;
-  timeZone: string;
+  weeks: BillWeek[];
 }) {
-  const outstanding = outstandingMinor(statement);
-  const meals = `${statement.mealCount} ${statement.mealCount === 1 ? "meal" : "meals"}`;
+  const owed = owedMinor(account);
+  const credit = creditMinor(account);
+  const meals = weeks.reduce((n, w) => n + (w.statement?.mealCount ?? 0), 0);
+  const behind = weeks.filter(
+    (w) => w.statement !== null && outstandingMinor(w.statement) > 0,
+  ).length;
 
-  if (statement.status === "waived") {
+  if (credit > 0) {
     return (
       <div className="flex flex-col gap-1">
-        {/* The label never repeats the badge beside it: two identical words,
-            one large and one small, read as a rendering mistake. */}
-        <Headline label="Nothing to pay" amount={formatMoney(0, currency)} />
+        <Headline
+          label="In credit"
+          amount={formatMoney(credit, currency)}
+          copy={plainAmount(credit, currency)}
+        />
         <p className="text-sm text-muted">
-          {`An admin waived this week, so ${meals} cost you nothing.`}
+          You have paid ahead. This comes off your next lunches, and there is
+          nothing to transfer.
         </p>
       </div>
     );
   }
 
-  if (outstanding === 0) {
+  if (owed === 0) {
     return (
       <div className="flex flex-col gap-1">
-        <Headline label="Paid in full" amount={formatMoney(statement.totalDueMinor, currency)} />
+        <Headline label="Nothing to pay" amount={formatMoney(0, currency)} />
         <p className="text-sm text-muted">
-          {statement.paidAt === null
-            ? `${meals}, settled in full.`
-            : `${meals}, received ${dayAndMonth(statement.paidAt, timeZone)}.`}
+          {meals === 0
+            ? "Nothing has been billed to you yet."
+            : `${meals} ${meals === 1 ? "meal" : "meals"}, all settled.`}
         </p>
       </div>
     );
@@ -230,44 +240,32 @@ function Amount({
   return (
     <div className="flex flex-col gap-1">
       <Headline
-        label={statement.paidMinor > 0 ? "Still to pay" : "You owe"}
-        amount={formatMoney(outstanding, currency)}
-        copy={plainAmount(outstanding, currency)}
+        label="You owe"
+        amount={formatMoney(owed, currency)}
+        copy={plainAmount(owed, currency)}
       />
       <p className="text-sm text-muted">
-        {`${meals}, ${formatMoney(statement.mealsMinor, currency)}.`}
+        {behind <= 1
+          ? `${meals} ${meals === 1 ? "meal" : "meals"} billed, ${formatMoney(
+              account.creditedMinor,
+              currency,
+            )} received.`
+          : `Across ${behind} weeks. ${formatMoney(
+              account.chargedMinor,
+              currency,
+            )} billed, ${formatMoney(account.creditedMinor, currency)} received.`}
       </p>
-      {statement.carriedInMinor > 0 && (
-        <p className="text-sm text-muted">
-          {`Includes ${formatMoney(statement.carriedInMinor, currency)} carried over from the week before.`}
-        </p>
-      )}
-      {statement.paidMinor > 0 && (
-        <p className="text-sm text-muted">
-          {`Received so far: ${formatMoney(statement.paidMinor, currency)} of ${formatMoney(
-            statement.totalDueMinor,
-            currency,
-          )}.`}
-        </p>
-      )}
     </div>
   );
 }
 
-/**
- * The meals this total leaves out, and why.
- *
- * The caterer prices the week at the weekend, so a meal eaten on Tuesday can
- * still have no price on Friday. `run_billing` holds those orders off the bill
- * entirely rather than billing them at zero, because zero is a real price and
- * on a bill it reads as a free lunch. That is the right arithmetic and the
- * wrong silence: a total quietly missing three meals is a total somebody
- * checks against their own memory and disbelieves.
- *
- * So the number is explained rather than merely correct. Saying how many are
- * coming is also the only way somebody can tell an incomplete bill from a
- * cheap week.
- */
+/** Owing, settled, or in credit. */
+function AccountBadge({ account }: { account: Account }) {
+  if (creditMinor(account) > 0) return <Badge variant="success">In credit</Badge>;
+  if (owedMinor(account) === 0) return <Badge variant="success">Settled</Badge>;
+  return <Badge variant="warn">Unpaid</Badge>;
+}
+
 function WaitingNote({
   waiting,
   error,
@@ -310,6 +308,7 @@ function waitingIn(week: BillWeek, waiting: UnpricedMeal[]): UnpricedMeal[] {
  * that a screen reader says "you owe 180.000 ₫" rather than reading a stray
  * figure with no idea what it is.
  */
+
 function Headline({
   label,
   amount,
@@ -400,9 +399,20 @@ function PastWeek({
           <StatusBadge statement={statement} />
         </div>
       </div>
+      {/* No longer "carried into the week above": nothing is carried anywhere.
+          A week that is short is short, and the account at the top adds every
+          such week up once. */}
       {outstandingMinor(statement) > 0 && (
         <p className="text-sm text-muted">
-          {`${formatMoney(outstandingMinor(statement), org.currency)} of this is still to pay, and it is carried into the week above.`}
+          {`${formatMoney(
+            outstandingMinor(statement),
+            org.currency,
+          )} of this week is still in what you owe above.`}
+        </p>
+      )}
+      {statement.paidAt !== null && outstandingMinor(statement) === 0 && (
+        <p className="text-sm text-muted">
+          {`Settled ${dayAndMonth(statement.paidAt, org.timezone)}.`}
         </p>
       )}
       <WaitingNote waiting={waiting} error={null} />

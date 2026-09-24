@@ -345,7 +345,7 @@ describe("NoOfficeScreen", () => {
 
 describe("Landing in the new office", () => {
   const HERE: Org = { ...CREATED, id: 3, slug: "com-van-phong", name: "Cơm Văn Phòng" };
-  const member = (org: Org) => ({ org, role: "owner" as const, shortCode: "NN", displayName: "Neyu" });
+  const member = (org: Org) => ({ org, role: "owner" as const, shortCode: "NN", paymentRef: "LUNCHNN", displayName: "Neyu" });
   const me = (...orgs: Org[]) => ({
     profileId: "me",
     fullName: "Nguyễn Neyu",

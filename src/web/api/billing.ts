@@ -18,7 +18,11 @@ export type BillStatement = {
   id: number;
   mealCount: number;
   mealsMinor: number;
-  /** The unpaid remainder of the week before, rolled into this one. */
+  /**
+   * Always 0 since `money_belongs_to_a_person`. Kept on the type because
+   * `total_due_minor` is generated from it and still selected; nothing should
+   * read it. What an earlier week left unpaid lives on the account.
+   */
   carriedInMinor: number;
   totalDueMinor: number;
   /**
@@ -48,11 +52,36 @@ export type BillWeek = {
   statement: BillStatement | null;
 };
 
+/**
+ * What this person owes the office, or the office owes them.
+ *
+ * The weeks below are a history of charges; this is the one number that
+ * settles up. Negative means they are in credit -- a top-up, or an
+ * overpayment that used to be silently destroyed.
+ */
+export type Account = {
+  chargedMinor: number;
+  creditedMinor: number;
+  /** Positive is a debt, negative is credit. */
+  balanceMinor: number;
+};
+
 export type Bill = {
   /** Newest week first. */
   weeks: BillWeek[];
+  account: Account;
   payment: PaymentConfig;
 };
+
+/** What is still to pay across every week. Zero when in credit. */
+export function owedMinor(a: Account): number {
+  return Math.max(a.balanceMinor, 0);
+}
+
+/** Money in hand, if any. Zero when something is still owed. */
+export function creditMinor(a: Account): number {
+  return Math.max(-a.balanceMinor, 0);
+}
 
 /** What is still to pay. Never negative: an overpayment is not a credit here. */
 export function outstandingMinor(s: BillStatement): number {
@@ -104,7 +133,7 @@ export async function fetchBill(args: {
 }): Promise<Bill> {
   const limit = args.limit ?? 12;
 
-  const [periodsRes, statementsRes, orgRes] = await Promise.all([
+  const [periodsRes, statementsRes, orgRes, accountRes] = await Promise.all([
     supabase
       .from("billing_periods")
       .select("id, period_start, period_end, status, line_count")
@@ -127,11 +156,18 @@ export async function fetchBill(args: {
       // came back first.
       .eq("profile_id", args.profileId),
     supabase.from("organizations").select("payment_config").eq("id", args.orgId).single(),
+    supabase
+      .from("v_account_balance")
+      .select("charged_minor, credited_minor, balance_minor")
+      .eq("org_id", args.orgId)
+      .eq("profile_id", args.profileId)
+      .maybeSingle(),
   ]);
 
   if (periodsRes.error) throw periodsRes.error;
   if (statementsRes.error) throw statementsRes.error;
   if (orgRes.error) throw orgRes.error;
+  if (accountRes.error) throw accountRes.error;
 
   const byPeriod = new Map<number, BillStatement>();
   for (const r of (statementsRes.data ?? []) as StatementRow[]) {
@@ -157,6 +193,14 @@ export async function fetchBill(args: {
       lineCount: p.line_count,
       statement: byPeriod.get(p.id) ?? null,
     })),
+    // A person with no membership row here cannot happen, but a zeroed
+    // account is the right answer for "nothing charged, nothing paid"
+    // whatever the reason.
+    account: {
+      chargedMinor: accountRes.data?.charged_minor ?? 0,
+      creditedMinor: accountRes.data?.credited_minor ?? 0,
+      balanceMinor: accountRes.data?.balance_minor ?? 0,
+    },
     payment: parsePaymentConfig(orgRes.data?.payment_config),
   };
 }

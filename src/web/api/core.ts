@@ -45,7 +45,7 @@ export async function fetchMe(): Promise<Me | null> {
   const { data, error } = await supabase
     .from("memberships")
     .select(
-      `role, short_code, display_name,
+      `role, short_code, display_name, payment_ref,
        organizations ( id, slug, name, timezone, currency, currency_minor_units,
                        locale, default_cutoff_local_time, billing_week_starts_on,
                        business_day_starts_at, business_day_ends_at )`,
@@ -68,6 +68,11 @@ export async function fetchMe(): Promise<Me | null> {
         org: toOrg(org),
         role: row.role as Role,
         shortCode: row.short_code,
+        // Defaulted rather than assumed: the column arrived with
+        // `money_belongs_to_a_person` and a stale row would render an empty
+        // reference, which is the one thing on this screen that must not be
+        // wrong.
+        paymentRef: row.payment_ref ?? `LUNCH${row.short_code}`,
         displayName: row.display_name ?? profile?.full_name ?? auth.user.email ?? "",
       }];
     }),

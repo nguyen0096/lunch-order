@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { BillScreen } from "../src/web/components/BillScreen.js";
 import * as api from "../src/web/api.js";
 import type {
+  Account,
   Bill,
   BillLine,
   BillStatement,
@@ -56,7 +57,7 @@ const ME: Me = {
   profileId: "me",
   fullName: "Neyu",
   email: "neyu@example.com",
-  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", displayName: "Neyu" }],
+  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
 
 const PAYMENT: PaymentConfig = {
@@ -81,7 +82,7 @@ function statement(over: Partial<BillStatement> = {}): BillStatement {
     carriedInMinor: 0,
     totalDueMinor: 180_000,
     paidMinor: 0,
-    paymentRef: "LUNCH14NEYU",
+    paymentRef: "LUNCHNEYU",
     status: "unpaid",
     paidAt: null,
   };
@@ -110,8 +111,33 @@ const OPEN_WEEK: BillWeek = {
   statement: null,
 };
 
+/**
+ * The account, derived from the weeks unless a test says otherwise.
+ *
+ * Most of these tests are about one week and do not care about the account,
+ * and an account that contradicts the weeks beside it would make them lie. So
+ * it is computed the way the database computes it: charges are every
+ * non-waived week's meals, credits are what has been allocated against them.
+ */
+function accountFor(weeks: BillWeek[]): Account {
+  let charged = 0;
+  let credited = 0;
+  for (const w of weeks) {
+    if (w.statement === null || w.statement.status === "waived") continue;
+    charged += w.statement.mealsMinor;
+    credited += w.statement.paidMinor;
+  }
+  return { chargedMinor: charged, creditedMinor: credited, balanceMinor: charged - credited };
+}
+
 function serve(over: Partial<Bill> = {}) {
-  const bill: Bill = { weeks: [week()], payment: PAYMENT, ...over };
+  const weeks = over.weeks ?? [week()];
+  const bill: Bill = {
+    weeks,
+    account: accountFor(weeks),
+    payment: PAYMENT,
+    ...over,
+  };
   fetchBill.mockResolvedValue(bill);
   return bill;
 }
@@ -187,20 +213,22 @@ describe("Bill, nothing owed", () => {
 });
 
 describe("Bill, unpaid", () => {
-  it("leads with the amount, the reference and a code carrying both", async () => {
+  it("leads with the account, the reference and a code carrying both", async () => {
     serve({ weeks: [OPEN_WEEK, week()] });
     renderBill();
 
-    expect(await screen.findByRole("heading", { name: "14–20 September" })).toBeInTheDocument();
+    // The account, not a week. Leading with a week meant paying that week,
+    // and somebody three weeks behind paid the newest number.
+    expect(await screen.findByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(180_000));
-    expect(screen.getByText("LUNCH14NEYU")).toBeInTheDocument();
-    expect(screen.getByText("Unpaid")).toBeInTheDocument();
+    expect(screen.getByText("LUNCHNEYU")).toBeInTheDocument();
+    expect(screen.getAllByText("Unpaid").length).toBeGreaterThan(0);
 
     // The code is built here, so what it encodes is assertable: the amount the
     // member still owes and the reference that matches the payment back.
     const qr = screen.getByRole("img", { name: /VietQR code/ });
     expect(qr).toHaveTextContent(
-      `VietQR code for ${money(180_000)} to CONG TY ABC, reference LUNCH14NEYU`,
+      `VietQR code for ${money(180_000)} to CONG TY ABC, reference LUNCHNEYU`,
     );
     expect(screen.getByText("113366668888")).toBeInTheDocument();
     // 970415 is VietinBank. A phone that will not scan leaves somebody typing
@@ -209,24 +237,34 @@ describe("Bill, unpaid", () => {
     expect(screen.getByText(PAYMENT.note!)).toBeInTheDocument();
   });
 
-  it("says where the money went when a previous week was carried in", async () => {
+  it("adds two unpaid weeks up once, rather than carrying one into the other", async () => {
+    // What carry-forward used to do, done by the account instead. The old
+    // model put the older week's remainder on the newer statement as well, so
+    // the same debt sat on two rows and any sum over weeks counted it twice.
     serve({
       weeks: [
         week({
-          statement: statement({
-            mealsMinor: 180_000,
-            carriedInMinor: 90_000,
-            totalDueMinor: 270_000,
-          }),
+          periodId: 12,
+          periodStart: "2026-09-21",
+          periodEnd: "2026-09-27",
+          statement: statement({ id: 2, mealsMinor: 180_000, totalDueMinor: 180_000 }),
         }),
+        week({ statement: statement({ mealsMinor: 90_000, totalDueMinor: 90_000 }) }),
       ],
     });
     renderBill();
 
     expect(await screen.findByText("You owe")).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(270_000));
+    expect(screen.getByText(/Across 2 weeks/)).toBeInTheDocument();
+  });
+
+  it("says a week is in the total above rather than carried into another week", async () => {
+    serve({ weeks: [week({ statement: statement({ paidMinor: 50_000 }) })] });
+    renderBill();
+
     expect(
-      screen.getByText(`Includes ${money(90_000)} carried over from the week before.`),
+      await screen.findByText(`${money(130_000)} of this week is still in what you owe above.`),
     ).toBeInTheDocument();
   });
 
@@ -234,7 +272,7 @@ describe("Bill, unpaid", () => {
     serve({ payment: { vietqr: null, note: null } });
     renderBill();
 
-    expect(await screen.findByText("LUNCH14NEYU")).toBeInTheDocument();
+    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
     expect(screen.getByText(/has not set up bank transfer yet/i)).toBeInTheDocument();
   });
@@ -261,17 +299,17 @@ describe("Bill, partial", () => {
     });
     renderBill();
 
-    expect(await screen.findByText("Still to pay")).toBeInTheDocument();
-    expect(headline("Still to pay")).toHaveTextContent(money(80_000));
+    expect(await screen.findByText("You owe")).toBeInTheDocument();
+    expect(headline("You owe")).toHaveTextContent(money(80_000));
     expect(
-      screen.getByText(`Received so far: ${money(100_000)} of ${money(180_000)}.`),
+      screen.getByText(`4 meals billed, ${money(100_000)} received.`),
     ).toBeInTheDocument();
     expect(screen.getByText("Part paid")).toBeInTheDocument();
 
     // The code carries the remainder, not the original total: a second
     // transfer for the full amount is an overpayment nobody asked for.
     expect(screen.getByRole("img", { name: /VietQR code/ })).toHaveTextContent(
-      `VietQR code for ${money(80_000)} to CONG TY ABC, reference LUNCH14NEYU`,
+      `VietQR code for ${money(80_000)} to CONG TY ABC, reference LUNCHNEYU`,
     );
   });
 });
@@ -291,13 +329,14 @@ describe("Bill, paid", () => {
     });
     renderBill();
 
-    expect(await screen.findByText("Paid in full")).toBeInTheDocument();
-    expect(headline("Paid in full")).toHaveTextContent(money(180_000));
+    expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
+    expect(headline("Nothing to pay")).toHaveTextContent(money(0));
+    expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
     // 03:00Z is mid-morning in Ho Chi Minh City, which is the office's day.
-    expect(screen.getByText("4 meals, received 22 September.")).toBeInTheDocument();
+    expect(screen.getByText("Settled 22 September.")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
-    expect(screen.queryByText("LUNCH14NEYU")).not.toBeInTheDocument();
+    expect(screen.queryByText("LUNCHNEYU")).not.toBeInTheDocument();
   });
 
   it("still says the current week is running", async () => {
@@ -309,7 +348,7 @@ describe("Bill, paid", () => {
     });
     renderBill();
 
-    expect(await screen.findByText("Paid in full")).toBeInTheDocument();
+    expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
     expect(
       screen.getByText("This week is still open. It closes Monday."),
     ).toBeInTheDocument();
@@ -321,54 +360,82 @@ describe("Bill, paid", () => {
 
     expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
     expect(headline("Nothing to pay")).toHaveTextContent(money(0));
+    // The meals happened; the charge did not. Nothing to pay, and the week
+    // below still says Waived so it is clear why.
+    expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
     expect(screen.getByText("Waived")).toBeInTheDocument();
-    expect(screen.getByText(/An admin waived this week/)).toBeInTheDocument();
+    // The sentence moved to the week it is about: the account says only that
+    // there is nothing to pay, because for the account there is not.
+    expect(screen.queryByText(/An admin waived this week/)).not.toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
   });
 });
 
-describe("Bill, which week leads", () => {
-  it("leads with the unpaid week even when a newer one is still open", async () => {
+describe("Bill, the account and the weeks", () => {
+  it("leads with the account whatever the weeks are doing", async () => {
     serve({ weeks: [OPEN_WEEK, week()] });
     renderBill();
 
     const lead = await screen.findByRole("article");
-    expect(within(lead).getByRole("heading", { name: "14–20 September" })).toBeInTheDocument();
+    expect(within(lead).getByRole("heading", { name: "Your account" })).toBeInTheDocument();
     expect(within(lead).getByText("You owe")).toBeInTheDocument();
+    // No week is singled out. Which week to lead with was the question the
+    // old screen kept getting wrong, and it no longer has to answer it.
+    expect(within(lead).queryByRole("heading", { name: /September/ })).not.toBeInTheDocument();
   });
 
-  it("leads with the newest unsettled week, because the older one is carried into it", async () => {
+  it("lists every billed week, oldest debt included", async () => {
     serve({
       weeks: [
         week({
           periodId: 12,
           periodStart: "2026-09-21",
           periodEnd: "2026-09-27",
-          statement: statement({
-            id: 2,
-            paymentRef: "LUNCH21NEYU",
-            carriedInMinor: 180_000,
-            totalDueMinor: 360_000,
-          }),
+          statement: statement({ id: 2, mealsMinor: 180_000, totalDueMinor: 180_000 }),
         }),
         week(),
       ],
     });
     renderBill();
 
-    const lead = await screen.findByRole("article");
-    expect(within(lead).getByRole("heading", { name: "21–27 September" })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "Your account" });
     expect(headline("You owe")).toHaveTextContent(money(360_000));
 
-    // The older week is listed, and says plainly that it is not a second debt.
-    const past = within(screen.getByRole("list")).getAllByRole("listitem");
-    expect(past).toHaveLength(1);
-    expect(within(past[0]!).getByRole("heading", { name: "14–20 September" })).toBeInTheDocument();
+    const weeks = within(screen.getByRole("list")).getAllByRole("listitem");
+    expect(weeks).toHaveLength(2);
+    expect(within(weeks[0]!).getByRole("heading", { name: "21–27 September" })).toBeInTheDocument();
+    expect(within(weeks[1]!).getByRole("heading", { name: "14–20 September" })).toBeInTheDocument();
+  });
+
+  it("shows credit rather than clamping an overpayment to nothing", async () => {
+    // The whole point. `greatest(due - paid, 0)` used to turn this into a
+    // zero and the money left the books.
+    serve({
+      weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })],
+      account: { chargedMinor: 180_000, creditedMinor: 280_000, balanceMinor: -100_000 },
+    });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+    const card = screen.getByRole("article");
+    expect(within(card).getAllByText("In credit")).toHaveLength(2); // badge and label
     expect(
-      within(past[0]!).getByText(
-        `${money(180_000)} of this is still to pay, and it is carried into the week above.`,
-      ),
-    ).toBeInTheDocument();
+      within(card).getAllByText("In credit").map((n) => n.closest("p")).find(Boolean),
+    ).toHaveTextContent(money(100_000));
+    expect(screen.getByText(/comes off your next lunches/)).toBeInTheDocument();
+    // Nothing to transfer, so nothing to transfer with.
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("LUNCHNEYU")).not.toBeInTheDocument();
+  });
+
+  it("uses the person's own reference, not the week's", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    // It carried the ISO week and changed every Monday, so nobody could save
+    // the transfer in their banking app.
+    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
+    expect(screen.queryByText(/LUNCH\d\d/)).not.toBeInTheDocument();
   });
 });
 
@@ -377,8 +444,8 @@ describe("Bill, past weeks", () => {
     serve({ weeks: [week()] });
     renderBill();
 
-    expect(await screen.findByRole("heading", { name: "No earlier weeks" })).toBeInTheDocument();
-    expect(screen.getByText(/once it has been billed and the next one has started/i)).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Your weeks" })).toBeInTheDocument();
+    expect(within(screen.getByRole("list")).getAllByRole("listitem")).toHaveLength(1);
   });
 
   it("lists an older week with its own total and status", async () => {
@@ -404,10 +471,12 @@ describe("Bill, past weeks", () => {
     renderBill();
 
     const past = within(await screen.findByRole("list")).getAllByRole("listitem");
-    expect(past).toHaveLength(1);
-    expect(within(past[0]!).getByRole("heading", { name: "7–13 September" })).toBeInTheDocument();
-    expect(within(past[0]!).getByText(money(135_000))).toBeInTheDocument();
-    expect(within(past[0]!).getByText("Paid")).toBeInTheDocument();
+    // Both weeks, newest first. The list is the whole history now, not
+    // "everything except the one at the top".
+    expect(past).toHaveLength(2);
+    expect(within(past[1]!).getByRole("heading", { name: "7–13 September" })).toBeInTheDocument();
+    expect(within(past[1]!).getByText(money(135_000))).toBeInTheDocument();
+    expect(within(past[1]!).getByText("Paid")).toBeInTheDocument();
   });
 });
 
@@ -567,7 +636,7 @@ describe("Bill, the reference as a requirement", () => {
     serve();
     renderBill();
 
-    expect(await screen.findByText("LUNCH14NEYU")).toBeInTheDocument();
+    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
     expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
     expect(screen.getByText(REQUIRED)).toBeInTheDocument();
   });
@@ -575,7 +644,7 @@ describe("Bill, the reference as a requirement", () => {
   it("no longer promises an admin will sort an unreferenced transfer out", async () => {
     serve();
     renderBill();
-    await screen.findByText("LUNCH14NEYU");
+    await screen.findByText("LUNCHNEYU");
 
     expect(screen.queryByText(/sort out by hand/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/waits for an admin/i)).not.toBeInTheDocument();
@@ -586,7 +655,7 @@ describe("Bill, the reference as a requirement", () => {
     serve({ payment: { vietqr: null, note: null } });
     renderBill();
 
-    expect(await screen.findByText("LUNCH14NEYU")).toBeInTheDocument();
+    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
     expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
     expect(within(referenceHeading()).getByText("Required")).toBeInTheDocument();
     expect(screen.getByText(REQUIRED)).toBeInTheDocument();
@@ -621,7 +690,7 @@ describe("Bill, copying the reference", () => {
 
     await user.click(screen.getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(success).toHaveBeenCalledWith("Copied"));
-    expect(await navigator.clipboard.readText()).toBe("LUNCH14NEYU");
+    expect(await navigator.clipboard.readText()).toBe("LUNCHNEYU");
   });
 
   it("stays reachable and explains itself when the browser has no clipboard", async () => {

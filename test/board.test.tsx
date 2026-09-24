@@ -58,7 +58,7 @@ const ME: Me = {
   profileId: "me",
   fullName: "Neyu",
   email: "neyu@example.com",
-  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", displayName: "Neyu" }],
+  orgs: [{ org: ORG, role: "member", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
 
 const DISHES = [
@@ -77,9 +77,9 @@ const OPEN_CUTOFF = new Date(Date.now() + 86_400_000).toISOString();
 const PAST_CUTOFF = new Date(Date.now() - 86_400_000).toISOString();
 
 const MEMBERS = [
-  { profileId: "me", name: "Neyu", shortCode: "NEYU", isMe: true },
-  { profileId: "teo", name: "Tèo", shortCode: "TEO", isMe: false },
-  { profileId: "dinh", name: "Dinh", shortCode: "DINH", isMe: false },
+  { profileId: "me", name: "Neyu", shortCode: "NEYU", paymentRef: "LUNCHNEYU", isMe: true },
+  { profileId: "teo", name: "Tèo", shortCode: "TEO", paymentRef: "LUNCHTEO", isMe: false },
+  { profileId: "dinh", name: "Dinh", shortCode: "DINH", paymentRef: "LUNCHDINH", isMe: false },
 ];
 
 function menuDay(over: Partial<BoardDay> = {}): BoardDay {

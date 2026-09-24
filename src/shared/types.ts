@@ -27,7 +27,14 @@ export type Me = {
   profileId: string;
   fullName: string;
   email: string;
-  orgs: Array<{ org: Org; role: Role; shortCode: string; displayName: string }>;
+  orgs: Array<{
+    org: Org;
+    role: Role;
+    shortCode: string;
+    /** `LUNCH` + the short code. Stable for good: the bank memo they reuse. */
+    paymentRef: string;
+    displayName: string;
+  }>;
 };
 
 export type MenuItem = {

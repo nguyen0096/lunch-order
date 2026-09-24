@@ -61,7 +61,7 @@ const ME: Me = {
   profileId: "me",
   fullName: "Neyu",
   email: "neyu@example.com",
-  orgs: [{ org: ORG, role: "admin", shortCode: "NEYU", displayName: "Neyu" }],
+  orgs: [{ org: ORG, role: "admin", shortCode: "NEYU", paymentRef: "LUNCHNEYU", displayName: "Neyu" }],
 };
 
 const CODE = "KJ7PQ2MN";
