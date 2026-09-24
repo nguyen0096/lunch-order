@@ -316,6 +316,70 @@ looking inconsistent.
 On a phone the table keeps person, still to pay, status and the control; meals,
 billed and received drop out rather than scroll sideways.
 
+Beside Settle, one quiet link to [Corrections](#corrections-admin): settling
+bills what the week records, so a day that got it wrong is put right first.
+
+## Corrections (admin)
+
+**Job.** Put right what the app recorded for a day that is already over, before
+the week is settled.
+
+**It is not in the nav.** The way in is one quiet link on Payments, beside
+Settle, because that is where somebody is standing at the weekend when they
+notice the record and the lunch disagree. The route `#/o/<slug>/corrections` is
+real, so the page is linkable and survives a refresh, and a member who follows
+the link gets the same admin explanation every other admin page gives. The
+screen carries its own way back.
+
+The four cases it exists for, in the product owner's words: the caterer
+delivered one more portion than the app knows about because somebody ordered
+verbally; a person was marked down for a lunch they did not eat; a dish was
+served that was never on the menu; the caterer charged a price the menu did not
+say.
+
+**It opens on the most recent working day that is over**, because that is the
+day being finalised, not today. Week navigation and the day strip are the
+board's, not a third control; each day carries how many portions are recorded on
+it, which is the number an admin is checking against what arrived.
+
+**The day is a list of everybody**, the people with nothing recorded included,
+so "who did we miss" is answered by reading down it. Each row carries the dish,
+the portions, the note, the amount and where that person's account stands, and a
+row already corrected says so.
+
+| Control | What it does |
+| --- | --- |
+| Add a meal / Change | one person, one dish, one quantity, one note. The picker's last option is a dish that was never on the menu, which then asks for its price |
+| This meal did not happen | the same dialog, one step on, naming what comes off that person's bill |
+| Reprice | one dish, this day only, every line on it at once |
+| Why | one optional line on every correction, kept with it in `order_corrections` |
+
+**Every write says what it is about to do to somebody's money, in figures,
+before it does it** -- what moves, and what that person's balance would become.
+That is a preview and is worded as one. What the database returns afterwards is
+the balance, and that is the only figure the screen states as fact.
+
+**One correction, one person, one save.** No multi-row editing and no "save
+all": a rarely used tool that moves money makes each change a deliberate act,
+and the pending state blocks a second press.
+
+Repricing is the one control that reaches several people at once, so it is kept
+away from the rows and its confirmation counts the people, counts the portions,
+and states the money going onto bills and the money coming off them separately.
+A portion that carried no price at all takes the whole new one, and the
+confirmation says how many of those there are.
+
+The affected member is told by the database. The screen says so once, above the
+day, rather than on every control.
+
+| State | |
+| --- | --- |
+| loading | skeleton shaped like the list |
+| week settled | the week named, the day it closed, and nothing offered |
+| day with no menu | no price to change; a dish served anyway is still recorded against a person, with its own price |
+| meal passed to somebody else | not corrected here. The row says who pays for it now |
+| refused | the database's own sentence, in the dialog and in the toast, and the dialog stays open |
+
 ## Menu (admin)
 
 **Job.** Turn the caterer's chat message into a published menu without retyping it.

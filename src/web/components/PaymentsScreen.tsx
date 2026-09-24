@@ -261,6 +261,7 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
               the figure below is worth reading only once the week is priced. */}
           <SettleWeek
             orgId={org.id}
+            slug={org.slug}
             period={period}
             currency={org.currency}
             onSettled={() => void load()}

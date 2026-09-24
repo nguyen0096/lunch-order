@@ -89,8 +89,16 @@ What it needs:
   isolation suite needs a case per relaxed rule: a member reaching the same
   endpoint, and an admin of another office reaching this one.
 
-Until it exists, a correction is a hand-written SQL statement, which is worse
-than a screen in every way except that nobody can reach it by accident.
+**Partly built.** The Corrections screen covers a day's meals: adding one the
+app missed, changing one, removing one, recording a dish that was never on the
+menu, and repricing a dish for a day. Every correction carries an optional
+reason and lands a row in `order_corrections`, which is the audit trail this
+entry asked for. See [screens](reference/screens.md#corrections-admin).
+
+Still open: transfers. A meal that changed hands is shown and refused there
+rather than corrected, because the person who pays for it is no longer the
+person the row names, so recording a swap between two other people still has no
+home. The exploit pass above is also still owed.
 
 ## Paying in advance
 

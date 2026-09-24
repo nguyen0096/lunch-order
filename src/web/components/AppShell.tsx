@@ -23,7 +23,14 @@ import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
 import { JoinOfficeDialog } from "./JoinOfficeDialog.js";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
 
-export type Page = "board" | "bill" | "menu" | "people" | "payments" | "settings";
+export type Page =
+  | "board"
+  | "bill"
+  | "menu"
+  | "people"
+  | "payments"
+  | "corrections"
+  | "settings";
 
 /** One membership as the chrome needs it: which office, and what you are in it. */
 export type Office = { org: Org; role: Role };
@@ -212,13 +219,19 @@ export function AppShell({
  * Where the same person lands in the other office.
  *
  * Somebody comparing two bills should not be thrown back to the board on every
- * switch, so the page carries over. The two admin chores are the exception:
- * they do not exist for a plain member, and landing on the page that explains
- * that is a dead end dressed up as a destination.
+ * switch, so the page carries over. The admin pages are the exception: they do
+ * not exist for a plain member, and landing on the page that explains that is a
+ * dead end dressed up as a destination.
  */
 export function switchTarget(page: string, role: Role): Page {
   if (page === "bill" || page === "settings") return page;
-  if ((page === "menu" || page === "people" || page === "payments") && isAdmin(role)) {
+  if (
+    (page === "menu" ||
+      page === "people" ||
+      page === "payments" ||
+      page === "corrections") &&
+    isAdmin(role)
+  ) {
     return page;
   }
   return "board";

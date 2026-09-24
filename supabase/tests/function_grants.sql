@@ -29,7 +29,13 @@ insert into expected (name, anon_may) values
   ('settle_period',       false),
   ('leave_office',        false),
   ('delete_office',       false),
-  ('ensure_period',       false);
+  ('ensure_period',       false),
+  -- The corrections screen. Each one repeats the admin check itself, which is
+  -- what the grant does not say.
+  ('correct_meal',          false),
+  ('correct_meal_off_menu', false),
+  ('remove_meal',           false),
+  ('reprice_dish',          false);
 
 create temp table found as
 select p.proname::text as name,

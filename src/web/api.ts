@@ -9,6 +9,7 @@
 export * from "./api/core.js";
 export * from "./api/board.js";
 export * from "./api/billing.js";
+export * from "./api/corrections.js";
 export * from "./api/menu.js";
 export * from "./api/people.js";
 export * from "./api/settings.js";
