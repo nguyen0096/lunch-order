@@ -49,7 +49,14 @@ function TableRow({ className, ...props }: React.ComponentProps<"tr">) {
   return (
     <tr
       data-slot="table-row"
-      className={cn("transition-colors even:bg-surface-sunken/60 hover:bg-accent-subtle/50 data-[selected=true]:bg-accent-subtle", className)}
+      // No zebra. Every cell already carries a hairline rule, so the stripe
+      // separated nothing that was not separated; what it did do was put a
+      // second, meaningless background into a grid where background means
+      // "ordered". Hover and selected stay, because both are state.
+      className={cn(
+        "transition-colors hover:bg-accent-subtle/50 data-[selected=true]:bg-accent-subtle",
+        className,
+      )}
       {...props}
     />
   );
