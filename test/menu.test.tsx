@@ -799,6 +799,44 @@ describe("Every state the menu can be in", () => {
 
 /* ----------------------------------------------------- changing the status */
 
+describe("Where a row's messages appear", () => {
+  /** The box a message sits under, found from the message rather than asserted about it. */
+  function fieldOf(text: RegExp | string): HTMLElement | null {
+    const node = screen.getByText(text);
+    const group = node.parentElement as HTMLElement;
+    return group.querySelector("input");
+  }
+
+  it("puts a message about the name under the name box", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "draft" }) });
+    renderMenu();
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "Add a dish" }));
+
+    // Not in a strip below the row, where it sat under the price column and
+    // three lines from the empty box it is about.
+    const box = fieldOf("This dish needs a name.");
+    expect(box).not.toBeNull();
+    expect(box!.getAttribute("aria-label")).toBe("Dish 3 name");
+  });
+
+  it("puts a message about the price under the price box", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu({ status: "draft" }) });
+    renderMenu();
+    await ready();
+
+    await user.clear(screen.getByLabelText("Price of C\u01a1m g\u00e0"));
+    await user.type(screen.getByLabelText("Price of C\u01a1m g\u00e0"), "abc");
+
+    const box = fieldOf(/No price read here/);
+    expect(box).not.toBeNull();
+    expect(box!.getAttribute("aria-label")).toBe("Price of C\u01a1m g\u00e0");
+  });
+});
+
 describe("Who is having each dish", () => {
   it("names them under the dish, so the admin knows who to ring", async () => {
     serve({

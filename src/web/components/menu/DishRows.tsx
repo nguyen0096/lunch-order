@@ -143,7 +143,15 @@ export function duplicateName(rows: DishRow[]): string | null {
   return null;
 }
 
-export type Flag = { level: "warn" | "error"; text: string };
+/**
+ * `field` is which box the message belongs under.
+ *
+ * Every one of these used to render in a full-width strip below the row, which
+ * put "This dish needs a name." under the price column and three lines below
+ * the empty box it was about. A message about a field belongs against that
+ * field; that is most of what makes it readable.
+ */
+export type Flag = { level: "warn" | "error"; field: "name" | "price"; text: string };
 
 /**
  * The uncertainty shown against one row.
@@ -157,9 +165,13 @@ export function flagsFor(row: DishRow, rows: DishRow[], c: Currency): Flag[] {
   const out: Flag[] = [];
 
   if (row.name.trim() === "") {
-    out.push({ level: "error", text: "This dish needs a name." });
+    out.push({ level: "error", field: "name", text: "This dish needs a name." });
   } else if (rows.some((other) => other.key !== row.key && sameName(other.name, row.name))) {
-    out.push({ level: "error", text: "Another row has this name, and a menu cannot hold two." });
+    out.push({
+      level: "error",
+      field: "name",
+      text: "Another row has this name, and a menu cannot hold two.",
+    });
   }
 
   // Not a flag at all. An empty box publishes, the dish reads as unpriced
@@ -168,15 +180,27 @@ export function flagsFor(row: DishRow, rows: DishRow[], c: Currency): Flag[] {
 
   const read = reading(row);
   if (read === null) {
-    out.push({ level: "error", text: "No price read here. Write it as 45k or 45.000." });
+    out.push({
+      level: "error",
+      field: "price",
+      text: "No price read here. Write it as 45k or 45.000.",
+    });
     return out;
   }
 
   if (read.inferredThousands) {
-    out.push({ level: "warn", text: `No thousands written, so read as ${formatMoney(read.minor, c)}.` });
+    out.push({
+      level: "warn",
+      field: "price",
+      text: `No thousands written, so read as ${formatMoney(read.minor, c)}.`,
+    });
   }
   if (read.ambiguousDecimal) {
-    out.push({ level: "warn", text: `Comma read as a decimal point: ${formatMoney(read.minor, c)}.` });
+    out.push({
+      level: "warn",
+      field: "price",
+      text: `Comma read as a decimal point: ${formatMoney(read.minor, c)}.`,
+    });
   }
 
   // Retired the moment the price changes: these describe what arrived, not
@@ -184,16 +208,32 @@ export function flagsFor(row: DishRow, rows: DishRow[], c: Currency): Flag[] {
   if (row.price === row.seededPrice) {
     for (const w of row.seeded) {
       if (w === "price_inferred_thousands" && !read.inferredThousands) {
-        out.push({ level: "warn", text: `The message wrote no thousands, so this is read as ${formatMoney(read.minor, c)}.` });
+        out.push({
+          level: "warn",
+          field: "price",
+          text: `The message wrote no thousands, so this is read as ${formatMoney(read.minor, c)}.`,
+        });
       }
       if (w === "price_ambiguous_decimal" && !read.ambiguousDecimal) {
-        out.push({ level: "warn", text: `The message used a comma as a decimal point, so this is read as ${formatMoney(read.minor, c)}.` });
+        out.push({
+          level: "warn",
+          field: "price",
+          text: `The message used a comma as a decimal point, so this is read as ${formatMoney(read.minor, c)}.`,
+        });
       }
       if (w === "price_out_of_range") {
-        out.push({ level: "warn", text: "Unusual for a lunch. Check the price against the message." });
+        out.push({
+          level: "warn",
+          field: "price",
+          text: "Unusual for a lunch. Check the price against the message.",
+        });
       }
       if (w === "duplicate_name") {
-        out.push({ level: "warn", text: "The message listed this dish twice. The first price was kept." });
+        out.push({
+          level: "warn",
+          field: "price",
+          text: "The message listed this dish twice. The first price was kept.",
+        });
       }
     }
   }
@@ -252,6 +292,26 @@ function listNames(names: string[]): string {
 function removeReason(row: DishRow, takers: Map<number, string[]>): string | null {
   const note = takerNote(row, takers);
   return note === null ? null : `${note}. Removing a dish somebody chose will be refused`;
+}
+
+/** The messages for one field, rendered under it. */
+function FieldFlags({ flags }: { flags: Flag[] }) {
+  if (flags.length === 0) return null;
+  return (
+    <>
+      {flags.map((f) => (
+        <p
+          key={f.text}
+          className={cn(
+            "text-xs",
+            f.level === "error" ? "text-danger-subtle-fg" : "text-warn-subtle-fg",
+          )}
+        >
+          {f.text}
+        </p>
+      ))}
+    </>
+  );
 }
 
 function rowLabel(row: DishRow, index: number): string {
@@ -364,6 +424,7 @@ export function DishRows({
                   onChange={(e) => onChange(row.key, { name: e.target.value })}
                   className="h-11 w-full rounded-md border border-border bg-surface-raised px-3 text-base"
                 />
+                <FieldFlags flags={flags.filter((f) => f.field === "name")} />
                 {takerNote(row, takers) !== null && (
                   <p className="text-xs text-muted">{takerNote(row, takers)}</p>
                 )}
@@ -395,6 +456,7 @@ export function DishRows({
                 ) : read !== null ? (
                   <p className="tabular text-xs text-muted">{formatMoney(read.minor, currency)}</p>
                 ) : null}
+                <FieldFlags flags={flags.filter((f) => f.field === "price")} />
               </div>
 
               <div className="flex justify-end sm:block">
@@ -413,23 +475,12 @@ export function DishRows({
                 </Action>
               </div>
 
-              {(flags.length > 0 || row.source !== null) && (
-                <div className="flex flex-col gap-1 sm:col-span-3 sm:-mt-1 sm:pl-1">
-                  {flags.map((f) => (
-                    <p
-                      key={f.text}
-                      className={cn(
-                        "text-xs",
-                        f.level === "error" ? "text-danger-subtle-fg" : "text-warn-subtle-fg",
-                      )}
-                    >
-                      {f.text}
-                    </p>
-                  ))}
-                  {row.source !== null && (
-                    <p className="text-xs text-subtle">{`From the message: ${row.source}`}</p>
-                  )}
-                </div>
+              {/* Only what is about the row as a whole. Everything that is
+                  about one box now renders under that box. */}
+              {row.source !== null && (
+                <p className="text-xs text-subtle sm:col-span-3 sm:-mt-1 sm:pl-1">
+                  {`From the message: ${row.source}`}
+                </p>
               )}
             </li>
           );
