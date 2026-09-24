@@ -1,0 +1,25 @@
+-- `v_order_charges` read with the view owner's privileges, not the reader's.
+--
+-- A view without `security_invoker` executes as its owner, which here is
+-- `postgres`, so every RLS policy under it is skipped. The body carries no
+-- `org_id` predicate of its own, `authenticated` holds SELECT, and PostgREST
+-- exposes it: any signed-in member of any office could read
+-- `/rest/v1/v_order_charges` and get who ate what, and for how much, in every
+-- office in the database. Measured against production before the fix: a member
+-- of office 7 counted office 47's order through the view, and zero through
+-- `orders`, which is the same query the policies answer correctly.
+--
+-- This is the second time this family of bug has cost us. The first was
+-- `v_account_balance`, where the view read MORE than the member could and the
+-- symptom was a wrong balance rather than a leak (20261003100000). The rule
+-- that comes out of both: a view over tenant data declares
+-- `security_invoker = true`, and the policies on the tables underneath are the
+-- only access rule there is.
+--
+-- Nothing else changes. `run_billing_inner` reads this view inside a
+-- SECURITY DEFINER function owned by `postgres`, which bypasses RLS anyway:
+-- verified in a rolled-back transaction, the same period billed 9 lines before
+-- the change and 9 after. A member keeps their whole office's rows, which is
+-- what `orders_select_org` says and what the Board has always shown.
+
+alter view public.v_order_charges set (security_invoker = true);
