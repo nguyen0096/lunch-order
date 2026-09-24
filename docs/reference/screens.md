@@ -78,11 +78,22 @@ Cơm gà  45.000 ₫    Bún bò  50.000 ₫     Phở bò  40.000 ₫
 
 `▓` ordered · `░` eating, no dish yet · `▒` recessive · `┌┐` empty, still a target
 
-**Which days you can act on** is the first question the grid answers, so a day
-whose window has shut recedes into `surface-sunken`, head to total. Today is the
-word `Today` under the date. An accent rule down the column edge used to mark
-today and it read as a divider between two days rather than a property of one;
-the accent belongs to *ordered*.
+**Which days you can act on** is the first question the grid answers, and the
+column head answers it in words. A day carries its stage under the date --
+`No menu`, `Closed`, `Cooking`, `Served`, `Cancelled` -- and `Today` beside it
+when both hold, which by mid-afternoon they usually do. An open day says
+nothing, because there is nothing to say.
+
+This used to be a tint: the whole column receded into `surface-sunken`. One
+grey covered a day with no menu, a day past its cutoff and a day lunch was
+called off on, so the commonest reading of it -- these are the days with a menu
+-- was not one of the three things it meant. Colour here means one thing now,
+and that is *ordered*.
+
+An admin is inside the ordering window on every day, so `Closed` is not news to
+them and is not shown. `Cooking` and `Served` are: those two belong to the
+clock rather than the cutoff, and they bind an admin's reopen and a member's
+meal pass. See [the five stages](#the-five-stages-of-a-day).
 
 **The menu panel** under the grid names one day's dishes with prices and when it
 closes, so nobody has to tap a cell to find out what is on offer. It opens on the
@@ -137,9 +148,11 @@ Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would
 need a legend, and a board that needs a legend has already lost.
 
-The window is the **open billing week**, not today onward. People remember on
-Thursday that Tuesday's lunch went to somebody else, and the database permits it
-until the period closes.
+The window for a member ends when the day does, at the office's end of day.
+People remember on Thursday that Tuesday's lunch went to somebody else, but by
+Thursday Tuesday's lunch has been eaten, and recording it then is bookkeeping
+rather than an arrangement. An admin keeps the whole open billing week, which
+is what makes the correction possible at all.
 
 | State | |
 | --- | --- |
@@ -147,6 +160,25 @@ until the period closes.
 | no menu that day | the cell is inert and says so on tap; the panel says it too |
 | cutoff passed | the column recedes, the cell carries the database's sentence |
 | no members but you | the board still renders; an office of one is not an error |
+
+## The five stages of a day
+
+Every screen that shows a day shows its stage, and they all derive it the same
+way, from `dayStage` in `shared/gating.ts` mirroring `private.day_stage`.
+
+| Stage | When | A member can | An admin can |
+| --- | --- | --- | --- |
+| `No menu` | nothing published | nothing | publish one, for a past day too |
+| `Open` | published, cutoff ahead | order, change, cancel, pass a meal | the same |
+| `Closed` | the cutoff passed | pass a meal | order for anybody, reopen |
+| `Cooking` | the office's start of day | pass a meal | order for anybody |
+| `Served` | the office's end of day | nothing | order for anybody, record a pass |
+| `Cancelled` | lunch is off | nothing | nothing; no status leaves cancelled |
+
+`Cooking` and `Served` come from `business_day_starts_at` and
+`business_day_ends_at` on the office, 08:30 and 17:30 by default. They are
+computed on every read rather than stored: a stored stage would need the hourly
+tick to advance it, and an hour is long enough to pass on a meal already eaten.
 
 ## Bill
 
@@ -159,7 +191,7 @@ weeks collapsed below.
 | State | |
 | --- | --- |
 | nothing owed | "Nothing owed yet. This week closes Monday." |
-| unpaid | amount, reference, QR |
+| unpaid | amount with its own copy button, reference, QR |
 | partial | amount remaining, and what was received |
 | paid | receipt, quiet, no call to action |
 
@@ -216,6 +248,19 @@ Two parse paths: the offline regex parser, which is free, instant and usually
 right, and "Read with AI", which calls `parse-assist`. Nothing is written until
 Publish, and a human sets every price that reaches a bill.
 
+The day picker is one week with `‹ 21–25 Sept ›`, the same control the board
+uses, each day carrying its stage. It reached nineteen days as a wrapping strip
+of cards once, which was a second control for a job the board had already
+solved one item above it in the nav.
+
+Every saved dish names who chose it, and the remove control carries those names
+as the reason it is unavailable. The trigger refuses that write either way, but
+a refusal you read after pressing is worth less than the list you needed before.
+
+There is no un-publish. A published menu is editable in place, so it only ever
+hid a day from members while lunch went on being cooked. Calling lunch off is
+Cancel, which says so.
+
 When orders close sits beside the service date, as a date and a time in the
 office's zone. It defaults to the evening before at the org's default cutoff and
 follows the service date until the admin sets it themselves; opening an existing
@@ -229,8 +274,9 @@ the date and how many people it will notify.
 | --- | --- |
 | no menu for the date | empty editor, paste prompt |
 | draft | editable, Publish enabled once a dish is available |
-| published | editable with a warning that orders exist |
+| published | editable with a warning naming who has ordered each dish |
 | locked | read only, with the reason: orders have gone to the caterer |
+| cooking, served | as locked, and reopening is no longer offered |
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |
 | cutoff after the meal, or being moved into the past | Publish unavailable, carrying the reason. The database refuses neither |
 

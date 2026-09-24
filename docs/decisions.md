@@ -89,6 +89,45 @@ matched `service_date = today` while `/order` resolved the next open day, so
 after the cutoff a member could place an order the bot then said did not exist.
 One function now answers "which day" for both.
 
+## The shape of a day
+
+**A day has five stages, and only two of them are stored.** `no menu -> open ->
+locked -> closed -> done`. `locked` is the order cutoff, which the admin sets.
+`closed` is the office's own start of day, when the kitchen begins; `done` is
+its end of day, when lunch has been eaten. Both live on `organizations` as
+`business_day_starts_at` and `business_day_ends_at`.
+
+The last two are derived on every read, by `private.day_stage` in the database
+and `dayStage` in `shared/gating.ts`, never written to a column. A stored stage
+needs a job to advance it, the hourly tick is the only job there is, and an hour
+is long enough for somebody to hand on a meal that is already on a plate.
+`menus.status` stays what it always was -- draft, published, locked, cancelled
+-- and remains the thing a person sets. These two stages belong to the clock,
+and the clock needs no column.
+
+**What each stage forbids.** After `locked`, a member cannot change an order;
+that was already true and `enforce_order_window` already enforced it. After
+`closed`, an admin can no longer reopen ordering, because the count has been
+spent on food. After `done`, a member can no longer record a meal passed to
+somebody else.
+
+That last rule is the one that was missing entirely. `enforce_transfer_rules`
+bounded a member's pass by the billing period and by nothing else, so a member
+could still give away a lunch three days eaten, as long as the week had not
+been billed. The week being open for billing is not the same fact as the day
+being open for changes, and one had been standing in for the other.
+
+**An admin is exempt from all of it, on purpose.** Correcting what was recorded
+on a past day is most of why an admin touches an order or a transfer at all.
+What an admin does to a finished day is bookkeeping about a lunch that happened.
+What a member would be doing is changing who ate it.
+
+**Un-publishing was removed rather than fixed.** A published menu is editable in
+place, so un-publishing only ever hid a day from members while lunch went on
+being cooked, which is a state with no meaning to anybody. Calling lunch off is
+Cancel, which says so. The `published -> draft` transition is still legal in
+`enforce_menu_lifecycle`; nothing in the app reaches it.
+
 ## Interface
 
 **Two tabs for a member: Board and Bill.** Telegram took the daily act, so the
@@ -142,6 +181,33 @@ working correctly: every control was greyed with no reason given.
 failure, and `run` resolves rather than rejects, which is what actually removes
 `try/catch` from screens instead of merely discouraging it. A role change used to
 succeed in silence, so a working feature was indistinguishable from a broken one.
+
+**A word, not a tint, for what a day is.** The board's column heads painted
+`surface-sunken` behind every day the reader could not act on. One grey covered
+"no menu", "closed" and "cancelled" at once, so the commonest reading of it --
+these are the days with a menu -- was not one of the three things it meant.
+Heads carry the stage word instead. Colour on this screen now means one thing:
+the accent is *ordered*.
+
+**One week, two screens, one control.** The menu editor offered nineteen days
+as a wrapping strip of cards while the board, one item above it in the nav,
+showed five days and a pair of arrows. `WeekNav` is shared by both.
+
+**A destructive action is quiet until it is confirmed.** `Cancel lunch` was a
+solid red button at the top of the menu screen, louder than Publish, which is
+what the screen is for. The entry point is an outline with danger-coloured
+text; the red belongs on the button inside the dialog that does it.
+
+**The bill copies two things, not one.** A person paying moves an amount and a
+reference from this screen into their bank. The amount copies as plain digits:
+`45.000 ₫` in a banking app's amount field fails, and on VND a grouping dot
+read as a decimal point turns 45.000 into forty-five dong.
+
+**Dish names are sentence-cased where a parse produces them.** Caterers write
+in chat and chat is lower case. Not title case: `Cơm Gà` is not how Vietnamese
+is written. Names are NFC-normalised wherever they are typed, too, which is not
+cosmetic -- `menu_items` is unique on `lower(btrim(name))` and an iOS keyboard's
+decomposed `Cơm` slips past that index as a second row on the same menu.
 
 **One API module per screen, behind a barrel.** `api.ts` was 925 lines that
 every screen imported, so any two people building any two screens edited the

@@ -71,11 +71,36 @@ offering itself as separately payable.
 
 Two smaller things on the same screen:
 
-- A copy button for the **amount**, digits only with no currency glyph, because
-  that is what gets pasted into a banking app's amount field. The reference
-  already has one.
 - `BillScreen`'s block comment claims it leads with "the oldest thing still
   unsettled" while the code takes the newest. The code is right.
+
+## A board for adjusting what was recorded
+
+The five stages stop a member changing a finished day. An admin is exempt, and
+deliberately so: correcting a past day is most of why an admin touches an order
+at all. What is missing is a place to do it.
+
+Today an admin corrects a past day through the same board everybody uses, which
+is the board for ordering your own lunch. The two jobs read alike and are not
+alike: one is "what am I eating", the other is "what did Quy actually eat on the
+14th, because the caterer says five and we say four". They want different
+screens, and the second one wants an audit trail the first does not.
+
+What it needs:
+
+- Orders and transfers on any day in an open period, with who changed what and
+  when. `meal_transfers` already records `created_by`, `decided_by` and
+  `decided_at`; `orders` records `created_by` and nothing about a later edit.
+- A reason on every adjustment, because the caterer's message is the evidence
+  and it is currently pasted into a textarea that writes nothing.
+- An exploit pass before it ships. Every rule this screen relaxes is a rule
+  that stops a member rewriting their own bill, and an admin-only screen that
+  posts to the same tables is only as safe as `my_admin_org_ids()`. The
+  isolation suite needs a case per relaxed rule: a member reaching the same
+  endpoint, and an admin of another office reaching this one.
+
+Until it exists, a correction is a hand-written SQL statement, which is worse
+than a screen in every way except that nobody can reach it by accident.
 
 ## Paying in advance
 
