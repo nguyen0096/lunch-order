@@ -143,8 +143,7 @@ describe("nextOrderableDay", () => {
 });
 
 describe("cellReason", () => {
-  const ask = (d: BoardDay, isAdminHere = false, now = BEFORE) =>
-    cellReason({ day: d, isAdminHere, now, timeZone: TZ });
+  const ask = (d: BoardDay, now = BEFORE) => cellReason({ day: d, now, timeZone: TZ });
 
   it("is null while the menu is published and the cutoff is ahead", () => {
     expect(ask(day())).toBeNull();
@@ -175,15 +174,20 @@ describe("cellReason", () => {
   });
 
   it("quotes the cutoff once it has passed", () => {
-    expect(ask(day(), false, AFTER)).toBe("Ordering closed at 21:00 22/09");
+    expect(ask(day(), AFTER)).toBe("Ordering closed at 21:00 22/09");
   });
 
-  it("exempts an admin from the window, as the trigger does", () => {
-    expect(ask(day({ status: "draft" }), true, AFTER)).toBeNull();
+  it("holds an admin to the window too, because this board is not for correcting", () => {
+    // It used to exempt them, which meant an admin could put a meal on a bill
+    // for a day already eaten by tapping their own row.
+    expect(ask(day({ status: "draft" }), AFTER)).toBe("This menu isn't published yet");
+    expect(ask(day({ status: "locked" }), AFTER)).toBe(
+      "Orders are closed and have gone to the caterer",
+    );
   });
 
-  it("still refuses an admin a day with no menu at all", () => {
-    expect(ask(day({ menuId: null, dishes: [] }), true)).toBe("No menu for Wed 23 Sept yet");
+  it("refuses a day with no menu at all", () => {
+    expect(ask(day({ menuId: null, dishes: [] }))).toBe("No menu for Wed 23 Sept yet");
   });
 });
 

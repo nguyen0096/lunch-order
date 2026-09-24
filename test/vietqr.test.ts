@@ -166,3 +166,71 @@ describe("vietQrPayload, refusals", () => {
     );
   });
 });
+
+/**
+ * A walk over the bytes as a bank's decoder walks them.
+ *
+ * The other tests here check pieces. This one checks that the whole string
+ * parses as EMVCo TLV from end to end, which is the only property that
+ * actually decides whether a banking app will read it: every length prefix has
+ * to match its value exactly, or the walk drifts and every field after the
+ * mistake is garbage.
+ */
+function walk(s: string): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  let i = 0;
+  while (i < s.length) {
+    const id = s.slice(i, i + 2);
+    const len = Number(s.slice(i + 2, i + 4));
+    if (!Number.isInteger(len)) throw new Error(`bad length at ${i}: ${s.slice(i + 2, i + 4)}`);
+    out.push([id, s.slice(i + 4, i + 4 + len)]);
+    i += 4 + len;
+  }
+  if (i !== s.length) throw new Error(`ran off the end at ${i} of ${s.length}`);
+  return out;
+}
+
+describe("the payload a bank actually receives", () => {
+  const payload = vietQrPayload({
+    bankBin: "970416",
+    accountNumber: "4286427",
+    amountMinor: 275_000,
+    paymentRef: "LUNCHNGUY",
+  })!;
+
+  it("parses end to end, with every length matching its value", () => {
+    expect(walk(payload).map(([id]) => id)).toEqual([
+      "00", "01", "38", "53", "54", "58", "62", "63",
+    ]);
+  });
+
+  it("puts the bank and the account where NAPAS looks for them", () => {
+    const f38 = walk(payload).find(([id]) => id === "38")![1];
+    const inner = walk(f38);
+    expect(inner.find(([id]) => id === "00")![1]).toBe("A000000727");
+    expect(inner.find(([id]) => id === "02")![1]).toBe("QRIBFTTA");
+    const account = walk(inner.find(([id]) => id === "01")![1]);
+    expect(account.find(([id]) => id === "00")![1]).toBe("970416");
+    expect(account.find(([id]) => id === "01")![1]).toBe("4286427");
+  });
+
+  it("says dynamic when it carries an amount, and static when it does not", () => {
+    expect(walk(payload).find(([id]) => id === "01")![1]).toBe("12");
+    const free = vietQrPayload({
+      bankBin: "970416", accountNumber: "4286427", paymentRef: "LUNCHNGUY",
+    })!;
+    expect(walk(free).find(([id]) => id === "01")![1]).toBe("11");
+    expect(walk(free).some(([id]) => id === "54")).toBe(false);
+  });
+
+  it("carries the reference in 62-08, which is where a memo is read from", () => {
+    const f62 = walk(payload).find(([id]) => id === "62")![1];
+    expect(walk(f62)).toEqual([["08", "LUNCHNGUY"]]);
+  });
+
+  it("signs the whole string up to and including the 6304 label", () => {
+    const crc = walk(payload).find(([id]) => id === "63")![1];
+    expect(crc16CcittFalse(payload.slice(0, -4)).toString(16).toUpperCase().padStart(4, "0"))
+      .toBe(crc);
+  });
+});

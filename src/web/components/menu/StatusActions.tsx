@@ -38,6 +38,13 @@ import type { MenuStatus } from "../../../shared/types.js";
  * Cancelling is the only one behind a typed confirmation: no transition leaves
  * `cancelled`, so nothing in this app takes it back, and the day strip above
  * makes it one tap to be looking at a date you did not mean.
+ *
+ * It is offered only while ordering is still open. The cutoff is when the
+ * headcount goes to the caterer, so before it calling lunch off costs nothing
+ * and after it the food is being made: "cancelled" would be a claim about the
+ * world that is not true, and the database refuses it for the same reason.
+ * Cancelling now takes the day's orders with it, which is what the word means
+ * and what it did not used to do.
  */
 export function StatusActions({
   status,
@@ -117,7 +124,7 @@ export function StatusActions({
       {/* Outline, not danger. The loud red belongs on the button that does it,
           inside the dialog; out here it made calling lunch off the most
           prominent thing on a screen whose job is publishing a menu. */}
-      {(status === "published" || status === "locked") && (
+      {status === "published" && !cutoffPassed && (
         <Action
           reason={null}
           pending={cancel.pending}
@@ -172,8 +179,8 @@ export function StatusActions({
           <DialogHeader>
             <DialogTitle>{`Cancel lunch on ${longDay(serviceDate)}?`}</DialogTitle>
             <DialogDescription>
-              Nobody can order for this day, and nothing here takes it back: no status leaves
-              cancelled.
+              Every order for this day is cancelled with it, and nothing here takes it back:
+              no status leaves cancelled.
             </DialogDescription>
           </DialogHeader>
 
@@ -188,7 +195,7 @@ export function StatusActions({
               {orders > 0
                 ? `${peopleHave(
                     orders,
-                  )} already ordered. Cancelling does not cancel their orders: a meal already priced stays on the bill, and a dish the caterer never priced can no longer be priced for this day.`
+                  )} already ordered. Their orders are cancelled too, and nothing for this day reaches anybody's bill. Tell them, because the app will not: they chose a lunch and there will not be one.`
                 : "Nobody has ordered for this day yet."}
             </p>
           )}

@@ -1073,7 +1073,7 @@ describe("Changing the menu's status", () => {
     ).toBeGreaterThan(0);
   });
 
-  it("names what cancelling does to orders already placed", async () => {
+  it("says that cancelling takes the orders with it", async () => {
     const user = userEvent.setup();
     serve({ menu: menu({ status: "published" }), impact: impact({ orders: 3 }) });
     renderMenu();
@@ -1081,15 +1081,28 @@ describe("Changing the menu's status", () => {
 
     await user.click(cancelButton());
     const dialog = await screen.findByRole("dialog");
+    // It used to say the opposite, accurately: the orders survived and stayed
+    // on the bill. Cancelling now means what the word means.
     expect(
-      within(dialog).getByText(/3 people have already ordered\. Cancelling does not cancel their orders/),
+      within(dialog).getByText(/3 people have already ordered\. Their orders are cancelled too/),
     ).toBeInTheDocument();
     expect(within(dialog).getByText(/no status leaves\s+cancelled/)).toBeInTheDocument();
   });
 
-  it("cancels a locked day too, and the badge says Cancelled", async () => {
+  it("will not cancel a day whose orders have already gone to the caterer", async () => {
+    // The cutoff is when the headcount is sent, so after it the food is being
+    // made and "cancelled" would be a claim about the world that is not true.
+    serve({ menu: menu({ status: "locked" }) });
+    renderMenu();
+    await ready();
+
+    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
+    expect(reopenButton()).toBeInTheDocument();
+  });
+
+  it("cancels a day that is still open, and the badge says Cancelled", async () => {
     const user = userEvent.setup();
-    serveChange(menu({ status: "locked" }), menu({ status: "cancelled" }));
+    serveChange(menu({ status: "published" }), menu({ status: "cancelled" }));
     renderMenu();
     await ready();
 
@@ -1144,16 +1157,15 @@ describe("Changing the menu's status", () => {
     expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
   });
 
-  it("locked: reopen and cancel, while the day is still ahead", async () => {
+  it("locked: reopen, while the day is still ahead", async () => {
     serve({ menu: menu({ status: "locked" }) });
     renderMenu();
     await ready();
 
     expect(reopenButton()).toBeInTheDocument();
-    expect(cancelButton()).toBeInTheDocument();
   });
 
-  it("locked and already eaten: cancel, but nothing to reopen", async () => {
+  it("locked and already eaten: nothing to reopen and nothing to cancel", async () => {
     // Reopening a day in the past invites orders for a lunch that has been
     // served. The cutoff is what an admin reopens past, not the calendar.
     let gone = addDays(TODAY, -3);
@@ -1165,7 +1177,7 @@ describe("Changing the menu's status", () => {
     set(screen.getByLabelText("Service date"), gone);
     await waitFor(() => expect(screen.getByText("Locked")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
-    expect(cancelButton()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
   });
 
   it("cancelled: no way out, and the copy says so instead of implying one", async () => {

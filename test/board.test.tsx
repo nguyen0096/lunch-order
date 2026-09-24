@@ -391,19 +391,20 @@ describe("Board, unavailable cells", () => {
     expect(cell).toHaveAccessibleDescription(`No menu for ${formatDay(WED)} yet`);
   });
 
-  it("lets an admin past the cutoff, as the trigger does", async () => {
+  it("holds an admin to the cutoff too, because this board is theirs to eat from", async () => {
     serve(makeBoard({ wed: menuDay({ orderCutoffAt: PAST_CUTOFF, dishes: [DISHES[0]!] }) }));
     renderBoard("admin");
 
-    const cell = await screen.findByRole("button", { name: ORDER_LABEL });
-    expect(cell).not.toHaveAttribute("aria-disabled");
+    await screen.findByRole("table");
+    const cell = screen.getByRole("button", { name: new RegExp(`^${EMPTY_LABEL}`) });
+    expect(cell).toHaveAttribute("aria-disabled", "true");
     await userEvent.click(cell);
-    await waitFor(() => expect(setOrder).toHaveBeenCalledTimes(1));
+    expect(setOrder).not.toHaveBeenCalled();
   });
 });
 
 describe("Board, asymmetric rows", () => {
-  it("names your dish but only marks a colleague's", async () => {
+  it("names a colleague's dish too, because somebody has to hand the food out", async () => {
     const cells = myCell();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -421,12 +422,14 @@ describe("Board, asymmetric rows", () => {
     await screen.findByRole("button", { name: `${formatDay(WED)}: Cơm gà` });
     const grid = within(screen.getByRole("table"));
     expect(grid.getByText("Cơm gà")).toBeInTheDocument();
-    // Tèo is eating, but which dish is not this reader's business. The menu
-    // panel names every dish; the grid names only your own.
-    expect(grid.queryByText("Phở bò")).not.toBeInTheDocument();
-    // Their state is on the control itself, for anybody reading by ear.
+    // It used to be a fill, on the reasoning that a colleague's dish is not
+    // your business. It is on the day the boxes arrive and one of them is
+    // theirs.
+    expect(grid.getByText("Phở bò")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: `Tèo, ${formatDay(WED)}: ordered. Hand a meal over` }),
+      screen.getByRole("button", {
+        name: `Tèo, ${formatDay(WED)}: eating Phở bò. Hand a meal over`,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: `Dinh, ${formatDay(WED)}: not eating. Hand a meal over` }),
@@ -534,7 +537,7 @@ describe("Board, handing a meal over", () => {
     serve(makeBoard({ cells }));
     renderBoard("admin");
 
-    await userEvent.click(await screen.findByRole("button", { name: theirName("ordered") }));
+    await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
     const dialog = await screen.findByRole("dialog");
     expect(
       within(dialog).getByRole("heading", { name: "Pass Tèo's Phở bò to someone" }),
@@ -567,7 +570,7 @@ describe("Board, handing a meal over", () => {
     serve(makeBoard({ cells }));
     renderBoard("admin");
 
-    await userEvent.click(await screen.findByRole("button", { name: theirName("ordered") }));
+    await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
     const send = within(await screen.findByRole("dialog")).getByRole("button", { name: "Pass on" });
     expect(send).toHaveAccessibleDescription("Choose who it goes to");
   });
@@ -606,7 +609,7 @@ describe("Board, handing a meal over", () => {
     renderBoard("admin");
 
     const cell = await screen.findByRole("button", {
-      name: `Tèo, ${formatDay(WED)}: ordered. Offered to Dinh. Hand a meal over`,
+      name: `Tèo, ${formatDay(WED)}: eating Phở bò. Offered to Dinh. Hand a meal over`,
     });
     // Legible on the board itself, in words, which is what gives anybody a
     // reason to open the cell at all.
@@ -677,7 +680,7 @@ describe("Board, handing a meal over", () => {
     serve(makeBoard({ cells }));
     renderBoard("admin");
 
-    await userEvent.click(await screen.findByRole("button", { name: theirName("ordered") }));
+    await userEvent.click(await screen.findByRole("button", { name: theirName("eating Phở bò") }));
     await userEvent.click(within(await screen.findByRole("dialog")).getByRole("combobox"));
     await userEvent.click(await screen.findByRole("option", { name: "Dinh" }));
     await userEvent.keyboard("{Escape}");
@@ -766,7 +769,7 @@ describe("Board, the note that goes to the caterer", () => {
     renderBoard("admin");
 
     await userEvent.click(
-      await screen.findByRole("button", { name: `Tèo, ${formatDay(WED)}: ordered. Hand a meal over` }),
+      await screen.findByRole("button", { name: `Tèo, ${formatDay(WED)}: eating Phở bò. Hand a meal over` }),
     );
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("không trứng")).toBeInTheDocument();

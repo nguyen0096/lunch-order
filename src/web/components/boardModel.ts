@@ -90,17 +90,18 @@ export function cutoffLabel(orderCutoffAt: string, timeZone: string): string {
  */
 export function cellReason(args: {
   day: BoardDay;
-  isAdminHere: boolean;
   now: Date;
   timeZone: string;
 }): string | null {
-  const { day, isAdminHere, now, timeZone } = args;
+  const { day, now, timeZone } = args;
   if (day.menuId === null) return `No menu for ${formatDay(day.serviceDate)} yet`;
   if (day.status === "cancelled") return "Lunch is cancelled this day";
   if (day.dishes.length === 0) return "This menu has no dishes on it yet";
-  // Admins are exempt from the window by the same trigger that enforces it:
-  // after the cutoff they are the ones on the phone to the caterer.
-  if (isAdminHere) return null;
+  // No admin exemption. This board is where an admin orders their own lunch,
+  // like everybody else, and the clock binds everybody on it. Correcting a
+  // finished day is a different job, and `enforce_order_window` now asks for
+  // it by name: only an order whose `source` is 'admin' steps outside the
+  // window, and nothing on this screen writes that.
   if (day.status === "draft") return "This menu isn't published yet";
   if (day.status === "locked") return "Orders are closed and have gone to the caterer";
   if (day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt)) {
@@ -124,11 +125,10 @@ export function cellReason(args: {
  */
 export function columnTag(args: {
   day: BoardDay;
-  isAdminHere: boolean;
   org: Pick<Org, "timezone" | "businessDayStartsAt" | "businessDayEndsAt">;
   now: Date;
 }): string | null {
-  const { day, isAdminHere, org, now } = args;
+  const { day, org, now } = args;
   if (day.dishes.length > 0 && day.status !== null && day.status !== "cancelled") {
     const stage = dayStage({
       serviceDate: day.serviceDate,
@@ -137,10 +137,6 @@ export function columnTag(args: {
       org,
       now,
     });
-    // An admin is inside the ordering window on every day, so `locked` is not
-    // news to them. `Cooking` and `Served` are: those two are the clock's, not
-    // the cutoff's, and they bind an admin's reopen and a member's meal pass.
-    if (isAdminHere && stage === "locked") return null;
     return stageWord(stage);
   }
   if (day.menuId === null) return "No menu";

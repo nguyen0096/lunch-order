@@ -81,13 +81,12 @@ export function stageWord(stage: DayStage): string | null {
 /** Null when ordering is allowed; otherwise the reason to show the member. */
 export function orderDisabledReason(
   menu: Menu | null,
-  isAdminHere: boolean,
   now: Date,
   timeZone: string,
 ): string | null {
   if (menu === null) return "Tomorrow's menu isn't up yet";
   if (menu.status === "cancelled") return "Lunch is cancelled for this day";
-  if (isAdminHere) return null;
+  // No admin exemption, deliberately. See `cellReason`.
   if (menu.status === "draft") return "Tomorrow's menu isn't published yet";
   if (menu.status === "locked") return "Orders are closed and have gone to the caterer";
   if (cutoffPassed(menu, now)) return `Ordering closed at ${formatCutoff(menu, timeZone)}`;

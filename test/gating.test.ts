@@ -43,46 +43,52 @@ function order(over: Partial<MyOrder> = {}): MyOrder {
 
 describe("orderDisabledReason", () => {
   it("reports a missing menu", () => {
-    expect(orderDisabledReason(null, false, BEFORE, TZ)).toBe("Tomorrow's menu isn't up yet");
+    expect(orderDisabledReason(null, BEFORE, TZ)).toBe("Tomorrow's menu isn't up yet");
   });
 
-  it("reports a missing menu even to an admin", () => {
-    expect(orderDisabledReason(null, true, BEFORE, TZ)).toBe("Tomorrow's menu isn't up yet");
-  });
-
-  it("reports a cancelled day to everyone, admins included", () => {
-    expect(orderDisabledReason(menu({ status: "cancelled" }), false, BEFORE, TZ)).toBe(
-      "Lunch is cancelled for this day",
+  it("binds an admin to the same window as everybody else", () => {
+    // The board is where an admin orders their own lunch. Correcting a
+    // finished day is a different job on a different screen, and the trigger
+    // now asks for it by name: only `source = 'admin'` steps outside.
+    expect(orderDisabledReason(menu({ status: "locked" }), BEFORE, TZ)).toBe(
+      "Orders are closed and have gone to the caterer",
     );
-    expect(orderDisabledReason(menu({ status: "cancelled" }), true, BEFORE, TZ)).toBe(
+    expect(orderDisabledReason(menu(), AFTER, TZ)).toBe("Ordering closed at 16:00");
+  });
+
+  it("reports a cancelled day", () => {
+    expect(orderDisabledReason(menu({ status: "cancelled" }), BEFORE, TZ)).toBe(
       "Lunch is cancelled for this day",
     );
   });
 
   it("reports a draft menu to a member", () => {
-    expect(orderDisabledReason(menu({ status: "draft" }), false, BEFORE, TZ)).toBe(
+    expect(orderDisabledReason(menu({ status: "draft" }), BEFORE, TZ)).toBe(
       "Tomorrow's menu isn't published yet",
     );
   });
 
   it("reports a locked menu to a member", () => {
-    expect(orderDisabledReason(menu({ status: "locked" }), false, BEFORE, TZ)).toBe(
+    expect(orderDisabledReason(menu({ status: "locked" }), BEFORE, TZ)).toBe(
       "Orders are closed and have gone to the caterer",
     );
   });
 
   it("reports a passed cutoff with the cutoff time", () => {
-    expect(orderDisabledReason(menu(), false, AFTER, TZ)).toBe("Ordering closed at 16:00");
+    expect(orderDisabledReason(menu(), AFTER, TZ)).toBe("Ordering closed at 16:00");
   });
 
   it("allows ordering before the cutoff on a published menu", () => {
-    expect(orderDisabledReason(menu(), false, BEFORE, TZ)).toBeNull();
+    expect(orderDisabledReason(menu(), BEFORE, TZ)).toBeNull();
   });
 
-  it("exempts an admin from draft, locked and the cutoff", () => {
-    expect(orderDisabledReason(menu({ status: "draft" }), true, AFTER, TZ)).toBeNull();
-    expect(orderDisabledReason(menu({ status: "locked" }), true, AFTER, TZ)).toBeNull();
-    expect(orderDisabledReason(menu(), true, AFTER, TZ)).toBeNull();
+  it("exempts nobody from draft, locked or the cutoff", () => {
+    // It used to exempt admins. That made the board a place where an admin
+    // could put a meal on a bill for a day already eaten, by tapping their own
+    // row, which is not a power anybody asked for.
+    expect(orderDisabledReason(menu({ status: "draft" }), AFTER, TZ)).not.toBeNull();
+    expect(orderDisabledReason(menu({ status: "locked" }), AFTER, TZ)).not.toBeNull();
+    expect(orderDisabledReason(menu(), AFTER, TZ)).not.toBeNull();
   });
 });
 

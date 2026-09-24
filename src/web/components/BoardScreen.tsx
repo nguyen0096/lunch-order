@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Dice5Icon, PlusIcon } from "lucide-react";
+import { CheckIcon, Dice5Icon, PlusIcon } from "lucide-react";
 import {
   Action,
   Button,
@@ -32,6 +32,7 @@ import {
 } from "../api.js";
 import { DishDialog } from "./DishDialog.js";
 import { WeekNav } from "./WeekNav.js";
+import { DayStages } from "./DayStages.js";
 import { HandoverDialog } from "./HandoverDialog.js";
 import {
   cellMark,
@@ -336,7 +337,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
       new Set(
         days
           .filter(
-            (d) => cellReason({ day: d, isAdminHere: admin, now, timeZone: org.timezone }) !== null,
+            (d) => cellReason({ day: d, now, timeZone: org.timezone }) !== null,
           )
           .map((d) => d.serviceDate),
       ),
@@ -477,7 +478,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             {days.map((d) => {
               const { dow, dom } = columnLabel(d.serviceDate);
               const isToday = d.serviceDate === today;
-              const tag = columnTag({ day: d, isAdminHere: admin, org, now });
+              const tag = columnTag({ day: d, org, now });
               // Today and the day's state are different axes and both can hold
               // at once, which by mid-afternoon they usually do.
               const tags = [isToday ? "Today" : null, tag].filter((t) => t !== null);
@@ -542,7 +543,6 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
                 const incoming = live ? incomingByOrder.get(live.orderId) ?? null : null;
                 const orderReason = cellReason({
                   day,
-                  isAdminHere: admin,
                   now,
                   timeZone: org.timezone,
                 });
@@ -619,7 +619,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
             day={panelDay}
             org={org}
             now={now}
-            reason={cellReason({ day: panelDay, isAdminHere: admin, now, timeZone: org.timezone })}
+            reason={cellReason({ day: panelDay, now, timeZone: org.timezone })}
           />
         )
       )}
@@ -634,7 +634,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
           org={org}
           day={focused.day}
           cell={focusedLive}
-          orderReason={cellReason({ day: focused.day, isAdminHere: admin, now, timeZone: org.timezone })}
+          orderReason={cellReason({ day: focused.day, now, timeZone: org.timezone })}
           offer={
             focusedLive && focusedLive.transferredToName === null
               ? transfers?.live.get(focusedLive.orderId) ?? null
@@ -791,9 +791,21 @@ function MenuPanel({
       aria-label={`Menu for ${longDayLabel(day.serviceDate)}`}
       className="rounded-lg border border-border bg-surface-raised p-4 md:p-6"
     >
-      <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 border-b border-border pb-3">
-        <h2 className="text-lg font-semibold">{longDayLabel(day.serviceDate)}</h2>
-        {when !== null && <p className="text-sm text-muted">{when}</p>}
+      <div className="flex flex-col gap-3 border-b border-border pb-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1">
+          <h2 className="text-lg font-semibold">{longDayLabel(day.serviceDate)}</h2>
+          {when !== null && <p className="text-sm text-muted">{when}</p>}
+        </div>
+        {/* Under the day it describes, above the dishes it governs. Somebody
+            looking at a cell they cannot use looks here next. */}
+        <DayStages
+          serviceDate={day.serviceDate}
+          status={day.status}
+          orderCutoffAt={day.orderCutoffAt}
+          org={org}
+          now={now}
+          className="max-w-md"
+        />
       </div>
 
       {day.dishes.length === 0 ? (
@@ -953,6 +965,14 @@ function MyCell({
  * you are giving it to, and "I am out, you have mine" is usually said to
  * somebody who was not already eating. An empty cell therefore has to look
  * empty and still read as tappable, which is what the hairline is for.
+ *
+ * It names the dish. It used to show an anonymous fill, on the reasoning that
+ * you care what YOU are eating and only whether a colleague is. That was wrong
+ * about the day the food arrives: somebody has to hand the right box to the
+ * right person, and a wall of identical blocks cannot tell them which.
+ *
+ * On a day with one dish the name is on every row and says nothing, so a check
+ * mark carries it instead.
  */
 function TheirCell({
   member,
@@ -971,7 +991,14 @@ function TheirCell({
   // An offer that has not been answered yet sits on a meal they still hold.
   const pendingWith = mark !== "passed" ? offeredTo : null;
   const gone = cell?.transferredToName ?? null;
-  const described = `${member.name}, ${formatDay(day.serviceDate)}: ${MARK_LABEL[mark]}`;
+  const dish = day.dishes.find((d) => d.id === cell?.itemId)?.name ?? null;
+  const onlyDish = day.dishes.length === 1;
+  // The dish is always spoken, even where a check mark is all that is drawn:
+  // a check is only legible next to a column head naming the one dish, and a
+  // screen reader is not reading the column head.
+  const described = `${member.name}, ${formatDay(day.serviceDate)}: ${
+    dish !== null && gone === null ? `eating ${dish}` : MARK_LABEL[mark]
+  }`;
   const spoken =
     gone !== null
       ? `${described} to ${gone}`
@@ -993,6 +1020,16 @@ function TheirCell({
     >
       {gone !== null || pendingWith !== null ? (
         <span className="block max-w-full truncate">to {gone ?? pendingWith}</span>
+      ) : dish !== null ? (
+        onlyDish ? (
+          <CheckIcon className="size-4" aria-hidden="true" />
+        ) : (
+          <span className="block max-w-full truncate">{dish}</span>
+        )
+      ) : mark === "eating" ? (
+        <span className="block max-w-full truncate font-normal">no dish yet</span>
+      ) : mark === "projected" ? (
+        <CheckIcon className="size-4 opacity-60" aria-hidden="true" />
       ) : null}
     </Action>
   );
@@ -1007,19 +1044,21 @@ const MARK_LABEL: Record<Mark, string> = {
 };
 
 /**
- * The headcount, read as blocks of colour rather than counted as dots.
+ * What a cell looks like, now that the words carry the meaning.
  *
- * Fill carries it, because fill is the channel that survives being scanned a
- * whole week at a time. Size does not: five sizes of dot is four too many, and
- * the reader ends up looking for a legend that should not need to exist.
+ * The headcount used to be blocks of colour, read down a column. It scanned
+ * well and said too little: one fill stood for "eating" whatever they were
+ * eating, and on the day the food arrives that is the question. The dish name
+ * says it, so the fill is gone and what is left is the outline that makes an
+ * empty cell read as tappable.
  */
 const MARK_FILL: Record<Mark, string> = {
-  ordered: "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70",
-  // A real headcount with an unresolved dish, so filled, but visibly unfinished.
-  eating: "border border-dashed border-border-strong bg-accent-subtle/50 text-accent-subtle-fg",
+  ordered: "border border-border-strong text-text hover:bg-surface-sunken",
+  // A real headcount with an unresolved dish, so outlined but visibly unfinished.
+  eating: "border border-dashed border-border-strong text-muted hover:bg-surface-sunken",
   // Spent: the meal is on somebody else's bill now.
-  passed: "bg-surface-sunken text-subtle",
-  projected: "border border-dashed border-border text-subtle",
+  passed: "text-subtle hover:bg-surface-sunken",
+  projected: "border border-dashed border-border text-subtle hover:bg-surface-sunken",
   // Empty, and still a target. `border` is the decorative hairline, which is
   // the faintest thing the tokens can say and still say something.
   none: "border border-border hover:bg-surface-sunken",

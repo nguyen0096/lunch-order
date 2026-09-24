@@ -28,6 +28,7 @@ import { PublishDialog } from "./menu/PublishDialog.js";
 import { StatusActions } from "./menu/StatusActions.js";
 import { CutoffFields } from "./menu/CutoffFields.js";
 import { WeekNav } from "./WeekNav.js";
+import { DayStages } from "./DayStages.js";
 import { weekRangeLabel } from "./boardModel.js";
 import {
   cutoffInstant,
@@ -395,7 +396,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
             className="h-11 rounded-md border border-border bg-surface-raised px-3 text-base"
           />
         </div>
-        <p className="pb-3 text-sm text-muted">{longDay(serviceDate)}</p>
+        <p className="pb-2.5 text-sm text-muted">{longDay(serviceDate)}</p>
 
         {/* Beside the service date, because when orders close is one of the
             things that describes the day, not a detail of publishing it. */}
@@ -409,9 +410,12 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
         {/* The status and the controls that change it, together: the status is
             already described here beside the date and the cutoff, and an action
-            that changes it belongs with the thing it changes. */}
+            that changes it belongs with the thing it changes.
+
+            No bottom margin: the row is `items-end`, so one lifted the badge
+            and its buttons a few pixels clear of the fields beside them. */}
         {status !== null && menu !== null && (
-          <div className="mb-3 flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Badge
               variant={
                 status === "published"
@@ -437,6 +441,18 @@ export function MenuScreen({ me, org }: ScreenProps) {
           </div>
         )}
       </div>
+
+      {/* The same line the board shows, on the screen that sets the cutoff
+          that moves it. An admin choosing when orders close is choosing where
+          this day sits on it. */}
+      <DayStages
+        serviceDate={serviceDate}
+        status={status}
+        orderCutoffAt={menu?.orderCutoffAt ?? null}
+        org={org}
+        now={appNow()}
+        className="max-w-md"
+      />
 
       <WeekNav
         label={weekRangeLabel(strip[0] ?? weekOf, strip[strip.length - 1] ?? weekOf)}
