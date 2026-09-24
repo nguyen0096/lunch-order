@@ -211,7 +211,7 @@ describe("Bill, nothing owed", () => {
     expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
     // 21 to 27 September 2026 is a Monday to Sunday week, so it closes Monday.
     expect(screen.getByText("This week is still open. It closes Monday.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy the amount" })).not.toBeInTheDocument();
   });
 
   it("explains itself to somebody who has never been billed at all", async () => {
@@ -241,7 +241,7 @@ describe("Bill, nothing owed", () => {
     // Nothing to open and nothing to reveal: the transfer block is the card.
     expect(screen.getByText(REF)).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
-    expect(screen.getByText("Any amount")).toBeInTheDocument();
+    expect(screen.queryByText("Amount")).not.toBeInTheDocument();
   });
 
   it("still hands out the reference when the office has set no bank details", async () => {
@@ -302,7 +302,7 @@ describe("Bill, unpaid", () => {
 
     expect(await screen.findByText("You owe")).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(270_000));
-    expect(screen.getByText("8 meals across 2 weeks.")).toBeInTheDocument();
+    expect(screen.queryByText(/received\./)).not.toBeInTheDocument();
   });
 
   it("says a week is in the total above rather than carried into another week", async () => {
@@ -348,7 +348,7 @@ describe("Bill, partial", () => {
     expect(await screen.findByText("You owe")).toBeInTheDocument();
     expect(headline("You owe")).toHaveTextContent(money(80_000));
     expect(
-      screen.getByText(`4 meals billed, ${money(100_000)} received.`),
+      screen.getByText(`${money(180_000)} billed, ${money(100_000)} received.`),
     ).toBeInTheDocument();
     expect(screen.getByText("Part paid")).toBeInTheDocument();
 
@@ -380,13 +380,12 @@ describe("Bill, paid", () => {
     // figure says how much you have got, and it is the same number in the
     // same place in all three states.
     expect(headline("Nothing to pay")).toHaveTextContent(money(0));
-    expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
+    expect(screen.getByText(`${money(180_000)} billed, all of it paid.`)).toBeInTheDocument();
     // 03:00Z is mid-morning in Ho Chi Minh City, which is the office's day.
     expect(screen.getByText("Settled 22 September.")).toBeInTheDocument();
     // A static code, because the amount is the payer's to choose.
     expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
-    expect(screen.getByText("Any amount")).toBeInTheDocument();
-    expect(screen.getByText(/Your bank will ask for this/)).toBeInTheDocument();
+    expect(screen.queryByText("Amount")).not.toBeInTheDocument();
   });
 
   it("still says the current week is running", async () => {
@@ -409,9 +408,9 @@ describe("Bill, paid", () => {
     renderBill();
 
     expect(await screen.findByText("Nothing to pay")).toBeInTheDocument();
-    // The meals happened; the charge did not. Nothing to pay, and the week
-    // below still says Waived so it is clear why.
-    expect(screen.getByText("4 meals, all settled.")).toBeInTheDocument();
+    // The meals happened; the charge did not. Nothing was billed, nothing is
+    // owed, and the week below still says Waived so it is clear why.
+    expect(screen.getByText("Nothing has been billed to you yet.")).toBeInTheDocument();
     expect(screen.getByText("Waived")).toBeInTheDocument();
     // The sentence moved to the week it is about: the account says only that
     // there is nothing to pay, because for the account there is not.
@@ -762,14 +761,15 @@ describe("Bill, the amount to send", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the row but offers no figure when nothing is owed", async () => {
-    // "How much?" is asked in every state, so the row stays and says who
-    // answers it. There is nothing to copy, because there is no figure.
+  it("drops the row entirely when nothing is owed", async () => {
+    // A row reading "Any amount" under a headline that already says there is
+    // nothing to pay restated the headline. The list is three rows, and the
+    // code below is the one that carries no figure.
     serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
     renderBill();
 
-    expect(await screen.findByText("Any amount")).toBeInTheDocument();
-    expect(screen.getByText(/Your bank will ask for this/)).toBeInTheDocument();
+    expect(await screen.findByText(REF)).toBeInTheDocument();
+    expect(screen.queryByText("Amount")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Copy the amount" })).not.toBeInTheDocument();
   });
 

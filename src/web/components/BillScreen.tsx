@@ -134,7 +134,7 @@ export function BillScreen({ me, org }: ScreenProps) {
       <article className="flex flex-col gap-6 rounded-lg border border-border bg-surface-raised p-5 sm:p-6">
         <h1 className="text-lg font-semibold">Your account</h1>
 
-        <AccountAmount account={bill.account} currency={org.currency} weeks={billed} />
+        <AccountAmount account={bill.account} currency={org.currency} />
 
         {/* The count is not repeated here: every billed week below carries its
             own note against the week the meal was eaten in, which is the
@@ -215,22 +215,9 @@ export function BillScreen({ me, org }: ScreenProps) {
  * to the Amount row below, which is the figure somebody pays with; copying a
  * credit balance into a bank's amount field would be paying it again.
  */
-function AccountAmount({
-  account,
-  currency,
-  weeks,
-}: {
-  account: Account;
-  currency: Currency;
-  weeks: BillWeek[];
-}) {
+function AccountAmount({ account, currency }: { account: Account; currency: Currency }) {
   const owed = owedMinor(account);
   const credit = creditMinor(account);
-  const meals = weeks.reduce((n, w) => n + (w.statement?.mealCount ?? 0), 0);
-  const behind = weeks.filter(
-    (w) => w.statement !== null && outstandingMinor(w.statement) > 0,
-  ).length;
-  const mealWord = `${meals} ${meals === 1 ? "meal" : "meals"}`;
 
   if (credit > 0) {
     return (
@@ -243,21 +230,24 @@ function AccountAmount({
   if (owed === 0) {
     return (
       <Headline label="Nothing to pay" amount={formatMoney(0, currency)}>
-        {meals === 0 ? "Nothing has been billed to you yet." : `${mealWord}, all settled.`}
+        {account.chargedMinor === 0
+          ? "Nothing has been billed to you yet."
+          : `${formatMoney(account.chargedMinor, currency)} billed, all of it paid.`}
       </Headline>
     );
   }
 
   return (
     <Headline label="You owe" amount={formatMoney(owed, currency)}>
-      {/* "0 d received" is not information, it is an accusation. Somebody who
-          has paid nothing yet knows that; saying it back to them in the one
-          line that explains their balance spends the line on nothing. */}
-      {behind > 1
-        ? `${mealWord} across ${behind} weeks.`
-        : account.creditedMinor > 0
-          ? `${mealWord} billed, ${formatMoney(account.creditedMinor, currency)} received.`
-          : `${mealWord} billed.`}
+      {/* Only the arithmetic behind the figure. A meal count is a different
+          question, asked of the weeks below, and counting meals here left the
+          one line under the balance saying nothing about the money. With
+          nothing received there is no arithmetic to show, and "0 d received"
+          is not information, it is an accusation. */}
+      {account.creditedMinor > 0
+        ? `${formatMoney(account.chargedMinor, currency)} billed, ` +
+          `${formatMoney(account.creditedMinor, currency)} received.`
+        : null}
     </Headline>
   );
 }
@@ -307,8 +297,8 @@ function Headline({
   label: string;
   /** Always printed, including the zero: it is the standing, not a call to act. */
   amount: string;
-  /** What the figure is made of, in one sentence. */
-  children: React.ReactNode;
+  /** What the figure is made of, in one sentence, where there is one. */
+  children?: React.ReactNode;
 }) {
   // One paragraph for the label and the figure, so a screen reader says "you
   // owe 180.000 ₫" rather than reading a stray number with no idea what it is.
@@ -318,7 +308,7 @@ function Headline({
         <span className="text-sm text-muted">{label}</span>
         <span className="tabular text-3xl font-semibold">{amount}</span>
       </p>
-      <p className="max-w-prose text-sm text-muted">{children}</p>
+      {children != null && <p className="max-w-prose text-sm text-muted">{children}</p>}
     </div>
   );
 }

@@ -203,32 +203,45 @@ act on. Leading with a week meant paying that week: somebody three weeks behind
 read the newest figure and paid it. The weeks are still here, below, as the
 history behind that number rather than as a list of things separately payable.
 
-The amount is large and carries **its own copy button**, because a person
-paying moves two values off this screen into their bank and they go in
-different fields. It copies as plain digits: `45.000 ₫` in an amount field
-fails, and on VND a grouping dot read as a decimal point turns 45.000 into
-forty-five dong.
+The figure is always drawn, including the zero, and always in the same place:
+the label says whether there is anything to do, the figure says how much you
+have got. One line under it, and it holds the arithmetic behind the figure and
+nothing else -- `405.000 ₫ billed, 225.000 ₫ received.` A meal count answered a
+different question, which the weeks below already answer, and with nothing
+received there is no arithmetic, so no line: "0 ₫ received" is not information,
+it is an accusation.
 
-The `payment_ref` sits under it, prominent and marked **Required**, because it
-is the part that gets mistyped and getting it wrong is not something anybody
-can put right afterwards -- a transfer whose memo omits it never reaches this
-app at all, so it is not unmatched money waiting for an admin, it is money
-nobody here can see. It is **the same reference every week**: it carries no
-week number, so it can be saved in a banking app. VietQR beneath it, carrying
-the amount and the reference both.
+**One transfer block, one QR.** The code and the details beside it are the same
+transfer read two ways, for the two ways people pay: scan, or type it into a
+banking app by hand. Every copyable detail carries an icon copy button, and
+there is no field for editing the amount -- the amount is typed in the bank app
+where the transfer is actually confirmed, and a second amount box here was one
+more thing to get wrong.
+
+| Row | Shown |
+| --- | --- |
+| Amount | only when something is owed. Copies as plain digits: `45.000 ₫` in an amount field fails, and on VND a grouping dot read as a decimal point turns 45.000 into forty-five dong |
+| Reference | always |
+| Account | always, with the account holder's name under it |
+| Bank | always |
+
+The reference is the part that gets mistyped, and getting it wrong is not
+something anybody can put right afterwards: a transfer whose memo omits it
+never reaches this app at all, so it is not unmatched money waiting for an
+admin, it is money nobody here can see. It is **the same reference every
+week** -- it carries no week number, so it can be saved in a banking app.
 
 **A negative balance is credit, not an error.** It is what a top-up looks like
-once it is on the books, and the screen says so and offers nothing to pay.
-Handing somebody the means to pay what they do not owe is an instruction to
-overpay.
+once it is on the books, and the screen says so. The block stays: somebody in
+credit is exactly the person who tops up again, and the note says what happens
+to anything above what is owed.
 
 | State | |
 | --- | --- |
-| nothing billed | "Nothing owed yet", and when the open week closes |
-| owing | the balance, its copy button, the reference, the QR |
-| owing across weeks | the same, and how many weeks it is made of |
+| nothing billed | "Nothing to pay", 0, and when the open week closes |
+| owing | the balance, the Amount row, the reference, the QR carrying both |
 | in credit | what is in hand, and that it comes off the next lunches |
-| settled | "Nothing to pay", and how many meals that settled. No call to action |
+| settled | "Nothing to pay", what was billed and paid. No call to action |
 
 A meal the caterer has not priced is in no total, so wherever a total appears
 the screen says how many are waiting and that they arrive on a later bill. A

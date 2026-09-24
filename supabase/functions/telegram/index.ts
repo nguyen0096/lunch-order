@@ -785,15 +785,14 @@ async function onMe(chatId: number, links: Link[]): Promise<void> {
               on b.org_id = m.org_id and b.profile_id = m.profile_id
            where m.org_id = ${link.org.id}
              and m.profile_id = ${link.profileId}::uuid`)[0] ?? NO_ACCOUNT,
-        // Waived weeks are outside the balance, so they are outside the meal
-        // count that explains it too.
-        weeks: (await tx<Array<{ meals: number; behind: number }>>`
-          select coalesce(sum(meal_count), 0)::int as meals,
-                 count(*) filter (where status in ('unpaid','partial'))::int as behind
+        // Waived weeks are outside the balance, so they are outside the count
+        // of weeks that explains it too.
+        weeks: (await tx<Array<{ behind: number }>>`
+          select count(*) filter (where status in ('unpaid','partial'))::int as behind
             from public.billing_statements
            where org_id = ${link.org.id}
              and profile_id = ${link.profileId}::uuid
-             and status <> 'waived'`)[0] ?? { meals: 0, behind: 0 },
+             and status <> 'waived'`)[0] ?? { behind: 0 },
         // Read straight off the member's own rows rather than through
         // v_order_charges: order_items.profile_id is the person who PLACED the
         // order, so those are the rows order_items_own actually shows them.
@@ -822,7 +821,7 @@ async function onMe(chatId: number, links: Link[]): Promise<void> {
 function renderAccount(
   me: {
     account: AccountRow;
-    weeks: { meals: number; behind: number };
+    weeks: { behind: number };
     unpriced: number;
   },
   link: Link,
@@ -842,7 +841,6 @@ function renderAccount(
     balanceMinor: me.account.balance_minor,
     chargedMinor: me.account.charged_minor,
     creditedMinor: me.account.credited_minor,
-    mealCount: me.weeks.meals,
     weeksBehind: me.weeks.behind,
     paymentRef: me.account.payment_ref,
     unpricedMeals: me.unpriced,

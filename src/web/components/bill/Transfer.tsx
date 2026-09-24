@@ -5,6 +5,7 @@
 // paint strings, which lets the code be drawn in `currentColor` from the design
 // tokens instead of a hardcoded black. It encodes; the payload is ours.
 import { QRCodeSVG } from "qrcode.react";
+import { CopyIcon } from "lucide-react";
 import { Action, useAction } from "@/ui";
 import { vietQrPayload } from "../../../shared/vietqr.js";
 import { bankByBin } from "../../../shared/banks.js";
@@ -93,45 +94,32 @@ export function Transfer({
       )}
 
       <div className="flex min-w-0 flex-1 flex-col gap-5">
-        {account !== null && (
+        {/* Only when there is a figure. A row reading "Any amount" with a
+            caption explaining that your bank will ask for it restated the
+            headline directly above it, which already says there is nothing to
+            pay. The list drops to three rows and says nothing false. */}
+        {account !== null && owedMinor > 0 && (
           <Row label="Amount">
-            {owedMinor > 0 ? (
-              <>
-                <div className="flex flex-wrap items-center gap-3">
-                  <p className="tabular text-text">{formatMoney(owedMinor, currency)}</p>
-                  <CopyButton
-                    thing="amount"
-                    // Digits only. A grouping dot in a bank's amount field is
-                    // read as a decimal point by some of them, and on VND that
-                    // turns 180.000 into a hundred and eighty dong.
-                    value={plainAmount(owedMinor, currency)}
-                    success="Amount copied"
-                  />
-                </div>
-                <p className="max-w-prose text-sm text-muted">
-                  Send more if you like; anything above this stays on your account.
-                </p>
-              </>
-            ) : (
-              // The row stays rather than the list dropping to three: "how
-              // much?" is asked in every state, and this is where it is asked.
-              // Nothing to copy, because there is no figure to copy.
-              <>
-                <p className="text-muted">Any amount</p>
-                <p className="max-w-prose text-sm text-muted">
-                  Your bank will ask for this. What you send sits on your account and
-                  comes off your next lunches.
-                </p>
-              </>
-            )}
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="tabular text-text">{formatMoney(owedMinor, currency)}</p>
+              <CopyButton
+                thing="amount"
+                // Digits only. A grouping dot in a bank's amount field is
+                // read as a decimal point by some of them, and on VND that
+                // turns 180.000 into a hundred and eighty dong.
+                value={plainAmount(owedMinor, currency)}
+                success="Amount copied"
+              />
+            </div>
+            <p className="max-w-prose text-sm text-muted">
+              Send more if you like; anything above this stays on your account.
+            </p>
           </Row>
         )}
 
         <Row label="Reference">
           <div className="flex flex-wrap items-center gap-3">
-            <p className="tabular text-xl font-semibold tracking-wider text-text">
-              {paymentRef}
-            </p>
+            <p className="tabular font-semibold tracking-wide text-text">{paymentRef}</p>
             <CopyButton thing="reference" value={paymentRef} success="Reference copied" />
           </div>
           {/* The failure moved. With a code filling the memo in, the common
@@ -232,17 +220,20 @@ function CopyButton({
   return (
     <Action
       variant="outline"
-      size="sm"
+      size="icon-sm"
       reason={
         clipboard
           ? null
           : `Your browser will not let the page copy. Select the ${thing} and copy it by hand.`
       }
       pending={copy.pending}
+      // The label is the only thing naming this control now, so it has to say
+      // which of four it is rather than "Copy".
       aria-label={`Copy the ${thing}`}
+      title={`Copy the ${thing}`}
       onClick={() => void copy.run(value)}
     >
-      Copy
+      <CopyIcon />
     </Action>
   );
 }

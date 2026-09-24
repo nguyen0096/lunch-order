@@ -440,8 +440,6 @@ export type AccountMessage = {
   balanceMinor: number;
   chargedMinor: number;
   creditedMinor: number;
-  /** Meals on every week billed so far, so a settled account can name them. */
-  mealCount: number;
   /** Billed weeks with something still outstanding. */
   weeksBehind: number;
   /**
@@ -483,7 +481,6 @@ export function renderAccountText(
 ): string {
   const owed = Math.max(a.balanceMinor, 0);
   const credit = Math.max(-a.balanceMinor, 0);
-  const meals = `${a.mealCount} ${a.mealCount === 1 ? "meal" : "meals"}`;
   const lines: string[] = [];
 
   if (credit > 0) {
@@ -495,16 +492,26 @@ export function renderAccountText(
   } else if (owed === 0) {
     lines.push("<b>Nothing to pay.</b>");
     lines.push(
-      a.mealCount === 0 ? "Nothing has been billed to you yet." : `${meals}, all settled.`,
+      a.chargedMinor === 0
+        ? "Nothing has been billed to you yet."
+        : `${escapeHtml(money(a.chargedMinor))} billed, all of it paid.`,
     );
   } else {
     lines.push(`<b>You owe ${escapeHtml(money(owed))}.</b>`);
-    lines.push(
-      a.weeksBehind <= 1
-        ? `${meals} billed, ${escapeHtml(money(a.creditedMinor))} received.`
-        : `Across ${a.weeksBehind} weeks. ${escapeHtml(money(a.chargedMinor))} billed, ` +
-          `${escapeHtml(money(a.creditedMinor))} received.`,
-    );
+    // The arithmetic behind the figure, and the span it covers where that is
+    // more than one week: unlike the Bill screen there is no table of weeks
+    // under this to show it. Nothing received means there is no arithmetic,
+    // and "0 d received" is not information.
+    const sum =
+      a.creditedMinor > 0
+        ? `${escapeHtml(money(a.chargedMinor))} billed, ` +
+          `${escapeHtml(money(a.creditedMinor))} received.`
+        : null;
+    if (a.weeksBehind > 1) {
+      lines.push(sum === null ? `Across ${a.weeksBehind} weeks.` : `Across ${a.weeksBehind} weeks. ${sum}`);
+    } else if (sum !== null) {
+      lines.push(sum);
+    }
   }
 
   // Directly under the number it qualifies, so the two are never read apart.

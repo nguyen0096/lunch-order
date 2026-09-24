@@ -394,7 +394,6 @@ function account(over: Partial<AccountMessage> = {}): AccountMessage {
     balanceMinor: 95_000,
     chargedMinor: 95_000,
     creditedMinor: 0,
-    mealCount: 2,
     weeksBehind: 1,
     paymentRef: "LUNCHNEIL",
     unpricedMeals: 0,
@@ -523,7 +522,7 @@ describe("what /me owes", () => {
     const text = renderAccountText(
       account({
         balanceMinor: 180_000, chargedMinor: 405_000, creditedMinor: 225_000,
-        mealCount: 9, weeksBehind: 3,
+        weeksBehind: 3,
       }),
       money,
       null,
@@ -534,11 +533,20 @@ describe("what /me owes", () => {
     );
   });
 
-  it("names the meals rather than the weeks while only one week is short", () => {
+  it("says nothing under the figure when nothing has been received", () => {
+    // "0 d received" is not information, it is an accusation, and a meal
+    // count answers a question nobody asked of a balance.
     const text = renderAccountText(account({ creditedMinor: 0 }), money, null);
     expect(text).toContain(`<b>You owe ${money(95_000)}.</b>`);
-    expect(text).toContain(`2 meals billed, ${money(0)} received.`);
+    expect(text).not.toContain("billed");
     expect(text).not.toContain("Across");
+  });
+
+  it("shows the arithmetic once something has been received", () => {
+    const text = renderAccountText(
+      account({ balanceMinor: 75_000, creditedMinor: 20_000 }), money, null,
+    );
+    expect(text).toContain(`${money(95_000)} billed, ${money(20_000)} received.`);
   });
 
   /**
@@ -549,7 +557,7 @@ describe("what /me owes", () => {
   it("says somebody is in credit, and offers them nothing to pay", () => {
     const text = renderAccountText(
       account({
-        balanceMinor: -50_000, chargedMinor: 405_000, creditedMinor: 455_000, mealCount: 9,
+        balanceMinor: -50_000, chargedMinor: 405_000, creditedMinor: 455_000,
       }),
       money,
       QR,
@@ -568,18 +576,14 @@ describe("what /me owes", () => {
       QR,
     );
     expect(text).toContain("<b>Nothing to pay.</b>");
-    expect(text).toContain("2 meals, all settled.");
+    expect(text).toContain(`${money(95_000)} billed, all of it paid.`);
     expect(text).not.toContain("Pay by QR");
   });
 
-  it("counts one meal as one meal", () => {
-    expect(
-      renderAccountText(account({ balanceMinor: 0, mealCount: 1 }), money, null),
-    ).toContain("1 meal, all settled.");
-  });
-
   it("says a total is incomplete rather than letting it read as the final word", () => {
-    const text = renderAccountText(account({ unpricedMeals: 1 }), money, null);
+    const text = renderAccountText(
+      account({ balanceMinor: 75_000, creditedMinor: 20_000, unpricedMeals: 1 }), money, null,
+    );
     expect(text).toContain(
       "One meal is still waiting on the caterer's price, so it is not counted here. " +
         "It goes on your bill once the price arrives.",
@@ -601,7 +605,7 @@ describe("what /me owes", () => {
   it("does not call an empty account nothing when a meal is waiting on a price", () => {
     expect(
       renderAccountText(
-        account({ balanceMinor: 0, chargedMinor: 0, mealCount: 0, weeksBehind: 0 }),
+        account({ balanceMinor: 0, chargedMinor: 0, weeksBehind: 0 }),
         money,
         null,
       ),
@@ -609,7 +613,7 @@ describe("what /me owes", () => {
 
     const waiting = renderAccountText(
       account({
-        balanceMinor: 0, chargedMinor: 0, mealCount: 0, weeksBehind: 0, unpricedMeals: 2,
+        balanceMinor: 0, chargedMinor: 0, weeksBehind: 0, unpricedMeals: 2,
       }),
       money,
       null,
