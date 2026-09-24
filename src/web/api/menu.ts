@@ -246,6 +246,53 @@ export async function fetchPublishImpact(args: {
   return { standing: covered.size, orders: orders.count ?? 0, chosen: chosen.count ?? 0 };
 }
 
+/**
+ * Who chose each dish on a menu, by `menu_items.id`.
+ *
+ * The editor used to say "4 orders already exist on this day" and leave the
+ * admin to work out which dish they were on and whose they were. That is the
+ * one question worth answering before removing a dish or calling lunch off,
+ * and it is the admin who has to ring those people.
+ *
+ * Read from `order_items` rather than `orders`: an order with no dish chosen
+ * belongs to nobody's dish and must not be counted against one.
+ */
+export async function fetchDishTakers(menuId: number): Promise<Map<number, string[]>> {
+  const { data, error } = await supabase
+    .from("order_items")
+    .select("menu_item_id, profile_id, orders!inner(status)")
+    .eq("menu_id", menuId)
+    .eq("orders.status", "placed");
+  if (error) throw error;
+
+  const ids = [...new Set((data ?? []).map((r) => r.profile_id as string))];
+  if (ids.length === 0) return new Map();
+
+  // Names come from the membership, not the profile: an office knows people by
+  // what they are called at work, and that is the column the board uses too.
+  const { data: people, error: peopleError } = await supabase
+    .from("memberships")
+    .select("profile_id, display_name")
+    .in("profile_id", ids);
+  if (peopleError) throw peopleError;
+
+  const names = new Map(
+    (people ?? []).map((m) => [m.profile_id as string, (m.display_name as string | null) ?? ""]),
+  );
+
+  const out = new Map<number, string[]>();
+  for (const row of data ?? []) {
+    const id = row.menu_item_id as number | null;
+    if (id === null) continue;
+    const name = names.get(row.profile_id as string) ?? "";
+    const list = out.get(id) ?? [];
+    list.push(name === "" ? "Somebody" : name);
+    out.set(id, list);
+  }
+  for (const [, list] of out) list.sort((a, b) => a.localeCompare(b));
+  return out;
+}
+
 /* -------------------------------------------------- LLM parse assist */
 
 export type AssistedMenu = {

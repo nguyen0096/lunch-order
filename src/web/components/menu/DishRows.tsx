@@ -1,5 +1,5 @@
 import { Trash2Icon } from "lucide-react";
-import { Button, cn } from "@/ui";
+import { Action, cn } from "@/ui";
 import type { DraftDish } from "../../api.js";
 import type { ItemWarning, ParsedItem } from "../../../shared/menuParser.js";
 import { dishName } from "../../../shared/dishName.js";
@@ -227,6 +227,33 @@ export function toDrafts(rows: DishRow[]): DraftDish[] {
   });
 }
 
+/**
+ * Who is having this dish, as a sentence.
+ *
+ * Null for a row that nobody has chosen, and for one that has not been saved
+ * yet: a dish being typed has no id and therefore no orders, which is not the
+ * same fact as a saved dish nobody wanted.
+ */
+function takerNote(row: DishRow, takers: Map<number, string[]>): string | null {
+  if (row.id === null) return null;
+  const names = takers.get(row.id);
+  if (names === undefined || names.length === 0) return null;
+  if (names.length <= 3) return `Ordered by ${listNames(names)}`;
+  return `Ordered by ${listNames(names.slice(0, 3))} and ${names.length - 3} more`;
+}
+
+/** `a`, `a and b`, `a, b and c`. */
+function listNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+/** Null when the dish can go; otherwise why the database will refuse it. */
+function removeReason(row: DishRow, takers: Map<number, string[]>): string | null {
+  const note = takerNote(row, takers);
+  return note === null ? null : `${note}. Removing a dish somebody chose will be refused`;
+}
+
 function rowLabel(row: DishRow, index: number): string {
   return row.name.trim() === "" ? `dish ${index + 1}` : row.name.trim();
 }
@@ -244,6 +271,7 @@ export function DishRows({
   rows,
   currency,
   readOnlyReason,
+  takers,
   onChange,
   onRemove,
 }: {
@@ -251,6 +279,8 @@ export function DishRows({
   currency: Currency;
   /** Null when the menu can be edited, otherwise the sentence saying why not. */
   readOnlyReason: string | null;
+  /** Who chose each dish, by `menu_items.id`. Empty until it loads. */
+  takers: Map<number, string[]>;
   onChange: (key: string, patch: Partial<DishRow>) => void;
   onRemove: (key: string) => void;
 }) {
@@ -264,7 +294,12 @@ export function DishRows({
               key={row.key}
               className="flex items-baseline justify-between gap-4 bg-surface-raised px-4 py-3"
             >
-              <span className="font-medium">{row.name}</span>
+              <span className="flex flex-col gap-0.5">
+                <span className="font-medium">{row.name}</span>
+                {takerNote(row, takers) !== null && (
+                  <span className="text-xs text-muted">{takerNote(row, takers)}</span>
+                )}
+              </span>
               {/* Not `formatMoney(x ?? 0)`: on a frozen menu a zero would read
                   as a meal the office got for nothing. */}
               <span className={cn("text-muted", read !== null && "tabular")}>
@@ -360,19 +395,26 @@ export function DishRows({
               </div>
 
               <div className="flex justify-end sm:block">
-                <Button
+                <Action
                   variant="ghost"
                   size="icon-sm"
                   title={`Remove ${label}`}
                   aria-label={`Remove ${label}`}
+                  // The trigger refuses this anyway. Saying so here, with the
+                  // names, turns a refusal somebody has to read twice into the
+                  // list of people they now have to ring.
+                  reason={removeReason(row, takers)}
                   onClick={() => onRemove(row.key)}
                 >
                   <Trash2Icon />
-                </Button>
+                </Action>
               </div>
 
-              {(flags.length > 0 || row.source !== null) && (
+              {(flags.length > 0 || row.source !== null || takerNote(row, takers) !== null) && (
                 <div className="flex flex-col gap-1 sm:col-span-3 sm:-mt-1 sm:pl-1">
+                  {takerNote(row, takers) !== null && (
+                    <p className="text-xs text-muted">{takerNote(row, takers)}</p>
+                  )}
                   {flags.map((f) => (
                     <p
                       key={f.text}

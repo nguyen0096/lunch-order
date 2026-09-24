@@ -5,6 +5,7 @@ import {
   assistParse,
   fetchMenuCalendar,
   fetchMenuEditor,
+  fetchDishTakers,
   fetchPublishImpact,
   humanError,
   publishMenu,
@@ -116,6 +117,8 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const [menu, setMenu] = useState<EditableMenu | null>(null);
   const [impact, setImpact] = useState<PublishImpact | null>(null);
+  // Who chose each dish, by menu_items.id. Empty when the day has no menu yet.
+  const [takers, setTakers] = useState<Map<number, string[]>>(() => new Map());
   const [calendar, setCalendar] = useState<Map<string, { status: string; dishes: number }>>(
     () => new Map(),
   );
@@ -151,6 +154,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
         serviceDate,
         menuId: editable?.id ?? null,
       });
+      setTakers(editable === null ? new Map() : await fetchDishTakers(editable.id));
 
       const incoming = editable?.sourceText ?? "";
       setText((current) => (current === loadedText.current ? incoming : current));
@@ -652,6 +656,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
                 rows={rows}
                 currency={org.currency}
                 readOnlyReason={frozen}
+                takers={takers}
                 onChange={patchRow}
                 onRemove={removeRow}
               />

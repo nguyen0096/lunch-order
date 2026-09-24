@@ -618,6 +618,7 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
           <MenuPanel
             day={panelDay}
             org={org}
+            now={now}
             reason={cellReason({ day: panelDay, isAdminHere: admin, now, timeZone: org.timezone })}
           />
         )
@@ -761,12 +762,29 @@ export function BoardScreen({ me, org, role }: { me: Me; org: Org; role: Role })
  * wasting. The column heads switch which day it shows. With this here, a cell
  * can go back to being nothing but an action.
  */
-function MenuPanel({ day, org, reason }: { day: BoardDay; org: Org; reason: string | null }) {
+function MenuPanel({
+  day,
+  org,
+  now,
+  reason,
+}: {
+  day: BoardDay;
+  org: Org;
+  now: Date;
+  reason: string | null;
+}) {
   // The reason, when there is one, already says the window is shut and when it
   // shut, in the database's own words.
+  //
+  // An admin never gets a reason -- they are inside the window on every day --
+  // so without the tense this panel told the one person who watches cutoffs
+  // that a day "closes" at a time that went by this morning.
+  const shut = day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt);
   const when =
     reason ??
-    (day.orderCutoffAt === null ? null : `Closes ${cutoffLabel(day.orderCutoffAt, org.timezone)}`);
+    (day.orderCutoffAt === null
+      ? null
+      : `${shut ? "Closed" : "Closes"} ${cutoffLabel(day.orderCutoffAt, org.timezone)}`);
 
   return (
     <section

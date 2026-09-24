@@ -23,6 +23,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchMenuEditor: vi.fn(),
     fetchMenuCalendar: vi.fn(),
     fetchPublishImpact: vi.fn(),
+    fetchDishTakers: vi.fn(),
     publishMenu: vi.fn(),
     assistParse: vi.fn(),
     setMenuStatus: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
 const fetchMenuEditor = vi.mocked(api.fetchMenuEditor);
 const fetchMenuCalendar = vi.mocked(api.fetchMenuCalendar);
 const fetchPublishImpact = vi.mocked(api.fetchPublishImpact);
+const fetchDishTakers = vi.mocked(api.fetchDishTakers);
 const publishMenu = vi.mocked(api.publishMenu);
 const setMenuStatus = vi.mocked(api.setMenuStatus);
 const assistParse = vi.mocked(api.assistParse);
@@ -121,10 +123,13 @@ function impact(over: Partial<PublishImpact> = {}): PublishImpact {
   return { standing: 3, orders: 0, chosen: 0, ...over };
 }
 
-function serve(over: { menu?: EditableMenu | null; impact?: PublishImpact } = {}) {
+function serve(
+  over: { menu?: EditableMenu | null; impact?: PublishImpact; takers?: Map<number, string[]> } = {},
+) {
   fetchMenuEditor.mockResolvedValue(over.menu === undefined ? null : over.menu);
   fetchMenuCalendar.mockResolvedValue(new Map());
   fetchPublishImpact.mockResolvedValue(over.impact ?? impact());
+  fetchDishTakers.mockResolvedValue(over.takers ?? new Map());
 }
 
 function renderMenu() {
@@ -792,6 +797,58 @@ describe("Every state the menu can be in", () => {
 
 /* ----------------------------------------------------- changing the status */
 
+describe("Who is having each dish", () => {
+  it("names them under the dish, so the admin knows who to ring", async () => {
+    serve({
+      menu: menu({ status: "published" }),
+      takers: new Map([[101, ["Quy", "Tèo"]]]),
+    });
+    renderMenu();
+    await ready();
+
+    expect(await screen.findByText("Ordered by Quy and Tèo")).toBeInTheDocument();
+    // A dish nobody chose says nothing rather than "Ordered by nobody".
+    expect(screen.queryByText(/Ordered by.*Bún bò/)).not.toBeInTheDocument();
+  });
+
+  it("counts the rest once the list would run long", async () => {
+    serve({
+      menu: menu({ status: "published" }),
+      takers: new Map([[101, ["An", "Binh", "Quy", "Tèo", "Vy"]]]),
+    });
+    renderMenu();
+    await ready();
+
+    expect(await screen.findByText("Ordered by An, Binh and Quy and 2 more")).toBeInTheDocument();
+  });
+
+  it("refuses to remove a dish somebody chose, and says whose it is", async () => {
+    const user = userEvent.setup();
+    serve({
+      menu: menu({ status: "published" }),
+      takers: new Map([[101, ["Tèo"]]]),
+    });
+    renderMenu();
+    await ready();
+
+    const remove = screen.getByRole("button", { name: "Remove Cơm gà" });
+    await waitFor(() => expect(remove).toHaveAttribute("aria-disabled", "true"));
+    await user.click(remove);
+
+    // Still there: the row survives a press the database would have refused.
+    expect(screen.getByLabelText("Price of Cơm gà")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Ordered by Tèo. Removing a dish somebody chose will be refused").length,
+    ).toBeGreaterThan(0);
+
+    // The dish nobody took goes without argument.
+    await user.click(screen.getByRole("button", { name: "Remove Bún bò" }));
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Price of Bún bò")).not.toBeInTheDocument(),
+    );
+  });
+});
+
 describe("Changing the menu's status", () => {
   const DAY = weekdayName(DATE);
   const past = () => new Date(Date.now() - 3_600_000).toISOString();
@@ -802,6 +859,7 @@ describe("Changing the menu's status", () => {
     fetchMenuEditor.mockResolvedValueOnce(first).mockResolvedValue(then);
     fetchMenuCalendar.mockResolvedValue(new Map());
     fetchPublishImpact.mockResolvedValue(impact(over));
+    fetchDishTakers.mockResolvedValue(new Map());
   }
 
   const reopenButton = () => screen.getByRole("button", { name: "Reopen ordering" });
