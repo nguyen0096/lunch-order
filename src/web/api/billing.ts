@@ -196,10 +196,13 @@ export async function fetchBill(args: {
     // A person with no membership row here cannot happen, but a zeroed
     // account is the right answer for "nothing charged, nothing paid"
     // whatever the reason.
+    // Coerced, not trusted. These are `sum(bigint)`, which Postgres types as
+    // `numeric`, and PostgREST sends numeric as a JSON string to keep the
+    // precision. Left alone, `charged - credited` would concatenate.
     account: {
-      chargedMinor: accountRes.data?.charged_minor ?? 0,
-      creditedMinor: accountRes.data?.credited_minor ?? 0,
-      balanceMinor: accountRes.data?.balance_minor ?? 0,
+      chargedMinor: Number(accountRes.data?.charged_minor ?? 0),
+      creditedMinor: Number(accountRes.data?.credited_minor ?? 0),
+      balanceMinor: Number(accountRes.data?.balance_minor ?? 0),
     },
     payment: parsePaymentConfig(orgRes.data?.payment_config),
   };
@@ -309,6 +312,25 @@ export type PaymentsStatement = BillStatement & {
   shortCode: string;
 };
 
+/**
+ * One member and where their account stands, which is what an admin chases.
+ *
+ * A week says what was eaten. Only the account says whether anybody is behind,
+ * because a person's weeks no longer carry each other: three unpaid weeks are
+ * three statements and one balance.
+ */
+export type PaymentsPerson = {
+  profileId: string;
+  name: string;
+  /** The short code. It is what a bank memo usually carries. */
+  shortCode: string;
+  /** `LUNCH` + the short code, with no week in it, so a saved transfer keeps working. */
+  paymentRef: string;
+  /** Somebody deactivated still appears: leaving does not settle what is owed. */
+  active: boolean;
+  account: Account;
+};
+
 export type PaymentsPeriod = {
   periodId: number;
   periodStart: string;
@@ -340,6 +362,8 @@ export type PaymentsData = {
   periods: PaymentsPeriod[];
   /** Every member's statement across those weeks, by name. */
   statements: PaymentsStatement[];
+  /** Everybody in the office, by name, with their account. */
+  people: PaymentsPerson[];
   unmatched: UnmatchedPayment[];
 };
 
@@ -354,13 +378,39 @@ type AdminPeriodRow = {
 
 type AdminStatementRow = StatementRow & { profile_id: string };
 
+type MembershipRow = {
+  profile_id: string;
+  short_code: string;
+  display_name: string | null;
+  payment_ref: string;
+  status: string;
+  profiles: unknown;
+};
+
+type AccountRow = {
+  profile_id: string;
+  charged_minor: number | null;
+  credited_minor: number | null;
+  balance_minor: number | null;
+};
+
+type StrayRow = {
+  id: number;
+  amount_minor: number;
+  memo: string | null;
+  received_at: string;
+  provider: string;
+};
+
 /**
  * Everything the payments screen needs that is not tied to one week.
  *
  * Periods bound the query rather than time does: the screen shows a dozen
  * weeks, so the statements are fetched for exactly those periods. Fetching
  * every statement the org has ever had would grow without limit and answer no
- * question the screen asks.
+ * question the screen asks. Accounts are not bounded that way, because a debt
+ * older than the weeks on screen is still a debt and the person carrying it
+ * has to be reachable.
  */
 export async function fetchPayments(args: {
   orgId: number;
@@ -369,7 +419,7 @@ export async function fetchPayments(args: {
 }): Promise<PaymentsData> {
   const limit = args.limit ?? 12;
 
-  const [periodsRes, membersRes, unmatchedRes] = await Promise.all([
+  const [periodsRes, membersRes, accountsRes, strayRes] = await Promise.all([
     supabase
       .from("billing_periods")
       .select("id, period_start, period_end, status, line_count, total_minor")
@@ -380,20 +430,29 @@ export async function fetchPayments(args: {
       .limit(limit),
     supabase
       .from("memberships")
-      .select("profile_id, short_code, display_name, profiles ( full_name )")
+      .select("profile_id, short_code, display_name, payment_ref, status, profiles ( full_name )")
+      .eq("org_id", args.orgId),
+    supabase
+      .from("v_account_balance")
+      .select("profile_id, charged_minor, credited_minor, balance_minor")
       .eq("org_id", args.orgId),
     supabase
       .from("payments")
       .select("id, amount_minor, memo, received_at, provider")
       .eq("org_id", args.orgId)
-      .is("matched_statement_id", null)
+      // Whose money it is, not which week it hit. A top-up lands on a person
+      // and touches no statement, so `matched_statement_id` is null on money
+      // that found its owner perfectly well, and asking that column would put
+      // every top-up back at the top of the screen as a failure.
+      .is("profile_id", null)
       .order("received_at", { ascending: false })
       .limit(50),
   ]);
 
   if (periodsRes.error) throw periodsRes.error;
   if (membersRes.error) throw membersRes.error;
-  if (unmatchedRes.error) throw unmatchedRes.error;
+  if (accountsRes.error) throw accountsRes.error;
+  if (strayRes.error) throw strayRes.error;
 
   const periods: PaymentsPeriod[] = ((periodsRes.data ?? []) as AdminPeriodRow[]).map((p) => ({
     periodId: p.id,
@@ -404,13 +463,32 @@ export async function fetchPayments(args: {
     totalMinor: p.total_minor,
   }));
 
+  const accountOf = new Map<string, Account>();
+  for (const a of (accountsRes.data ?? []) as AccountRow[]) {
+    accountOf.set(a.profile_id, toAccount(a));
+  }
+
   const nameOf = new Map<string, string>();
   const codeOf = new Map<string, string>();
-  for (const m of membersRes.data ?? []) {
-    const prof = m.profiles as unknown as { full_name: string } | null;
-    nameOf.set(m.profile_id, m.display_name ?? prof?.full_name ?? m.short_code);
-    codeOf.set(m.profile_id, m.short_code);
-  }
+  const people: PaymentsPerson[] = ((membersRes.data ?? []) as MembershipRow[])
+    .map((m) => {
+      const prof = m.profiles as { full_name: string } | null;
+      const name = m.display_name ?? prof?.full_name ?? m.short_code;
+      nameOf.set(m.profile_id, name);
+      codeOf.set(m.profile_id, m.short_code);
+      return {
+        profileId: m.profile_id,
+        name,
+        shortCode: m.short_code,
+        paymentRef: m.payment_ref,
+        active: m.status === "active",
+        account: accountOf.get(m.profile_id) ?? ZERO_ACCOUNT,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+
+  const strays = (strayRes.data ?? []) as StrayRow[];
+  const resolved = await resolvedStrayIds(args.orgId, strays);
 
   let statementRows: AdminStatementRow[] = [];
   if (periods.length > 0) {
@@ -453,14 +531,62 @@ export async function fetchPayments(args: {
   return {
     periods,
     statements,
-    unmatched: (unmatchedRes.data ?? []).map((p) => ({
-      id: p.id,
-      amountMinor: p.amount_minor,
-      memo: p.memo,
-      receivedAt: p.received_at,
-      provider: p.provider,
-    })),
+    people,
+    unmatched: strays
+      .filter((p) => !resolved.has(p.id))
+      .map((p) => ({
+        id: p.id,
+        amountMinor: p.amount_minor,
+        memo: p.memo,
+        receivedAt: p.received_at,
+        provider: p.provider,
+      })),
   };
+}
+
+const ZERO_ACCOUNT: Account = { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 };
+
+/**
+ * `sum()` over a bigint column comes back as numeric, which PostgREST is
+ * entitled to send as a string, and a string would concatenate downstream.
+ */
+function toAccount(row: AccountRow): Account {
+  return {
+    chargedMinor: Number(row.charged_minor ?? 0),
+    creditedMinor: Number(row.credited_minor ?? 0),
+    balanceMinor: Number(row.balance_minor ?? 0),
+  };
+}
+
+/**
+ * Strays an admin has already dealt with.
+ *
+ * A stray keeps its null `profile_id` for good once it has been applied: the
+ * money went in as a second row carrying the person's reference, and naming an
+ * owner on this one as well would count a single arrival twice on that
+ * person's account. The row that took the money names this one in `raw`, and
+ * that pointer is what retires it here.
+ */
+async function resolvedStrayIds(orgId: number, strays: StrayRow[]): Promise<Set<number>> {
+  // Ordered newest first, so the last one bounds the search. An applied row
+  // copies the arrival it stands in for, so no resolver is older than that.
+  const oldest = strays.at(-1)?.received_at;
+  if (oldest === undefined) return new Set();
+
+  const { data, error } = await supabase
+    .from("payments")
+    .select("raw")
+    .eq("org_id", orgId)
+    .eq("provider", MANUAL_PROVIDER)
+    .gte("received_at", oldest);
+  if (error) throw error;
+
+  const ids = new Set<number>();
+  for (const row of data ?? []) {
+    const raw = row.raw as { resolves_payment_id?: number } | null;
+    if (typeof raw?.resolves_payment_id === "number") ids.add(raw.resolves_payment_id);
+  }
+  return ids;
 }
 
 /* ------------------------------------------------- what the caterer is owed */
@@ -592,10 +718,15 @@ export type RecordedPayment = {
   id: number;
   amountMinor: number;
   /**
-   * Null when the memo matched nobody. Recording a payment whose memo lands on
-   * no statement is silent in the database -- it is the normal webhook case --
-   * so the caller has to be told, or an admin types a reference wrongly and
-   * hears "Recorded".
+   * Whose the database decided it was, read back rather than assumed. The memo
+   * overrules the `profile_id` the insert named, so a memo carrying somebody
+   * else's reference moves the money to them, silently -- it is the normal
+   * webhook case -- and this is how the screen finds out.
+   */
+  profileId: string | null;
+  /**
+   * How far the money got: the newest week it reached. Null means it touched
+   * no week at all, which is no longer a failure -- a top-up is exactly that.
    */
   matchedStatementId: number | null;
 };
@@ -624,24 +755,38 @@ function randomSuffix(): string {
 }
 
 /**
- * Record money that arrived. The only write that moves a statement.
+ * Record money that arrived. The one write that moves an account.
  *
  * Every credit goes in as a row here rather than as an UPDATE to
  * `billing_statements`, so `payments_apply_on_insert` does the arithmetic and
  * decides the status whether the money came from the bank webhook or from an
- * admin who was handed cash. One path, one audit trail, one set of rules.
+ * admin who was handed cash. One path, one audit trail, one set of rules --
+ * and since `money_belongs_to_a_person` that trigger is also the only thing
+ * that redraws the allocation across somebody's weeks, which is why applying a
+ * stray payment still records a new row rather than renaming the old one.
+ *
+ * A top-up is this same write against somebody who owes nothing. Nothing
+ * special happens: the money sits on their account as credit and next week's
+ * meals eat into it.
  *
  * IRREVERSIBLE, and the interface has to say so. The trigger is AFTER INSERT
- * only: nothing decrements `paid_minor` on update or delete, and
+ * only: nothing takes a credit back on update or delete, and
  * `amount_minor > 0` blocks a corrective negative row. A payment recorded in
  * error can only be fixed in the database by hand.
  */
 export async function recordPayment(args: {
   orgId: number;
+  /**
+   * Whose money it is, named on the row rather than left to the memo alone.
+   * The trigger overwrites it from the memo when the memo carries a
+   * reference; this is what the money falls back to when it does not.
+   */
+  profileId: string;
   amountMinor: number;
   /**
-   * The bank memo. The trigger folds it to A-Z0-9 and matches the statement
-   * whose `payment_ref` appears inside it, so a person's reference is enough.
+   * The bank memo. The trigger folds it to A-Z0-9 and looks for the person
+   * whose `payment_ref` appears inside it, so a person's reference is enough
+   * -- and it is also what makes the trigger reallocate their weeks.
    */
   memo: string;
   recordedBy: string;
@@ -656,6 +801,7 @@ export async function recordPayment(args: {
       org_id: args.orgId,
       provider: MANUAL_PROVIDER,
       provider_txn_id: manualTxnId(args.receivedAt),
+      profile_id: args.profileId,
       amount_minor: args.amountMinor,
       memo: args.memo,
       received_at: args.receivedAt,
@@ -675,11 +821,11 @@ export async function recordPayment(args: {
   if (error) throw error;
 
   // Read back rather than trust the insert's own RETURNING. RETURNING is
-  // evaluated before AFTER triggers run, so `matched_statement_id` in the
-  // inserted row is null no matter what the trigger went on to do with it.
+  // evaluated before AFTER triggers run, so both columns below are whatever
+  // the insert sent, no matter what the trigger went on to do with them.
   const { data: applied, error: readError } = await supabase
     .from("payments")
-    .select("matched_statement_id")
+    .select("profile_id, matched_statement_id")
     .eq("id", inserted.id)
     .single();
   if (readError) throw readError;
@@ -687,15 +833,16 @@ export async function recordPayment(args: {
   const recorded: RecordedPayment = {
     id: inserted.id,
     amountMinor: inserted.amount_minor,
+    profileId: applied.profile_id,
     matchedStatementId: applied.matched_statement_id,
   };
 
-  // Point the original at the statement its money turned out to belong to.
-  // The trigger credits only on INSERT, so the money had to come in as the new
-  // row above; this update moves no money and exists so the payment stops
-  // appearing as unreconciled work for ever. The cost is that one arrival is
-  // now two rows, and summing `payments` by `matched_statement_id` would
-  // double count it -- `billing_statements.paid_minor` is the credited total.
+  // Point the original at how far its money got. It moves
+  // no money: the trigger credits only on INSERT, so the money had to come in
+  // as the new row above, and this one is left with no `profile_id` for ever
+  // so that a single arrival is counted once on the account. What takes it off
+  // the unmatched list is the `resolves_payment_id` the new row carries; this
+  // is the annotation that makes the pair legible in the database.
   if (args.resolvesPaymentId !== undefined && recorded.matchedStatementId !== null) {
     const { error: linkError } = await supabase
       .from("payments")

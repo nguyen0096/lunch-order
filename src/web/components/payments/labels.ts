@@ -9,9 +9,52 @@
  * zone rather than the reader's.
  */
 
+import { creditMinor, owedMinor, type Account } from "../../api.js";
+import { formatMoney, type Currency } from "../../../shared/money.js";
+
 /** Said wherever a payment is about to be written, in the same words. */
 export const CANNOT_UNDO =
   "A recorded payment cannot be taken back from this screen. Nothing subtracts it, so check the amount and the person before you record it.";
+
+/**
+ * Where somebody's account stands, as a phrase that fits inside a sentence.
+ *
+ * Credit is named rather than shown as a zero: somebody who has paid ahead is
+ * not the same as somebody who is square, and an admin chasing money needs to
+ * see the difference at a glance.
+ */
+export function accountState(account: Account, currency: Currency): string {
+  const owed = owedMinor(account);
+  if (owed > 0) return `owes ${formatMoney(owed, currency)}`;
+  const credit = creditMinor(account);
+  if (credit > 0) return `${formatMoney(credit, currency)} in credit`;
+  return "nothing outstanding";
+}
+
+/**
+ * What this money does to that account, said before the write.
+ *
+ * Money above what somebody owes is no longer destroyed: it stays on the
+ * account and next week's meals eat into it, which is the whole of
+ * `money_belongs_to_a_person`. So this is information, not a warning.
+ */
+export function landsOn(
+  name: string,
+  account: Account,
+  amountMinor: number,
+  currency: Currency,
+): string {
+  const after = account.balanceMinor - amountMinor;
+  if (after > 0) return `${name} would still owe ${formatMoney(after, currency)}.`;
+  if (after === 0) return `That settles ${name}'s account exactly.`;
+  if (owedMinor(account) === 0) {
+    return `${name} owes nothing, so all of it sits as credit and comes off their next lunches.`;
+  }
+  return `That settles ${name}'s account, and the last ${formatMoney(
+    -after,
+    currency,
+  )} sits as credit against their next lunches.`;
+}
 
 function utcDate(isoDate: string): Date {
   const [y, m, d] = isoDate.split("-").map(Number);

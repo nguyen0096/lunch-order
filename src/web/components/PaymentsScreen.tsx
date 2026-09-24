@@ -2,23 +2,28 @@ import { useCallback, useEffect, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
 import { Action, Badge, Button, EmptyState, Skeleton, useAction } from "@/ui";
 import {
+  creditMinor,
   fetchPayments,
   humanError,
-  outstandingMinor,
+  owedMinor,
   recordPayment,
   waiveStatement,
   type PaymentsData,
   type PaymentsPeriod,
+  type PaymentsPerson,
   type PaymentsStatement,
+  type RecordedPayment,
   type UnmatchedPayment,
 } from "../api.js";
 import { ApplyDialog } from "./payments/ApplyDialog.js";
 import { CatererSummary } from "./payments/CatererSummary.js";
-import { RecordDialog, type RecordDraft } from "./payments/RecordDialog.js";
+import { PeopleRows, personRows, type PersonRow } from "./payments/PeopleRows.js";
+import { RecordDialog } from "./payments/RecordDialog.js";
 import { SettleWeek } from "./payments/SettleWeek.js";
-import { StatementRows } from "./payments/StatementRows.js";
+import { TopUpDialog } from "./payments/TopUpDialog.js";
 import { UnmatchedPayments } from "./payments/UnmatchedPayments.js";
 import { meals, people, weekLabel } from "./payments/labels.js";
+import type { RecordDraft } from "./payments/RecordFields.js";
 import type { ScreenProps } from "./screenProps.js";
 import { now as appNow } from "../../shared/clock.js";
 import { addDays } from "../../shared/dates.js";
@@ -27,26 +32,33 @@ import { formatMoney, type Currency } from "../../shared/money.js";
 /**
  * Who has paid, what arrived, and what the caterer is owed.
  *
- * Unmatched payments lead. A list of who has paid can be read off the
- * statements and nothing goes wrong while nobody looks at it; a payment that
- * matched nobody changes nothing anywhere, tells nobody, and is the only
- * failure this screen exists to catch. So it sits above the week rather than
- * beneath it, and it is org-wide rather than part of any one week, because
- * money that matched nothing belongs to no period.
+ * Unmatched payments lead. A list of who has paid can be read off the accounts
+ * and nothing goes wrong while nobody looks at it; a payment that matched
+ * nobody changes nothing anywhere, tells nobody, and is the only failure this
+ * screen exists to catch. So it sits above the week rather than beneath it,
+ * and it is org-wide rather than part of any one week, because money that
+ * matched nobody belongs to no period.
  *
- * Every credit is a row in `payments`, including "mark as paid": the trigger
- * `payments_apply_on_insert` does the arithmetic and decides the status
- * whether the money came from the bank webhook or from an admin who was handed
- * cash. One arithmetic path, one audit trail, one set of rules -- and the
- * price of that is that a payment cannot be undone, which every confirmation
- * on this screen says out loud rather than leaving somebody to discover.
+ * Under that, two questions that are no longer the same one. A week says what
+ * the office ate and what it was billed. An account says who is behind, and
+ * since `money_belongs_to_a_person` that is a sum over every week somebody has
+ * eaten less everything they have paid, which no single week can answer.
+ *
+ * Every credit is a row in `payments`, a top-up included: the trigger
+ * `payments_apply_on_insert` finds the person, decides what their weeks look
+ * like and leaves the rest on the account, whether the money came from the
+ * bank webhook or from an admin who was handed cash. One arithmetic path, one
+ * audit trail, one set of rules -- and the price of that is that a payment
+ * cannot be undone, which every confirmation on this screen says out loud
+ * rather than leaving somebody to discover.
  */
 export function PaymentsScreen({ me, org }: ScreenProps) {
   const [data, setData] = useState<PaymentsData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [periodId, setPeriodId] = useState<number | null>(null);
-  const [settlingId, setSettlingId] = useState<number | null>(null);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
   const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [toppingUp, setToppingUp] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -66,9 +78,10 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   /* ------------------------------------------------------------- mutations */
 
   const record = useAction(
-    async (a: { statement: PaymentsStatement; draft: RecordDraft }) => {
+    async (a: { person: PaymentsPerson; draft: RecordDraft; topUp: boolean }) => {
       const recorded = await recordPayment({
         orgId: org.id,
+        profileId: a.person.profileId,
         amountMinor: a.draft.amountMinor,
         memo: a.draft.memo,
         recordedBy: me.profileId,
@@ -76,39 +89,38 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
         // where the two differ, and it passes the real arrival instead.
         receivedAt: appNow().toISOString(),
       });
-      return { ...recorded, name: a.statement.name };
+      return { recorded, person: a.person, topUp: a.topUp };
     },
     {
       success: (r) =>
-        r.matchedStatementId === null
-          ? "Recorded, but the memo matched nobody"
-          : `Recorded ${formatMoney(r.amountMinor, org.currency)} from ${r.name}`,
+        r.topUp && r.recorded.profileId === r.person.profileId
+          ? `Recorded a top-up of ${formatMoney(r.recorded.amountMinor, org.currency)} from ${r.person.name}`
+          : recordedLine(r.recorded, r.person, org.currency),
       onSuccess: () => {
-        setSettlingId(null);
+        setRecordingId(null);
+        setToppingUp(false);
         void load();
       },
     },
   );
 
   const apply = useAction(
-    async (a: { payment: UnmatchedPayment; statement: PaymentsStatement }) => {
+    async (a: { payment: UnmatchedPayment; person: PaymentsPerson }) => {
       const recorded = await recordPayment({
         orgId: org.id,
+        profileId: a.person.profileId,
         amountMinor: a.payment.amountMinor,
-        memo: a.statement.paymentRef,
+        memo: a.person.paymentRef,
         recordedBy: me.profileId,
         // The money arrived when the bank says it did, not when an admin
         // worked out whose it was.
         receivedAt: a.payment.receivedAt,
         resolvesPaymentId: a.payment.id,
       });
-      return { ...recorded, name: a.statement.name };
+      return { recorded, person: a.person };
     },
     {
-      success: (r) =>
-        r.matchedStatementId === null
-          ? "Recorded, but the memo matched nobody"
-          : `Recorded ${formatMoney(r.amountMinor, org.currency)} from ${r.name}`,
+      success: (r) => recordedLine(r.recorded, r.person, org.currency),
       onSuccess: () => {
         setApplyingId(null);
         void load();
@@ -117,18 +129,19 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   );
 
   const waive = useAction(
-    async (statement: PaymentsStatement) => {
+    async (row: PersonRow) => {
+      if (row.statement === null) throw new Error("There is no statement for that week.");
       await waiveStatement({
         orgId: org.id,
-        statementId: statement.id,
+        statementId: row.statement.id,
         waivedBy: me.profileId,
       });
-      return statement;
+      return row;
     },
     {
-      success: (s) => `Waived ${s.name}'s week`,
+      success: (r) => `Waived ${r.person.name}'s week`,
       onSuccess: () => {
-        setSettlingId(null);
+        setRecordingId(null);
         void load();
       },
     },
@@ -153,25 +166,41 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
 
   if (data === null) return <PaymentsSkeleton />;
 
-  const { periods, statements, unmatched } = data;
+  const { periods, statements, people: everybody, unmatched } = data;
   const index = Math.max(
     periods.findIndex((p) => p.periodId === periodId),
     0,
   );
   const period = periods[index] ?? null;
   const week = period === null ? [] : statements.filter((s) => s.periodId === period.periodId);
-  const settling = week.find((s) => s.id === settlingId) ?? null;
+  const rows = personRows(everybody, week);
+  const recording = rows.find((r) => r.person.profileId === recordingId) ?? null;
   const applying = unmatched.find((p) => p.id === applyingId) ?? null;
   const busy = record.pending || waive.pending;
 
   return (
     <div className="flex flex-col gap-8">
-      <header className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold">Payments</h1>
-        <p className="max-w-prose text-sm text-muted">
-          Money only ever goes in as a payment, the same way the bank's own arrive, so one rule
-          decides what is settled. That is also why nothing here can be taken back.
-        </p>
+      <header className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-xl font-semibold">Payments</h1>
+          <p className="max-w-prose text-sm text-muted">
+            Money only ever goes in as a payment, the same way the bank's own arrive, so one rule
+            decides where it lands. What somebody owes is their account: every week they have
+            eaten, less everything they have paid. Nothing here can be taken back.
+          </p>
+        </div>
+        {/* Outside the week on purpose. Somebody can pay ahead before the
+            office has billed a single week, and this is the one control on the
+            screen that belongs to nobody's period. */}
+        <Action
+          reason={
+            everybody.some((p) => p.active) ? null : "Nobody has joined this office yet."
+          }
+          variant="outline"
+          onClick={() => setToppingUp(true)}
+        >
+          Record a top-up
+        </Action>
       </header>
 
       <UnmatchedPayments
@@ -183,10 +212,23 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
       />
 
       {period === null ? (
-        <EmptyState heading="No week has been billed yet">
-          A week appears here once it has closed and the billing run has priced it. Until then
-          there is nothing to collect.
-        </EmptyState>
+        <section className="flex flex-col gap-6">
+          <EmptyState heading="No week has been billed yet">
+            A week appears here once it has closed and the billing run has priced it. Until then
+            there is nothing to collect.
+          </EmptyState>
+          {/* Nobody can owe before a week has been billed, but somebody can
+              have paid ahead, and a top-up that appears nowhere is a top-up
+              the admin has to take on trust. */}
+          {rows.length > 0 && (
+            <PeopleRows
+              rows={rows}
+              currency={org.currency}
+              busy={busy}
+              onRecord={(row) => setRecordingId(row.person.profileId)}
+            />
+          )}
+        </section>
       ) : (
         <section className="flex flex-col gap-6">
           <WeekNav
@@ -199,18 +241,19 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
             onNewest={() => setPeriodId(periods[0]?.periodId ?? null)}
           />
 
-          {week.length === 0 ? (
-            <NotBilled period={period} />
-          ) : (
-            <>
-              <WeekTotals statements={week} currency={org.currency} />
-              <StatementRows
-                statements={week}
-                currency={org.currency}
-                busy={busy}
-                onSettle={(s) => setSettlingId(s.id)}
-              />
-            </>
+          <WeekTotals people={everybody} statements={week} currency={org.currency} />
+
+          {/* Both, when both are true: a week nobody has been billed for still
+              leaves last week's debt to collect, and the rows under the figure
+              are what explain it. */}
+          {week.length === 0 && <NotBilled period={period} />}
+          {rows.length > 0 && (
+            <PeopleRows
+              rows={rows}
+              currency={org.currency}
+              busy={busy}
+              onRecord={(row) => setRecordingId(row.person.profileId)}
+            />
           )}
 
           {/* Above the caterer's summary, because it is what makes that
@@ -233,37 +276,66 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
       )}
 
       <RecordDialog
-        statement={settling}
+        row={recording}
         period={period}
         currency={org.currency}
         pending={busy}
         onOpenChange={(open) => {
-          if (!open) setSettlingId(null);
+          if (!open) setRecordingId(null);
         }}
         onRecord={(draft) => {
-          if (settling !== null) void record.run({ statement: settling, draft });
+          if (recording !== null) {
+            void record.run({ person: recording.person, draft, topUp: false });
+          }
         }}
         onWaive={() => {
-          if (settling !== null) void waive.run(settling);
+          if (recording !== null) void waive.run(recording);
         }}
+      />
+
+      <TopUpDialog
+        open={toppingUp}
+        people={everybody}
+        currency={org.currency}
+        pending={record.pending}
+        onOpenChange={setToppingUp}
+        onRecord={(person, draft) => void record.run({ person, draft, topUp: true })}
       />
 
       <ApplyDialog
         payment={applying}
-        statements={statements}
-        periods={periods}
+        people={everybody}
         currency={org.currency}
         timeZone={org.timezone}
         pending={apply.pending}
         onOpenChange={(open) => {
           if (!open) setApplyingId(null);
         }}
-        onApply={(statement) => {
-          if (applying !== null) void apply.run({ payment: applying, statement });
+        onApply={(person) => {
+          if (applying !== null) void apply.run({ payment: applying, person });
         }}
       />
     </div>
   );
+}
+
+/**
+ * What the database decided, not what was asked for.
+ *
+ * The insert names the person, but `trg_payment_apply` reads the memo and
+ * overrules it, so a memo carrying somebody else's reference moves the money
+ * to them. That is silent in the database and it is about money, so it is said
+ * here rather than left for an admin to notice on the next screen.
+ */
+function recordedLine(
+  recorded: RecordedPayment,
+  person: PaymentsPerson,
+  currency: Currency,
+): string {
+  const amount = formatMoney(recorded.amountMinor, currency);
+  return recorded.profileId === person.profileId
+    ? `Recorded ${amount} from ${person.name}`
+    : `Recorded ${amount}, but the memo did not put it on ${person.name}`;
 }
 
 /* ------------------------------------------------------------------ pieces */
@@ -329,38 +401,68 @@ function PeriodBadge({ status }: { status: PaymentsPeriod["periodStatus"] }) {
   return <Badge variant="neutral">Closed</Badge>;
 }
 
-/** The number an admin came for, then the arithmetic behind it. */
+/**
+ * The number an admin came for, then the week behind it.
+ *
+ * The figure is the sum of what people owe on their accounts, not the sum of
+ * this week's statements. Those were the same number only while carry-forward
+ * rolled every unpaid week into the newest one; now a week is a charge and the
+ * debt is what is left after every payment, so the week below explains part of
+ * this figure rather than being it.
+ */
 function WeekTotals({
+  people: everybody,
   statements,
   currency,
 }: {
+  people: PaymentsPerson[];
   statements: PaymentsStatement[];
   currency: Currency;
 }) {
-  const due = statements.reduce((n, s) => n + s.totalDueMinor, 0);
-  const paid = statements.reduce((n, s) => n + s.paidMinor, 0);
-  const outstanding = statements.reduce((n, s) => n + outstandingMinor(s), 0);
+  const owed = everybody.reduce((n, p) => n + owedMinor(p.account), 0);
+  const owing = everybody.filter((p) => owedMinor(p.account) > 0).length;
+  const inCredit = everybody.filter((p) => creditMinor(p.account) > 0);
+  const creditMinorTotal = inCredit.reduce((n, p) => n + creditMinor(p.account), 0);
+
+  const billed = statements.reduce((n, s) => n + s.mealsMinor, 0);
   const mealCount = statements.reduce((n, s) => n + s.mealCount, 0);
   const waived = statements.filter((s) => s.status === "waived");
-  const waivedMinor = waived.reduce((n, s) => n + s.totalDueMinor, 0);
+  const waivedMinor = waived.reduce((n, s) => n + s.mealsMinor, 0);
 
   return (
     <div className="flex flex-col gap-1">
       <p className="flex flex-col gap-1">
         <span className="text-sm text-muted">Still to collect</span>
-        <span className="tabular text-3xl font-semibold">{formatMoney(outstanding, currency)}</span>
+        <span className="tabular text-3xl font-semibold">{formatMoney(owed, currency)}</span>
       </p>
       <p className="text-sm text-muted">
-        {`${formatMoney(paid, currency)} received of ${formatMoney(due, currency)} billed to ${people(
-          statements.length,
-        )} for ${meals(mealCount)}.`}
+        {owed === 0
+          ? "Nobody owes anything."
+          : `Across every week, not only this one, from ${people(owing)}.`}
       </p>
+      {statements.length > 0 && (
+        <p className="text-sm text-muted">
+          {`${formatMoney(billed, currency)} billed this week to ${people(
+            statements.length,
+          )} for ${meals(mealCount)}.`}
+        </p>
+      )}
+      {inCredit.length > 0 && (
+        <p className="text-sm text-muted">
+          {/* Named, never shown as a zero. Somebody who has paid ahead is not
+              somebody who is square, and the money is theirs until they eat. */}
+          {`${people(inCredit.length)} paid ahead: ${formatMoney(
+            creditMinorTotal,
+            currency,
+          )} sits as credit and comes off their next lunches.`}
+        </p>
+      )}
       {waived.length > 0 && (
         <p className="text-sm text-muted">
-          {`${waived.length === 1 ? "One week is" : `${waived.length} weeks are`} waived, so ${formatMoney(
+          {`${waived.length === 1 ? "One person's week is" : `${waived.length} people's weeks are`} waived, so ${formatMoney(
             waivedMinor,
             currency,
-          )} of that is not being asked for.`}
+          )} of this week is not being asked for.`}
         </p>
       )}
     </div>

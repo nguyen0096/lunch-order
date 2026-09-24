@@ -7,6 +7,7 @@ import type {
   CatererSummary,
   PaymentsData,
   PaymentsPeriod,
+  PaymentsPerson,
   PaymentsStatement,
   SettlementDish,
   SettlementWeek,
@@ -68,6 +69,7 @@ const db = vi.hoisted(() => {
       eq: step(((column: string, value: unknown) => call.filters.push([column, value])) as never),
       is: step(((column: string, value: unknown) => call.filters.push([column, value])) as never),
       in: step(((column: string, value: unknown) => call.filters.push([column, value])) as never),
+      gte: step(((column: string, value: unknown) => call.filters.push([column, value])) as never),
       neq: step((() => {}) as never),
       order: step((() => {}) as never),
       limit: step((() => {}) as never),
@@ -190,6 +192,9 @@ function statement(over: Partial<PaymentsStatement> = {}): PaymentsStatement {
     carriedInMinor: 0,
     totalDueMinor: 130_000,
     paidMinor: 0,
+    // The week's own reference. A bill printed before
+    // `money_belongs_to_a_person` still carries one and it still matches, but
+    // nothing on this screen asks anybody to type it any more.
     paymentRef: "LUNCH14TEO",
     status: "unpaid",
     paidAt: null,
@@ -208,6 +213,33 @@ const DINH = statement({
   paidMinor: 40_000,
   paymentRef: "LUNCH14DINH",
   status: "partial",
+});
+
+/**
+ * The account the screen now leads with. `balance_minor` is charged less
+ * credited, so a negative one is a person in credit, which is what a top-up
+ * looks like once it is on the books.
+ */
+function person(over: Partial<PaymentsPerson> = {}): PaymentsPerson {
+  return {
+    profileId: "teo",
+    name: "Tèo",
+    shortCode: "TEO",
+    paymentRef: "LUNCHTEO",
+    active: true,
+    account: { chargedMinor: 130_000, creditedMinor: 0, balanceMinor: 130_000 },
+    ...over,
+  };
+}
+
+const TEO_ACCOUNT = person();
+
+const DINH_ACCOUNT = person({
+  profileId: "dinh",
+  name: "Dinh",
+  shortCode: "DINH",
+  paymentRef: "LUNCHDINH",
+  account: { chargedMinor: 100_000, creditedMinor: 40_000, balanceMinor: 60_000 },
 });
 
 const STRAY: UnmatchedPayment = {
@@ -308,6 +340,7 @@ function serve(over: Partial<PaymentsData> = {}, caterer: CatererSummary = CATER
   const data: PaymentsData = {
     periods: [WEEK_14],
     statements: [statement(), DINH],
+    people: [TEO_ACCOUNT, DINH_ACCOUNT],
     unmatched: [],
     ...over,
   };
@@ -327,9 +360,9 @@ function headline(label: string): HTMLElement {
   return node;
 }
 
-/** The row for one person in the statements table. */
+/** The row for one person in the people table. */
 async function rowFor(name: string): Promise<HTMLElement> {
-  const table = await screen.findByRole("table", { name: "Statements for this week" });
+  const table = await screen.findByRole("table", { name: "People, this week and what they owe" });
   const row = within(table)
     .getAllByRole("row")
     .find((r) => within(r).queryByText(name) !== null);
@@ -348,7 +381,12 @@ beforeEach(() => {
   db.calls.length = 0;
   db.results.length = 0;
   db.rpcCalls.length = 0;
-  recordPayment.mockResolvedValue({ id: 500, amountMinor: 130_000, matchedStatementId: 1 });
+  recordPayment.mockResolvedValue({
+    id: 500,
+    amountMinor: 130_000,
+    profileId: "teo",
+    matchedStatementId: 1,
+  });
   waiveStatement.mockResolvedValue(undefined);
   fetchSettlementWeek.mockResolvedValue(settlementWeek());
   applyCatererPrices.mockResolvedValue({ dishes: 0, menuItems: 0, orderItems: 0 });
@@ -358,21 +396,27 @@ beforeEach(() => {
 /* ---------------------------------------------------------- what gets written */
 
 describe("Recording a payment, the row that reaches the database", () => {
-  it("names a provider that is not the bank's, and supplies the two NOT NULL columns", async () => {
+  it("names the person and the provider, and supplies the three NOT NULL columns", async () => {
     db.results.push(
       { data: { id: 91, amount_minor: 180_000 }, error: null },
-      { data: { matched_statement_id: 5 }, error: null },
+      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
     );
     const { recordPayment: record } = await realApi();
 
     const recorded = await record({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 180_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:00:00.000Z",
     });
-    expect(recorded).toEqual({ id: 91, amountMinor: 180_000, matchedStatementId: 5 });
+    expect(recorded).toEqual({
+      id: 91,
+      amountMinor: 180_000,
+      profileId: "teo",
+      matchedStatementId: 5,
+    });
 
     const insert = db.calls.find((c) => c.op === "insert");
     expect(insert?.table).toBe("payments");
@@ -381,28 +425,61 @@ describe("Recording a payment, the row that reaches the database", () => {
     // it or the audit trail claims the bank reported money it never saw.
     expect(row["provider"]).toBe("manual");
     expect(row["provider"]).not.toBe("sepay");
+    // Whose money it is, named on the row. Without it a memo the trigger
+    // cannot read leaves money belonging to nobody.
+    expect(row["profile_id"]).toBe("teo");
     // Both NOT NULL with no default: an insert that leaves either out fails.
     expect(row["received_at"]).toBe("2026-09-22T03:00:00.000Z");
     expect(row["raw"]).toEqual({ source: "admin", recorded_by: "admin" });
     expect(row["org_id"]).toBe(7);
     expect(row["amount_minor"]).toBe(180_000);
-    expect(row["memo"]).toBe("LUNCH14TEO");
+    expect(row["memo"]).toBe("LUNCHTEO");
     expect(String(row["provider_txn_id"])).not.toBe("");
+  });
+
+  it("records a top-up for somebody with no statement at all", async () => {
+    // No week to attach to, so `matched_statement_id` comes back null. That is
+    // not a failure any more: the money sits on the account as credit.
+    db.results.push(
+      { data: { id: 93, amount_minor: 500_000 }, error: null },
+      { data: { profile_id: "quyt", matched_statement_id: null }, error: null },
+    );
+    const { recordPayment: record } = await realApi();
+
+    const recorded = await record({
+      orgId: 7,
+      profileId: "quyt",
+      amountMinor: 500_000,
+      memo: "LUNCHQUYT",
+      recordedBy: "admin",
+      receivedAt: "2026-09-22T03:00:00.000Z",
+    });
+
+    expect(recorded.profileId).toBe("quyt");
+    expect(recorded.matchedStatementId).toBeNull();
+    const row = db.calls.find((c) => c.op === "insert")?.payload ?? {};
+    expect(row["profile_id"]).toBe("quyt");
+    expect(row["provider"]).toBe("manual");
+    // The stable reference, so the trigger finds the same person the row names
+    // and redraws their weeks rather than leaving the money unattached.
+    expect(row["memo"]).toBe("LUNCHQUYT");
+    expect(row["raw"]).toEqual({ source: "admin", recorded_by: "admin" });
   });
 
   it("gives two cash payments on the same instant different transaction ids", async () => {
     db.results.push(
       { data: { id: 1, amount_minor: 50_000 }, error: null },
-      { data: { matched_statement_id: 5 }, error: null },
+      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
       { data: { id: 2, amount_minor: 50_000 }, error: null },
-      { data: { matched_statement_id: 5 }, error: null },
+      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
     );
     const { recordPayment: record } = await realApi();
 
     const args = {
       orgId: 7,
+      profileId: "teo",
       amountMinor: 50_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:00:00.000Z",
     };
@@ -415,42 +492,46 @@ describe("Recording a payment, the row that reaches the database", () => {
     expect(first?.payload?.["provider_txn_id"]).not.toBe(second?.payload?.["provider_txn_id"]);
   });
 
-  it("reads the match back rather than trusting the insert, because the trigger is AFTER INSERT", async () => {
+  it("reads the owner back rather than trusting the insert, because the trigger is AFTER INSERT", async () => {
     db.results.push(
       { data: { id: 91, amount_minor: 180_000 }, error: null },
-      { data: { matched_statement_id: null }, error: null },
+      // The memo carries Dinh's reference, and the memo is what the trigger
+      // matches on, so the money went to Dinh whatever the insert said.
+      { data: { profile_id: "dinh", matched_statement_id: 9 }, error: null },
     );
     const { recordPayment: record } = await realApi();
 
     const recorded = await record({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 180_000,
-      memo: "NOTHING LIKE A REFERENCE",
+      memo: "LUNCHDINH",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:00:00.000Z",
     });
 
     // RETURNING is evaluated before AFTER triggers run, so the inserted row
-    // always carries a null match. The second call is what tells the truth.
+    // carries whatever was sent. The second call is what tells the truth.
     const [insert, readBack] = db.calls;
     expect(insert?.op).toBe("insert");
     expect(readBack?.table).toBe("payments");
     expect(readBack?.filters).toEqual([["id", 91]]);
-    expect(recorded.matchedStatementId).toBeNull();
+    expect(recorded.profileId).toBe("dinh");
   });
 
   it("points a resolved payment at the week its money turned out to belong to", async () => {
     db.results.push(
       { data: { id: 92, amount_minor: 100_000 }, error: null },
-      { data: { matched_statement_id: 5 }, error: null },
+      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
       { data: null, error: null },
     );
     const { recordPayment: record } = await realApi();
 
     await record({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 100_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:30:00.000Z",
       resolvesPaymentId: 91,
@@ -472,23 +553,115 @@ describe("Recording a payment, the row that reaches the database", () => {
     });
   });
 
-  it("leaves the original alone when the new payment matched nobody either", async () => {
+  it("never gives the original an owner, because one arrival must count once", async () => {
     db.results.push(
       { data: { id: 92, amount_minor: 100_000 }, error: null },
-      { data: { matched_statement_id: null }, error: null },
+      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
+      { data: null, error: null },
     );
     const { recordPayment: record } = await realApi();
 
     await record({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 100_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
+      recordedBy: "admin",
+      receivedAt: "2026-09-22T03:30:00.000Z",
+      resolvesPaymentId: 91,
+    });
+
+    // `v_account_balance` sums payments by profile, so naming Tèo on the stray
+    // as well as on the row that took the money would show him 100.000 better
+    // off than he is.
+    expect(db.calls.find((c) => c.op === "update")?.payload).not.toHaveProperty("profile_id");
+  });
+
+  it("leaves the original unpointed when there was no week for the money to reach", async () => {
+    db.results.push(
+      { data: { id: 92, amount_minor: 100_000 }, error: null },
+      { data: { profile_id: "quyt", matched_statement_id: null }, error: null },
+    );
+    const { recordPayment: record } = await realApi();
+
+    await record({
+      orgId: 7,
+      profileId: "quyt",
+      amountMinor: 100_000,
+      memo: "LUNCHQUYT",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:30:00.000Z",
       resolvesPaymentId: 91,
     });
 
     expect(db.calls.find((c) => c.op === "update")).toBeUndefined();
+  });
+});
+
+describe("Money that matched nobody, the query behind the list", () => {
+  /** Periods, memberships, accounts, strays, then resolvers, then statements. */
+  function serveFetch(strays: unknown[], resolvers: unknown[] = []) {
+    db.results.push(
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: [], error: null },
+      { data: strays, error: null },
+    );
+    if (strays.length > 0) db.results.push({ data: resolvers, error: null });
+  }
+
+  const STRAY_ROW = {
+    id: 91,
+    amount_minor: 100_000,
+    memo: "CT DEN TK 113366668888",
+    received_at: "2026-09-22T03:30:00Z",
+    provider: "sepay",
+  };
+
+  it("asks whose the money is, not which week it hit", async () => {
+    serveFetch([]);
+    const { fetchPayments: fetch } = await realApi();
+
+    await fetch({ orgId: 7 });
+
+    const strayQuery = db.calls.find(
+      (c) => c.table === "payments" && c.filters.some(([column]) => column === "profile_id"),
+    );
+    // A top-up lands on a person and touches no statement, so asking
+    // `matched_statement_id is null` would list every top-up as a failure.
+    expect(strayQuery?.filters).toContainEqual(["profile_id", null]);
+    expect(strayQuery?.filters).not.toContainEqual(["matched_statement_id", null]);
+  });
+
+  it("retires a stray somebody has already applied", async () => {
+    serveFetch(
+      [STRAY_ROW],
+      [{ raw: { source: "admin", recorded_by: "admin", resolves_payment_id: 91 } }],
+    );
+    const { fetchPayments: fetch } = await realApi();
+
+    const data = await fetch({ orgId: 7 });
+
+    // The stray keeps its null profile for good: the money went in as a second
+    // row. What takes it off the list is the pointer that row carries.
+    expect(data.unmatched).toEqual([]);
+  });
+
+  it("keeps a stray nobody has dealt with", async () => {
+    serveFetch([STRAY_ROW], [{ raw: { source: "admin", recorded_by: "admin" } }]);
+    const { fetchPayments: fetch } = await realApi();
+
+    const data = await fetch({ orgId: 7 });
+
+    expect(data.unmatched).toEqual([
+      {
+        id: 91,
+        amountMinor: 100_000,
+        memo: STRAY_ROW.memo,
+        receivedAt: STRAY_ROW.received_at,
+        provider: "sepay",
+      },
+    ]);
   });
 });
 
@@ -618,12 +791,33 @@ describe("Payments, loading and failure", () => {
 
 describe("Payments, a week with nothing on it", () => {
   it("says no week has been billed rather than showing an empty table", async () => {
-    serve({ periods: [], statements: [] });
+    // Nobody can owe anything before a week has been billed, so there is no
+    // account worth a row either.
+    serve({
+      periods: [],
+      statements: [],
+      people: [person({ account: { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 } })],
+    });
     renderPayments();
     expect(
       await screen.findByRole("heading", { name: "No week has been billed yet" }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("shows a top-up taken before the first week was ever billed", async () => {
+    serve({
+      periods: [],
+      statements: [],
+      people: [
+        person({ account: { chargedMinor: 0, creditedMinor: 500_000, balanceMinor: -500_000 } }),
+      ],
+    });
+    renderPayments();
+
+    const row = await rowFor("Tèo");
+    expect(within(row).getByText("In credit")).toBeInTheDocument();
+    expect(within(row).getAllByRole("cell")[3]).toHaveTextContent(money(500_000));
   });
 
   it("treats a week that has not been billed yet as news, not as an error", async () => {
@@ -650,37 +844,90 @@ describe("Payments, a week with nothing on it", () => {
     renderPayments();
 
     expect(await screen.findByRole("heading", { name: "Nobody ate this week" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "No meals this week" })).toBeInTheDocument();
+    // The caterer's half arrives on its own query, so it is awaited too.
+    expect(
+      await screen.findByRole("heading", { name: "No meals this week" }),
+    ).toBeInTheDocument();
   });
 });
 
 describe("Payments, the week", () => {
-  it("leads with what is still to collect and shows every member's row", async () => {
+  it("leads with what every account owes, and shows the week beside it", async () => {
     serve();
     renderPayments();
 
     expect(await screen.findByText("Still to collect")).toBeInTheDocument();
     expect(fetchPayments).toHaveBeenCalledWith({ orgId: 7 });
-    // 130.000 unpaid from Tèo plus 60.000 left of Dinh's 100.000.
+    // The accounts, not the week: 130.000 from Tèo and 60.000 from Dinh.
     expect(headline("Still to collect")).toHaveTextContent(money(190_000));
     expect(
-      screen.getByText(`${money(40_000)} received of ${money(230_000)} billed to 2 people for 5 meals.`),
+      screen.getByText("Across every week, not only this one, from 2 people."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(`${money(230_000)} billed this week to 2 people for 5 meals.`),
     ).toBeInTheDocument();
 
-    // Person, meals, billed, received, still to pay, status, the control.
+    // Person, meals, billed this week, account, status, the control.
     const teo = within(await rowFor("Tèo")).getAllByRole("cell");
-    expect(teo[0]).toHaveTextContent("LUNCH14TEO");
+    // The stable reference, not the week's: it is what a saved transfer carries.
+    expect(teo[0]).toHaveTextContent("LUNCHTEO");
+    expect(teo[0]).not.toHaveTextContent("LUNCH14TEO");
     expect(teo[1]).toHaveTextContent("3");
     expect(teo[2]).toHaveTextContent(money(130_000));
-    expect(teo[3]).toHaveTextContent(money(0));
-    expect(teo[4]).toHaveTextContent(money(130_000));
-    expect(teo[5]).toHaveTextContent("Unpaid");
+    expect(teo[3]).toHaveTextContent(money(130_000));
+    expect(teo[4]).toHaveTextContent("Unpaid");
 
     const dinh = within(await rowFor("Dinh")).getAllByRole("cell");
     expect(dinh[2]).toHaveTextContent(money(100_000));
-    expect(dinh[3]).toHaveTextContent(money(40_000));
-    expect(dinh[4]).toHaveTextContent(money(60_000));
-    expect(dinh[5]).toHaveTextContent("Part paid");
+    expect(dinh[3]).toHaveTextContent(money(60_000));
+    expect(dinh[4]).toHaveTextContent("Unpaid");
+  });
+
+  it("keeps somebody who is behind but did not eat this week", async () => {
+    // Their debt is in the figure at the top, so it has to be explainable by
+    // a row underneath it. Before the account existed there was no such row.
+    serve({
+      statements: [DINH],
+      people: [
+        TEO_ACCOUNT,
+        DINH_ACCOUNT,
+      ],
+    });
+    renderPayments();
+
+    const teo = within(await rowFor("Tèo")).getAllByRole("cell");
+    expect(teo[1]).toHaveTextContent("0");
+    expect(teo[2]).toHaveTextContent(money(0));
+    expect(teo[3]).toHaveTextContent(money(130_000));
+    expect(teo[4]).toHaveTextContent("Unpaid");
+    expect(headline("Still to collect")).toHaveTextContent(money(190_000));
+  });
+
+  it("shows somebody in credit as in credit, never as a zero", async () => {
+    const quyt = person({
+      profileId: "quyt",
+      name: "Quýt",
+      shortCode: "QUYT",
+      paymentRef: "LUNCHQUYT",
+      account: { chargedMinor: 0, creditedMinor: 500_000, balanceMinor: -500_000 },
+    });
+    serve({ statements: [], people: [quyt] });
+    renderPayments();
+
+    const row = await rowFor("Quýt");
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[3]).toHaveTextContent(money(500_000));
+    expect(cells[3]).toHaveTextContent("in credit");
+    expect(within(row).getByText("In credit")).toBeInTheDocument();
+    expect(within(row).queryByText("Settled")).not.toBeInTheDocument();
+
+    expect(headline("Still to collect")).toHaveTextContent(money(0));
+    expect(screen.getByText("Nobody owes anything.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        `1 person paid ahead: ${money(500_000)} sits as credit and comes off their next lunches.`,
+      ),
+    ).toBeInTheDocument();
   });
 
   it("names the week, and says why there is no later one", async () => {
@@ -704,35 +951,71 @@ describe("Payments, the week", () => {
     expect(earlier).toHaveAccessibleDescription(/reaches back 2 weeks/);
   });
 
-  it("says why a settled week has nothing to record against it", async () => {
+  it("still offers to record against a settled account, because that is a top-up", async () => {
     serve({
       statements: [
         statement({ paidMinor: 130_000, status: "paid", paidAt: "2026-09-22T03:00:00Z" }),
         DINH,
       ],
+      people: [
+        person({ account: { chargedMinor: 130_000, creditedMinor: 130_000, balanceMinor: 0 } }),
+        DINH_ACCOUNT,
+      ],
     });
     renderPayments();
 
     const teo = await rowFor("Tèo");
-    const button = within(teo).getByRole("button", { name: "Record" });
-    expect(button).toHaveAttribute("aria-disabled", "true");
-    expect(button).toHaveAccessibleDescription(/Recording more would credit money nobody owes/);
-    expect(within(teo).getByText("Paid")).toBeInTheDocument();
+    expect(within(teo).getByText("Settled")).toBeInTheDocument();
+    // Money above what somebody owes is no longer destroyed, so refusing it is
+    // no longer a kindness.
+    expect(within(teo).getByRole("button", { name: "Record" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+
+    const dialog = await openSettle("Tèo");
+    expect(
+      within(dialog).getByText(
+        "Nothing outstanding. Anything recorded here is a top-up against their next lunches.",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("says a waived week is not being asked for, and counts it as nothing to collect", async () => {
-    serve({ statements: [statement({ status: "waived" }), DINH] });
+  it("says a waived week is not being asked for, and takes it off the account", async () => {
+    // `v_account_balance` leaves a waived statement out of `charged_minor`, so
+    // the account says nothing is owed and the week says why.
+    serve({
+      statements: [statement({ status: "waived" }), DINH],
+      people: [
+        person({ account: { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 } }),
+        DINH_ACCOUNT,
+      ],
+    });
     renderPayments();
 
     const teo = await rowFor("Tèo");
-    expect(within(teo).getByText("Waived")).toBeInTheDocument();
-    expect(
-      within(teo).getByRole("button", { name: "Record" }),
-    ).toHaveAccessibleDescription(/waived, so nobody is being asked to pay it/);
+    expect(within(teo).getByText("Week waived")).toBeInTheDocument();
+    expect(within(teo).getByText("Settled")).toBeInTheDocument();
     expect(headline("Still to collect")).toHaveTextContent(money(60_000));
     expect(
-      screen.getByText(`One week is waived, so ${money(130_000)} of that is not being asked for.`),
+      screen.getByText(
+        `One person's week is waived, so ${money(130_000)} of this week is not being asked for.`,
+      ),
     ).toBeInTheDocument();
+
+    const dialog = await openSettle("Tèo");
+    expect(
+      within(dialog).getByRole("button", { name: "Waive this week" }),
+    ).toHaveAccessibleDescription("This week is already waived.");
+  });
+
+  it("says why there is no week to waive for somebody who did not eat", async () => {
+    serve({ statements: [DINH] });
+    renderPayments();
+
+    const dialog = await openSettle("Tèo");
+    expect(
+      within(dialog).getByRole("button", { name: "Waive this week" }),
+    ).toHaveAccessibleDescription(/no statement for 14–20 September/);
   });
 });
 
@@ -770,9 +1053,14 @@ describe("Payments, money that matched nobody", () => {
     ).toBeInTheDocument();
   });
 
-  it("applies a stray payment by recording one against that person's reference", async () => {
+  it("applies a stray payment to a person, against their stable reference", async () => {
     serve({ unmatched: [STRAY] });
-    recordPayment.mockResolvedValue({ id: 500, amountMinor: 100_000, matchedStatementId: 1 });
+    recordPayment.mockResolvedValue({
+      id: 500,
+      amountMinor: 100_000,
+      profileId: "teo",
+      matchedStatementId: 1,
+    });
     renderPayments();
 
     await userEvent.click(await screen.findByRole("button", { name: "Apply to a person" }));
@@ -783,15 +1071,17 @@ describe("Payments, money that matched nobody", () => {
 
     await userEvent.click(within(dialog).getByRole("combobox"));
     await userEvent.click(
-      await screen.findByRole("option", { name: /Tèo · 14–20 September/ }),
+      await screen.findByRole("option", { name: `Tèo · owes ${rawMoney(130_000)}` }),
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
 
-    // The confirm step names the money, the person and the memo, in one sentence.
+    // The confirm step names the money, the person and the memo, in one
+    // sentence, and then says where the account lands.
     expect(
-      within(dialog).getByText(
-        `Credit ${money(100_000)} to Tèo for 14–20 September, with the memo LUNCH14TEO.`,
-      ),
+      within(dialog).getByText(`Credit ${money(100_000)} to Tèo, with the memo LUNCHTEO.`),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(`Tèo would still owe ${money(30_000)}.`),
     ).toBeInTheDocument();
     expect(recordPayment).not.toHaveBeenCalled();
 
@@ -799,8 +1089,9 @@ describe("Payments, money that matched nobody", () => {
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 100_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
       recordedBy: "admin",
       // The money arrived when the bank says it did, not when it was worked out.
       receivedAt: STRAY.receivedAt,
@@ -811,13 +1102,51 @@ describe("Payments, money that matched nobody", () => {
     );
   });
 
-  it("refuses to apply anything when nobody is being asked to pay", async () => {
-    serve({
-      unmatched: [STRAY],
-      statements: [
-        statement({ paidMinor: 130_000, status: "paid", paidAt: "2026-09-22T03:00:00Z" }),
-      ],
+  it("applies stray money to somebody who owes nothing, as a top-up", async () => {
+    // It used to refuse: there was no unsettled week to credit, so the money
+    // had nowhere to go. A credit is a negative balance now.
+    const quyt = person({
+      profileId: "quyt",
+      name: "Quýt",
+      shortCode: "QUYT",
+      paymentRef: "LUNCHQUYT",
+      account: { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 },
     });
+    serve({ unmatched: [STRAY], statements: [], people: [quyt] });
+    recordPayment.mockResolvedValue({
+      id: 500,
+      amountMinor: 100_000,
+      profileId: "quyt",
+      matchedStatementId: null,
+    });
+    renderPayments();
+
+    await userEvent.click(await screen.findByRole("button", { name: "Apply to a person" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    await userEvent.click(await screen.findByRole("option", { name: "Quýt · nothing outstanding" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+
+    expect(
+      within(dialog).getByText(
+        "Quýt owes nothing, so all of it sits as credit and comes off their next lunches.",
+      ),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Record" }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
+      profileId: "quyt",
+      memo: "LUNCHQUYT",
+      resolvesPaymentId: 91,
+    });
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(`Recorded ${rawMoney(100_000)} from Quýt`),
+    );
+  });
+
+  it("says nothing can be applied when nobody has joined yet", async () => {
+    serve({ unmatched: [STRAY], statements: [], people: [] });
     renderPayments();
 
     await userEvent.click(await screen.findByRole("button", { name: "Apply to a person" }));
@@ -825,25 +1154,152 @@ describe("Payments, money that matched nobody", () => {
     const review = within(dialog).getByRole("button", { name: "Review" });
     expect(review).toHaveAttribute("aria-disabled", "true");
     expect(review).toHaveAccessibleDescription(
-      "Nobody is being asked to pay anything, so there is no week to credit.",
+      "Nobody has joined this office yet, so there is nobody to credit.",
     );
+  });
+});
+
+/* ------------------------------------------------------------------ top-ups */
+
+describe("Payments, a top-up", () => {
+  const QUYT = person({
+    profileId: "quyt",
+    name: "Quýt",
+    shortCode: "QUYT",
+    paymentRef: "LUNCHQUYT",
+    account: { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 },
+  });
+
+  async function openTopUp(): Promise<HTMLElement> {
+    await userEvent.click(await screen.findByRole("button", { name: "Record a top-up" }));
+    return screen.findByRole("dialog");
+  }
+
+  it("records money from somebody with nothing outstanding", async () => {
+    serve({ statements: [], people: [QUYT] });
+    recordPayment.mockResolvedValue({
+      id: 501,
+      amountMinor: 500_000,
+      profileId: "quyt",
+      matchedStatementId: null,
+    });
+    renderPayments();
+
+    const dialog = await openTopUp();
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    await userEvent.click(await screen.findByRole("option", { name: "Quýt · nothing outstanding" }));
+
+    // The reference is filled in with the person, because it is what the
+    // database matches on.
+    expect(within(dialog).getByLabelText("Memo")).toHaveValue("LUNCHQUYT");
+    await userEvent.type(within(dialog).getByLabelText("Amount received"), "500k");
+    expect(within(dialog).getByText(`That is ${money(500_000)}.`)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    expect(
+      within(dialog).getByText(`Credit ${money(500_000)} to Quýt, with the memo LUNCHQUYT.`),
+    ).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Quýt owes nothing, so all of it sits as credit and comes off their next lunches.",
+      ),
+    ).toBeInTheDocument();
+    expect(recordPayment).not.toHaveBeenCalled();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Record the top-up" }));
+    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
+    expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
+      orgId: 7,
+      profileId: "quyt",
+      amountMinor: 500_000,
+      memo: "LUNCHQUYT",
+      recordedBy: "admin",
+    });
+    // No statement to resolve: a top-up stands in for nothing.
+    expect(recordPayment.mock.calls[0]?.[0]).not.toHaveProperty("resolvesPaymentId");
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(
+        `Recorded a top-up of ${rawMoney(500_000)} from Quýt`,
+      ),
+    );
+    await waitFor(() => expect(fetchPayments).toHaveBeenCalledTimes(2));
+  });
+
+  it("will not write until a person and an amount are both named", async () => {
+    serve({ statements: [], people: [QUYT] });
+    renderPayments();
+
+    const dialog = await openTopUp();
+    let review = within(dialog).getByRole("button", { name: "Review" });
+    expect(review).toHaveAttribute("aria-disabled", "true");
+    expect(review).toHaveAccessibleDescription("Choose whose money this is first.");
+
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    await userEvent.click(await screen.findByRole("option", { name: "Quýt · nothing outstanding" }));
+    review = within(dialog).getByRole("button", { name: "Review" });
+    expect(review).toHaveAttribute("aria-disabled", "true");
+    expect(review).toHaveAccessibleDescription("Type the amount that arrived first.");
+  });
+
+  it("is offered even before the office has billed a week", async () => {
+    serve({ periods: [], statements: [], people: [QUYT] });
+    renderPayments();
+
+    expect(
+      await screen.findByRole("heading", { name: "No week has been billed yet" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record a top-up" })).not.toHaveAttribute(
+      "aria-disabled",
+    );
+  });
+
+  it("says why it cannot be offered when nobody has joined", async () => {
+    serve({ periods: [], statements: [], people: [] });
+    renderPayments();
+
+    const button = await screen.findByRole("button", { name: "Record a top-up" });
+    expect(button).toHaveAttribute("aria-disabled", "true");
+    expect(button).toHaveAccessibleDescription("Nobody has joined this office yet.");
+  });
+
+  it("does not offer to top up somebody who has left", async () => {
+    serve({
+      statements: [],
+      people: [QUYT, person({ profileId: "gone", name: "Cũ", shortCode: "CU", active: false })],
+    });
+    renderPayments();
+
+    const dialog = await openTopUp();
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    expect(await screen.findByRole("option", { name: /Quýt/ })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /Cũ/ })).not.toBeInTheDocument();
   });
 });
 
 /* ------------------------------------------------------------- the confirm step */
 
 describe("Payments, recording against a person", () => {
-  it("pre-fills the outstanding amount and that person's reference as the memo", async () => {
-    serve();
+  it("pre-fills what the account owes and that person's stable reference", async () => {
+    // The account, not the week. Somebody three weeks behind used to be asked
+    // for the newest week alone, which is what carry-forward papered over.
+    serve({
+      statements: [statement()],
+      people: [
+        person({ account: { chargedMinor: 220_000, creditedMinor: 30_000, balanceMinor: 190_000 } }),
+      ],
+    });
     renderPayments();
     const dialog = await openSettle("Tèo");
 
+    expect(within(dialog).getByRole("heading", { name: "Tèo" })).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("heading", { name: "Tèo · 14–20 September" }),
+      within(dialog).getByText(
+        `Owes ${money(190_000)}. That is every week they have eaten, not only this one.`,
+      ),
     ).toBeInTheDocument();
-    expect(within(dialog).getByLabelText("Amount received")).toHaveValue("130000");
-    expect(within(dialog).getByLabelText("Memo")).toHaveValue("LUNCH14TEO");
-    expect(within(dialog).getByText(`That is ${money(130_000)}.`)).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("Amount received")).toHaveValue("190000");
+    expect(within(dialog).getByLabelText("Memo")).toHaveValue("LUNCHTEO");
+    expect(within(dialog).getByText(`That is ${money(190_000)}.`)).toBeInTheDocument();
   });
 
   it("writes nothing until the confirmation is answered", async () => {
@@ -853,9 +1309,7 @@ describe("Payments, recording against a person", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
     expect(
-      within(dialog).getByText(
-        `Credit ${money(130_000)} to Tèo for 14–20 September, with the memo LUNCH14TEO.`,
-      ),
+      within(dialog).getByText(`Credit ${money(130_000)} to Tèo, with the memo LUNCHTEO.`),
     ).toBeInTheDocument();
     expect(within(dialog).getByText("Nothing has been written yet. This is the write.")).toBeInTheDocument();
     expect(recordPayment).not.toHaveBeenCalled();
@@ -870,8 +1324,9 @@ describe("Payments, recording against a person", () => {
     await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
     expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
       orgId: 7,
+      profileId: "teo",
       amountMinor: 130_000,
-      memo: "LUNCH14TEO",
+      memo: "LUNCHTEO",
       recordedBy: "admin",
     });
     await waitFor(() =>
@@ -893,9 +1348,7 @@ describe("Payments, recording against a person", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
     expect(
-      within(dialog).getByText(
-        `Credit ${money(45_000)} to Tèo for 14–20 September, with the memo LUNCH14TEO.`,
-      ),
+      within(dialog).getByText(`Credit ${money(45_000)} to Tèo, with the memo LUNCHTEO.`),
     ).toBeInTheDocument();
   });
 
@@ -916,7 +1369,7 @@ describe("Payments, recording against a person", () => {
     expect(review).toHaveAccessibleDescription(/matches nobody/);
   });
 
-  it("warns when the memo has lost the reference that decides who is credited", async () => {
+  it("says what a memo without the reference does, and does not refuse it", async () => {
     serve();
     renderPayments();
     const dialog = await openSettle("Tèo");
@@ -926,8 +1379,12 @@ describe("Payments, recording against a person", () => {
     await userEvent.type(memo, "tien com trua");
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
 
+    // The row names Tèo, so the money is his either way. What the memo can
+    // still do is hand it to somebody else, which is worth saying.
     expect(
-      within(dialog).getByText(/does not contain LUNCH14TEO, so it will not land on this week/),
+      within(dialog).getByText(
+        /does not contain LUNCHTEO. The money is recorded as Tèo's either way/,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -938,13 +1395,16 @@ describe("Payments, recording against a person", () => {
 
     const memo = within(dialog).getByLabelText("Memo");
     await userEvent.clear(memo);
-    await userEvent.type(memo, "CT DEN:lunch14teo chuyển tiền");
+    await userEvent.type(memo, "CT DEN:lunchteo chuyển tiền");
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
 
-    expect(within(dialog).queryByText(/does not contain LUNCH14TEO/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/does not contain LUNCHTEO/)).not.toBeInTheDocument();
   });
 
-  it("says the money is not credited anywhere else when it overshoots", async () => {
+  it("says the extra becomes credit rather than disappearing", async () => {
+    // It used to be destroyed: `greatest(due - paid, 0)` turned every
+    // overpayment into a zero, so the screen had to warn about it. It is
+    // credit now, and the sentence says so.
     serve();
     renderPayments();
     const dialog = await openSettle("Tèo");
@@ -956,8 +1416,23 @@ describe("Payments, recording against a person", () => {
 
     expect(
       within(dialog).getByText(
-        `That is more than the ${money(130_000)} still to pay. The extra stays on this week and is not credited to any other.`,
+        `That settles Tèo's account, and the last ${money(70_000)} sits as credit against their next lunches.`,
       ),
+    ).toBeInTheDocument();
+  });
+
+  it("says when the money leaves the account short", async () => {
+    serve();
+    renderPayments();
+    const dialog = await openSettle("Tèo");
+
+    const amount = within(dialog).getByLabelText("Amount received");
+    await userEvent.clear(amount);
+    await userEvent.type(amount, "30000");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+
+    expect(
+      within(dialog).getByText(`Tèo would still owe ${money(100_000)}.`),
     ).toBeInTheDocument();
   });
 
@@ -976,13 +1451,20 @@ describe("Payments, recording against a person", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Record" }));
 
     expect(await within(dialog).findByRole("button", { name: "Recording…" })).toBeInTheDocument();
-    settle({ id: 500, amountMinor: 130_000, matchedStatementId: 1 });
+    settle({ id: 500, amountMinor: 130_000, profileId: "teo", matchedStatementId: 1 });
     await waitFor(() => expect(fetchPayments).toHaveBeenCalledTimes(2));
   });
 
-  it("says so when the payment it just wrote landed on nobody", async () => {
+  it("says so when the memo handed the money to somebody else", async () => {
+    // The insert names the person, but the trigger matches on the memo and
+    // overrules it. That is silent in the database and it is about money.
     serve();
-    recordPayment.mockResolvedValue({ id: 500, amountMinor: 130_000, matchedStatementId: null });
+    recordPayment.mockResolvedValue({
+      id: 500,
+      amountMinor: 130_000,
+      profileId: "dinh",
+      matchedStatementId: 2,
+    });
     renderPayments();
     const dialog = await openSettle("Tèo");
 
@@ -990,7 +1472,9 @@ describe("Payments, recording against a person", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Record" }));
 
     await waitFor(() =>
-      expect(success).toHaveBeenCalledWith("Recorded, but the memo matched nobody"),
+      expect(success).toHaveBeenCalledWith(
+        `Recorded ${rawMoney(130_000)}, but the memo did not put it on Tèo`,
+      ),
     );
   });
 });
@@ -1009,7 +1493,9 @@ describe("Payments, waiving", () => {
     expect(
       within(dialog).getByText("Stop asking Tèo for 14–20 September."),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText(/No money is recorded and nothing is credited/)).toBeInTheDocument();
+    expect(
+      within(dialog).getByText(/No money is recorded and nothing is credited/),
+    ).toBeInTheDocument();
     expect(waiveStatement).not.toHaveBeenCalled();
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Waive" }));
@@ -1094,13 +1580,15 @@ describe("Payments, what the caterer is owed", () => {
     ).toBeInTheDocument();
   });
 
-  it("excludes debt carried forward, which the statements above it include", async () => {
-    // Tèo ate 130.000 of food and still owes 90.000 from the week before, so
-    // his statement is 220.000 and the caterer is owed 130.000. Adding the
-    // statements up to pay the caterer would overcharge by exactly the debt.
+  it("is the week's food, while what people owe is every week they have eaten", async () => {
+    // Tèo ate 130.000 of food this week and still owes 90.000 from the week
+    // before. The caterer is owed 130.000 and Tèo owes 220.000, and neither
+    // figure is a mistake: paying the caterer the sum of the accounts would
+    // hand them a debt nobody cooked.
     serve({
-      statements: [
-        statement({ carriedInMinor: 90_000, totalDueMinor: 220_000 }),
+      statements: [statement()],
+      people: [
+        person({ account: { chargedMinor: 220_000, creditedMinor: 0, balanceMinor: 220_000 } }),
       ],
       periods: [{ ...WEEK_14, totalMinor: 130_000, lineCount: 3 }],
     }, {
@@ -1122,12 +1610,16 @@ describe("Payments, what the caterer is owed", () => {
     renderPayments();
 
     await screen.findByText("Still to collect");
-    // What people owe carries the debt.
-    expect(screen.getByText(`${money(0)} received of ${money(220_000)} billed to 1 person for 3 meals.`)).toBeInTheDocument();
-    const teo = await rowFor("Tèo");
-    expect(within(teo).getByText(/includes 90.000 ₫ carried over/)).toBeInTheDocument();
+    // The account carries every week.
+    expect(headline("Still to collect")).toHaveTextContent(money(220_000));
+    expect(
+      screen.getByText(`${money(130_000)} billed this week to 1 person for 3 meals.`),
+    ).toBeInTheDocument();
+    const teo = within(await rowFor("Tèo")).getAllByRole("cell");
+    expect(teo[2]).toHaveTextContent(money(130_000));
+    expect(teo[3]).toHaveTextContent(money(220_000));
 
-    // What the caterer is owed does not.
+    // What the caterer is owed carries one week and no debt at all.
     const table = await screen.findByRole("table", { name: /What the caterer is owed/ });
     const footer = within(table).getAllByRole("row").at(-1);
     expect(within(footer!).getByText(money(130_000))).toBeInTheDocument();

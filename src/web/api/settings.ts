@@ -253,28 +253,6 @@ export async function setShortCode(args: {
 
 /* ------------------------------------------------- leaving, and deleting */
 
-/**
- * The newest week that is still short, not the sum of the weeks.
- *
- * Carry-forward rolls an unpaid remainder into the next statement, so adding
- * the weeks up bills the same debt twice; the newest one still carrying a
- * balance already contains the older ones. This is zero exactly when
- * `leave_office`'s own `sum(greatest(due - paid, 0)) > 0` is false, because
- * every term of that sum is non-negative -- so the affordance and the rule
- * cannot disagree about whether money is owed, only about how to say it.
- *
- * `rows` must be newest first.
- */
-function newestOutstanding(
-  rows: ReadonlyArray<{ total_due_minor: number; paid_minor: number }>,
-): number {
-  for (const r of rows) {
-    const out = Math.max(r.total_due_minor - r.paid_minor, 0);
-    if (out > 0) return out;
-  }
-  return 0;
-}
-
 export type LeaveStanding = {
   /** What this person still owes the office, in minor units. */
   owedMinor: number;
@@ -291,15 +269,18 @@ export type LeaveStanding = {
 export async function fetchLeaveStanding(args: {
   orgId: number; profileId: string;
 }): Promise<LeaveStanding> {
-  const [statements, owners] = await Promise.all([
+  const [account, owners] = await Promise.all([
+    // The same view `leave_office` refuses on, so the affordance and the rule
+    // cannot say different numbers. It used to walk statements and take the
+    // newest short week, because carry-forward meant that week contained the
+    // older ones. It does not any more, and taking the newest would have told
+    // somebody who owes three weeks that they owe the smallest of them.
     supabase
-      .from("billing_statements")
-      .select("total_due_minor, paid_minor")
+      .from("v_account_balance")
+      .select("balance_minor")
       .eq("org_id", args.orgId)
       .eq("profile_id", args.profileId)
-      .in("status", ["unpaid", "partial"])
-      // Periods are created in order, so the highest id is the latest week.
-      .order("billing_period_id", { ascending: false }),
+      .maybeSingle(),
     supabase
       .from("memberships")
       .select("id", { count: "exact", head: true })
@@ -307,11 +288,12 @@ export async function fetchLeaveStanding(args: {
       .eq("role", "owner")
       .eq("status", "active"),
   ]);
-  if (statements.error) throw statements.error;
+  if (account.error) throw account.error;
   if (owners.error) throw owners.error;
 
   return {
-    owedMinor: newestOutstanding(statements.data ?? []),
+    // Credit is not a debt, so a negative balance owes nothing.
+    owedMinor: Math.max(Number(account.data?.balance_minor ?? 0), 0),
     ownerCount: owners.count ?? 0,
   };
 }
@@ -326,29 +308,34 @@ export type OfficeDebt = {
 /**
  * What deleting the office would walk away from.
  *
- * Admin-readable only -- billing_statements_select_own hides everybody else's
- * rows from a member -- which is why this is asked for on the owner's half of
- * the screen and nowhere else. Summed per person over each person's newest
- * unsettled week, for the carry-forward reason above.
+ * One row per person from `v_account_balance`, which is the number they are
+ * each shown and the number `leave_office` refuses on. It used to sum each
+ * person's newest unsettled week, which was right only while carry-forward
+ * folded the older ones into it.
+ *
+ * A member reads only their own row -- `payments_select_own` and
+ * `billing_statements_select_own` see to that -- which is why this is asked
+ * for on the owner's half of the screen and nowhere else.
  */
 export async function fetchOfficeDebt(orgId: number): Promise<OfficeDebt> {
   const { data, error } = await supabase
-    .from("billing_statements")
-    .select("profile_id, total_due_minor, paid_minor")
-    .eq("org_id", orgId)
-    .in("status", ["unpaid", "partial"])
-    .order("billing_period_id", { ascending: false });
+    .from("v_account_balance")
+    .select("profile_id, balance_minor")
+    .eq("org_id", orgId);
   if (error) throw error;
 
-  const byPerson = new Map<string, number>();
-  for (const r of data ?? []) {
-    if (byPerson.has(r.profile_id)) continue;
-    const out = Math.max(r.total_due_minor - r.paid_minor, 0);
-    if (out > 0) byPerson.set(r.profile_id, out);
-  }
   let outstandingMinor = 0;
-  for (const v of byPerson.values()) outstandingMinor += v;
-  return { outstandingMinor, peopleOwing: byPerson.size };
+  let peopleOwing = 0;
+  for (const r of data ?? []) {
+    // Somebody in credit offsets nothing: the office does not get to count
+    // one person's top-up against another person's debt.
+    const owed = Math.max(Number(r.balance_minor), 0);
+    if (owed > 0) {
+      outstandingMinor += owed;
+      peopleOwing += 1;
+    }
+  }
+  return { outstandingMinor, peopleOwing };
 }
 
 /**

@@ -48,7 +48,9 @@ export function DayStages({
   // along it: one is the line not having started, the other is it stopping.
   if (stage === "no_menu") {
     return (
-      <p className={cn("text-sm text-muted", className)}>No menu for this day yet.</p>
+      <p className={cn("text-sm text-muted", className)}>
+        No menu for this day yet.
+      </p>
     );
   }
   if (stage === "cancelled") {
@@ -64,48 +66,63 @@ export function DayStages({
   return (
     <ol
       aria-label="What has happened to this day"
-      className={cn("flex items-start", className)}
+      // A grid of equal columns, so the points are evenly spaced whatever the
+      // labels are. The rails are drawn inside each column as two absolute
+      // halves that run from the column edge to its centre, which is where the
+      // dot is: they meet exactly under the next dot and cannot drift, and
+      // being in the same centred row as the dot they cannot sit off its line.
+      className={cn("grid grid-cols-3", className)}
     >
       {POINTS.map((p, i) => {
         const done = i < at;
         const here = i === at;
+        const filled = done || here;
         return (
           <li
             key={p.key}
-            // The first point has no rail to its left, so it does not grow;
-            // the rest share the space evenly and the line is what fills it.
-            className={cn("flex items-center", i > 0 && "min-w-0 flex-1")}
+            // On the item, not the label: the step is the whole point, and
+            // that is what assistive tech is asked to announce as current.
             aria-current={here ? "step" : undefined}
+            className="flex flex-col items-center gap-1.5"
           >
-            {i > 0 && (
+            <span className="relative flex h-5 w-full items-center justify-center">
+              {i > 0 && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute top-1/2 right-1/2 left-0 h-0.5 -translate-y-1/2",
+                    filled ? "bg-accent" : "bg-border",
+                  )}
+                />
+              )}
+              {i < POINTS.length - 1 && (
+                <span
+                  aria-hidden="true"
+                  className={cn(
+                    "absolute top-1/2 right-0 left-1/2 h-0.5 -translate-y-1/2",
+                    done ? "bg-accent" : "bg-border",
+                  )}
+                />
+              )}
               <span
                 aria-hidden="true"
                 className={cn(
-                  "mt-2.5 h-0.5 min-w-4 flex-1",
-                  done || here ? "bg-accent" : "bg-border",
-                )}
-              />
-            )}
-            <span className="flex flex-col items-center gap-1 px-1">
-              <span
-                aria-hidden="true"
-                className={cn(
-                  "flex size-5 shrink-0 items-center justify-center rounded-full border-2",
+                  "relative z-1 flex size-5 items-center justify-center rounded-full border-2",
                   done && "border-accent bg-accent text-accent-fg",
-                  here && "border-accent bg-surface-raised",
-                  !done && !here && "border-border bg-surface-raised",
+                  here && "border-accent bg-accent-subtle",
+                  !filled && "border-border bg-surface-raised",
                 )}
               >
                 {done && <CheckIcon className="size-3" />}
               </span>
-              <span
-                className={cn(
-                  "text-xs whitespace-nowrap",
-                  here ? "font-semibold text-text" : "text-muted",
-                )}
-              >
-                {p.label}
-              </span>
+            </span>
+            <span
+              className={cn(
+                "text-xs whitespace-nowrap",
+                here ? "font-semibold text-text" : "text-muted",
+              )}
+            >
+              {p.label}
             </span>
           </li>
         );
