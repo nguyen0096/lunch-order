@@ -15,6 +15,7 @@ import {
 } from "../api.js";
 import { BillLines } from "./bill/BillLines.js";
 import { PaymentDetails } from "./bill/PaymentDetails.js";
+import { PayAhead } from "./bill/PayAhead.js";
 import type { ScreenProps } from "./screenProps.js";
 import { formatMoney, plainAmount, type Currency } from "../../shared/money.js";
 import { addDays } from "../../shared/dates.js";
@@ -146,13 +147,18 @@ export function BillScreen({ me, org }: ScreenProps) {
             up here, because it undermines this number rather than one week's. */}
         <WaitingNote waiting={[]} error={waitingError} />
 
-        {owed > 0 && (
+        {owed > 0 ? (
           <PaymentDetails
             paymentRef={ref}
             amountMinor={owed}
             currency={org.currency}
             payment={bill.payment}
           />
+        ) : (
+          // Nothing is owed, so there is no sum to put in a code. The option
+          // to send one anyway is still worth offering, and it is the only
+          // way a member tops themselves up without asking an admin.
+          <PayAhead paymentRef={ref} payment={bill.payment} />
         )}
 
       </article>

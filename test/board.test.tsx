@@ -265,9 +265,14 @@ describe("Board, ordering", () => {
     expect(success).toHaveBeenCalledWith(`Ordered ${named} · tap to change`);
   });
 
-  it("spreads the randomised order across the whole menu", async () => {
+  // Twelve runs, not twenty-five. Each one is a full board render, so this was
+  // the slowest test in the suite: 3.5s alone and over the 5s limit whenever
+  // the machine was busy, which made it fail for reasons that had nothing to
+  // do with the code. Twelve is still decisive: with three dishes the chance
+  // of drawing the same one every time is 3^-11, about one run in 177.000.
+  it("spreads the randomised order across the whole menu", { timeout: 15_000 }, async () => {
     const seen = new Set<number | null | undefined>();
-    for (let run = 0; run < 25; run++) {
+    for (let run = 0; run < 12; run++) {
       vi.clearAllMocks();
       serve(makeBoard());
       const view = renderBoard();

@@ -21,12 +21,11 @@ import { meals } from "./labels.js";
  * What the office owes the caterer: every meal cooked that week, the admin's
  * own included.
  *
- * Read from `billing_lines` and never from the statements above it.
- * `total_due_minor` is generated as `meals_minor + carried_in_minor`, and the
- * carried part is last week's unpaid remainder rolled forward. Nobody cooked
- * it. Adding the statements up to pay a caterer overcharges by exactly that
- * debt, which is why the two halves of this screen deliberately show different
- * numbers and say which is which.
+ * Read from `billing_lines` and never from the accounts above it. What people
+ * owe is every week they have not settled; what the caterer is owed is the
+ * meals of one week. Paying a caterer from the first number overcharges them
+ * by every unpaid week in the office, which is why the two halves of this
+ * screen deliberately show different totals and say which is which.
  *
  * Grouped by dish alone. A transfer changes `payer_profile_id` and so changes
  * who is billed, but the kitchen cooked the same lunch either way.
@@ -68,9 +67,11 @@ export function CatererSummary({
       <h2 id={headingId} className="text-lg font-semibold">
         What the caterer is owed
       </h2>
+      {/* The two totals are different questions and the screen has to say so,
+          or they read as the same number failing to agree. */}
       <p className="max-w-prose text-sm text-muted">
-        Every meal this week bought, yours included. This will not match what people owe above:
-        that total also carries last week's unpaid remainder forward, and nobody cooked a debt.
+        Every meal this week bought, yours included. This is one week. It will not match what
+        people owe above, which is every week they have not settled, and nobody cooked a debt.
       </p>
 
       {loadError !== null ? (

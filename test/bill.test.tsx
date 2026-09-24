@@ -681,6 +681,60 @@ describe("Bill, the reference as a requirement", () => {
   });
 });
 
+describe("Bill, paying ahead", () => {
+  it("offers a code with no amount when there is nothing to pay", async () => {
+    const user = userEvent.setup();
+    serve({ weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })] });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+    // Folded away: somebody who owes nothing came here to confirm that.
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
+
+    expect(await screen.findByText("LUNCHNEYU")).toBeInTheDocument();
+    // A static code, because the whole point of paying ahead is that the
+    // payer picks the sum. A dynamic one would fix it at scan time.
+    expect(screen.getByRole("img", { name: /amount up to you/ })).toBeInTheDocument();
+    expect(screen.getByText(/You type the amount/)).toBeInTheDocument();
+  });
+
+  it("offers it to somebody already in credit, who is the likeliest to use it", async () => {
+    const user = userEvent.setup();
+    serve({
+      weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })],
+      account: { chargedMinor: 180_000, creditedMinor: 280_000, balanceMinor: -100_000 },
+    });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
+    expect(await screen.findByRole("img", { name: /VietQR code/ })).toBeInTheDocument();
+  });
+
+  it("says why there is no code rather than showing a broken one", async () => {
+    const user = userEvent.setup();
+    serve({
+      weeks: [week({ statement: statement({ paidMinor: 180_000, status: "paid" }) })],
+      payment: { vietqr: null, note: null },
+    });
+    renderBill();
+
+    await screen.findByRole("heading", { name: "Your account" });
+    await user.click(screen.getByRole("button", { name: "Pay ahead" }));
+    expect(screen.getByText(/has not set up bank transfer yet/i)).toBeInTheDocument();
+  });
+
+  it("does not offer it while something is still owed, because the bill above is the code", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    await screen.findByText("You owe");
+    expect(screen.queryByRole("button", { name: "Pay ahead" })).not.toBeInTheDocument();
+  });
+});
+
 describe("Bill, copying the reference", () => {
   it("puts the reference on the clipboard and says so", async () => {
     const user = userEvent.setup();
