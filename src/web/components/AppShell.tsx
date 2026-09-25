@@ -6,6 +6,7 @@ import {
   ChefHatIcon,
   ChevronsUpDownIcon,
   LogOutIcon,
+  MegaphoneIcon,
   PlusIcon,
   ReceiptTextIcon,
   SettingsIcon,
@@ -29,6 +30,7 @@ export type Page =
   | "menu"
   | "people"
   | "payments"
+  | "messages"
   | "corrections"
   | "settings";
 
@@ -46,6 +48,9 @@ const ADMIN: Destination[] = [
   { page: "menu", label: "Menu", icon: <ChefHatIcon /> },
   { page: "people", label: "People", icon: <UsersIcon /> },
   { page: "payments", label: "Payments", icon: <BanknoteIcon /> },
+  // Here, unlike Corrections, because deciding what the office hears is
+  // something an admin comes back to rather than a rare weekend job.
+  { page: "messages", label: "Messages", icon: <MegaphoneIcon /> },
 ];
 
 /**
@@ -234,6 +239,7 @@ export function switchTarget(page: string, role: Role): Page {
     (page === "menu" ||
       page === "people" ||
       page === "payments" ||
+      page === "messages" ||
       page === "corrections") &&
     isAdmin(role)
   ) {

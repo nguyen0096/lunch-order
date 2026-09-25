@@ -9,6 +9,7 @@ import { BoardScreen } from "./components/BoardScreen.js";
 import { ComingSoon } from "./components/ComingSoon.js";
 import { CorrectionsScreen } from "./components/CorrectionsScreen.js";
 import { MenuScreen } from "./components/MenuScreen.js";
+import { MessagesScreen } from "./components/MessagesScreen.js";
 import { PaymentsScreen } from "./components/PaymentsScreen.js";
 import { PeopleScreen } from "./components/PeopleScreen.js";
 import { SettingsScreen } from "./components/SettingsScreen.js";
@@ -142,6 +143,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
     page === "menu" ||
     page === "people" ||
     page === "payments" ||
+    page === "messages" ||
     // Reached from Payments rather than from the nav: correcting a finished
     // day is a weekend job, not part of the daily furniture.
     page === "corrections"
@@ -157,6 +159,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
     }
     if (page === "menu") return <MenuScreen {...props} />;
     if (page === "payments") return <PaymentsScreen {...props} />;
+    if (page === "messages") return <MessagesScreen {...props} />;
     if (page === "corrections") return <CorrectionsScreen {...props} />;
     return <PeopleScreen {...props} />;
   }

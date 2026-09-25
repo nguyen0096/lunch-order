@@ -4,11 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   addDaysIso,
   botDeepLink,
+  commandsFor,
   decodeCallback,
   encodeCallback,
   escapeHtml,
   formatCutoffIn,
   formatServiceDate,
+  helpFor,
   humanError as botHumanError,
   isJoinCode,
   isLinkToken,
@@ -18,10 +20,13 @@ import {
   orderingClosedReason,
   parseCommand,
   priceText,
+  randomDish,
   renderAccountText,
   renderDayText,
   renderExitCancelledText,
   renderExitRefusedText,
+  renderHandoverOfferedText,
+  renderHandoverPickText,
   renderLeaveConfirmText,
   renderLeftText,
   renderOfferText,
@@ -31,17 +36,21 @@ import {
   todayIn,
   unpricedMealsNote,
   vietQrLink,
+  NOBODY_TO_PASS_IT_TO,
   NOTHING_TO_LEAVE,
+  NOTHING_TO_PASS_ON,
   PAYMENT_REF_REQUIRED,
   PRICE_TO_COME,
   type CallbackAction,
   type AccountMessage,
   type DayMessage,
+  type MemberKind,
 } from "../src/shared/telegram.js";
 import { orderDisabledReason } from "../src/shared/gating.js";
 import { PRICE_PENDING, VND, formatMoney } from "../src/shared/money.js";
 import type { Menu, MenuStatus } from "../src/shared/types.js";
 import { humanError as webHumanError } from "../src/web/api.js";
+import { passOnReason, pickDish } from "../src/web/components/boardModel.js";
 
 const TZ = "Asia/Ho_Chi_Minh";
 const CUTOFF = "2026-09-22T14:00:00.000Z"; // 21:00 on 22/09 in ICT
@@ -121,6 +130,10 @@ describe("callback payloads", () => {
     { kind: "pick", menuId: 1, itemId: 2 },
     { kind: "pick", menuId: 987654, itemId: 123456 },
     { kind: "clear", menuId: 42 },
+    { kind: "surprise", menuId: 42 },
+    { kind: "day", menuId: 42 },
+    { kind: "handover", menuId: 42 },
+    { kind: "handTo", menuId: 987654, membershipId: 123456 },
     { kind: "transfer", transferId: 9, decision: "accepted" },
     { kind: "transfer", transferId: 9, decision: "declined" },
     { kind: "leave", orgId: 7, confirmed: true },
@@ -151,6 +164,117 @@ describe("callback payloads", () => {
     for (const bad of ["", "p", "p:1", "p:1:2:3", "p:0:1", "p:-1:2", "p:a:b", "z:1:2", "c:", "t:1:x"]) {
       expect(decodeCallback(bad)).toBeNull();
     }
+  });
+
+  // Passing a meal on charges a colleague money, so a payload that is nearly
+  // one of these is refused rather than read as the nearest thing it resembles.
+  it("never turns a malformed handover into a colleague", () => {
+    for (const bad of ["h", "h:", "h:0", "h:a", "h:1:0", "h:1:a", "h:1:2:3", "s:", "s:0", "d:a"]) {
+      expect(decodeCallback(bad)).toBeNull();
+    }
+  });
+
+  it("keeps the dice and the day apart from cancelling", () => {
+    expect(decodeCallback("c:42")).toEqual({ kind: "clear", menuId: 42 });
+    expect(decodeCallback("s:42")).toEqual({ kind: "surprise", menuId: 42 });
+    expect(decodeCallback("d:42")).toEqual({ kind: "day", menuId: 42 });
+  });
+});
+
+/* --------------------------------------------------------- the command menu */
+
+/**
+ * What each kind of member is offered, which is not the same as what each is
+ * permitted. Both commands work when typed by hand whichever list a chat was
+ * given; these tests are about the list.
+ */
+describe("the command menu a chat is given", () => {
+  const names = (kind: MemberKind) => commandsFor(kind).map((c) => `/${c.command}`);
+
+  it("offers a member with a web account the exits that suit an account", () => {
+    expect(names("web")).toEqual(["/order", "/cancel", "/me", "/help", "/unlink"]);
+  });
+
+  it("never offers /leave to somebody whose account lives on the web", () => {
+    // Ending a membership belongs in Settings, where the rest of their account
+    // is. Typing /leave still works; it is simply not advertised here.
+    expect(names("web")).not.toContain("/leave");
+  });
+
+  it("offers a member who exists only in Telegram the exit that leaves nothing behind", () => {
+    expect(names("telegram-only")).toEqual(["/order", "/cancel", "/me", "/help", "/leave"]);
+  });
+
+  it("never offers /unlink to somebody it would strand", () => {
+    // Disconnecting this chat would take away the only way they have of
+    // reaching their own bill, because they have no web session anywhere.
+    expect(names("telegram-only")).not.toContain("/unlink");
+  });
+
+  it("gives both kinds the same four ways of eating lunch", () => {
+    for (const kind of ["web", "telegram-only"] as const) {
+      expect(names(kind).slice(0, 4)).toEqual(["/order", "/cancel", "/me", "/help"]);
+    }
+  });
+
+  // It shipped under the wrong name and shows the wrong day. The people who
+  // have it in their fingers keep it; nobody else is taught it.
+  it("teaches nobody /today", () => {
+    for (const kind of ["web", "telegram-only"] as const) {
+      expect(names(kind)).not.toContain("/today");
+    }
+  });
+
+  it("says what each command does in words, within what setMyCommands accepts", () => {
+    for (const kind of ["web", "telegram-only"] as const) {
+      for (const c of commandsFor(kind)) {
+        expect(c.command).toMatch(/^[a-z0-9_]{1,32}$/);
+        expect(c.description.length).toBeGreaterThan(0);
+        expect(c.description.length).toBeLessThanOrEqual(256);
+      }
+    }
+  });
+
+  /**
+   * The whole point of building the help out of the list: a static help string
+   * was how the bot came to name /leave to a chat whose menu withheld it.
+   */
+  it("says in /help exactly what the menu says, line for line", () => {
+    for (const kind of ["web", "telegram-only"] as const) {
+      expect(helpFor(kind)).toBe(
+        ["<b>What I can do</b>", ...commandsFor(kind).map((c) => `/${c.command} - ${c.description}`)]
+          .join("\n"),
+      );
+    }
+  });
+
+  it("names in /help every command the menu offers and no other", () => {
+    for (const kind of ["web", "telegram-only"] as const) {
+      const listed = [...helpFor(kind).matchAll(/^\/(\w+)/gm)].map((m) => m[1]);
+      expect(listed).toEqual(commandsFor(kind).map((c) => c.command));
+    }
+  });
+
+  it("tells a Telegram-only member about leaving and a web member about disconnecting", () => {
+    expect(helpFor("telegram-only")).toContain("/leave - leave your office");
+    expect(helpFor("telegram-only")).not.toContain("/unlink");
+    expect(helpFor("web")).toContain("/unlink - disconnect this chat, and stay a member");
+    expect(helpFor("web")).not.toContain("/leave");
+  });
+
+  /**
+   * The Edge Function builds its help from helpFor() and nowhere else. A
+   * second copy written inline is what this catches, because it would be a
+   * copy that no chat's menu agrees with. Comments are stripped first: the
+   * file's own prose names these things.
+   */
+  it("is the only place the bot's command list is written down", () => {
+    const code = readFileSync(
+      join(import.meta.dirname, "..", "supabase", "functions", "telegram", "index.ts"),
+      "utf8",
+    ).replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "");
+    expect(code).not.toContain("What I can do");
+    expect(code).not.toMatch(/"\/order - /);
   });
 });
 
@@ -312,6 +436,64 @@ describe("targetMenu picks the day every command without a menu id is about", ()
   });
 });
 
+/* ------------------------------------------------------- a dish at random */
+
+/**
+ * The bot's dice and the board's dice are the same dice.
+ *
+ * randomDish() is a twin of pickDish() rather than a call to it, because the
+ * bot cannot import a module that reaches the board's own types. So the two
+ * are rolled here side by side: a rule changed in one of them fails this file
+ * rather than letting the board and the bot disagree about what random means.
+ */
+describe("the dish Surprise me orders", () => {
+  const DISHES = [
+    { id: 5, name: "Cơm gà", priceMinor: 45_000 },
+    { id: 6, name: "Bún bò", priceMinor: 50_000 },
+    { id: 7, name: "Phở", priceMinor: null },
+  ];
+
+  it("lands where the board's dice lands, on every roll", () => {
+    for (const excludeId of [null, 5, 6, 7, 99]) {
+      for (const roll of [0, 0.01, 0.33, 0.5, 0.66, 0.99, 1]) {
+        const random = () => roll;
+        expect(randomDish(DISHES, { excludeId, random })?.id)
+          .toBe(pickDish(DISHES, { excludeId, random })?.id);
+      }
+    }
+  });
+
+  it("agrees with the board on a menu of one, and on no menu at all", () => {
+    const one = [DISHES[0]!];
+    expect(randomDish(one)?.id).toBe(pickDish(one)?.id);
+    expect(randomDish(one, { excludeId: 5 })?.id).toBe(pickDish(one, { excludeId: 5 })?.id);
+    expect(randomDish([])).toBeNull();
+    expect(pickDish([])).toBeNull();
+  });
+
+  it("does not hand back the dish already ordered, so a second tap moves you", () => {
+    for (const roll of [0, 0.5, 0.99, 1]) {
+      expect(randomDish(DISHES, { excludeId: 6, random: () => roll })?.id).not.toBe(6);
+    }
+  });
+
+  // A menu of one dish, already ordered: re-offering it is right, and going
+  // blank would read as "there is nothing here".
+  it("re-offers the only dish rather than going blank", () => {
+    expect(randomDish([DISHES[0]!], { excludeId: 5 })?.id).toBe(5);
+  });
+
+  it("reaches every dish, so the office is not funnelled onto the first", () => {
+    expect(randomDish(DISHES, { random: () => 0 })?.id).toBe(5);
+    expect(randomDish(DISHES, { random: () => 0.5 })?.id).toBe(6);
+    expect(randomDish(DISHES, { random: () => 0.99 })?.id).toBe(7);
+  });
+
+  it("stays inside the menu on a random() of exactly 1", () => {
+    expect(randomDish(DISHES, { random: () => 1 })?.id).toBe(7);
+  });
+});
+
 describe("escaping and VietQR", () => {
   it("escapes what Telegram's HTML parser would choke on", () => {
     expect(escapeHtml("Cơm gà & <b>rau</b>")).toBe("Cơm gà &amp; &lt;b&gt;rau&lt;/b&gt;");
@@ -382,11 +564,12 @@ function day(over: Partial<DayMessage> = {}): DayMessage {
     timeZone: TZ,
     dishes: [{ name: "Cơm gà", priceMinor: 45_000 }],
     order: null,
+    handover: null,
     ...over,
   };
 }
 
-const QR = "https://img.vietqr.io/image/970415-1-compact2.png?amount=75000";
+const QR ="https://img.vietqr.io/image/970415-1-compact2.png?amount=75000";
 
 /** One week eaten, nothing paid: the commonest account there is. */
 function account(over: Partial<AccountMessage> = {}): AccountMessage {
@@ -514,6 +697,167 @@ describe("a meal a colleague is handing over", () => {
     expect(text).toContain(`Cơm gà (${PRICE_TO_COME})`);
     expect(text).toContain("If you accept, it goes on your bill once the caterer prices it.");
     expect(text).not.toContain("₫");
+  });
+});
+
+/* ----------------------------------------------------- passing a meal on */
+
+/**
+ * The other side of the same row: what the person giving a meal away is told,
+ * from the button on their own day through to the offer being out of their
+ * hands.
+ */
+describe("passing your own meal on", () => {
+  const eating = {
+    order: { status: "placed", dishName: "Cơm gà", amountMinor: 45_000 },
+  } satisfies Partial<DayMessage>;
+
+  describe("what the day message says about a meal on its way out", () => {
+    it("says an offer has not moved the cost yet, because it has not", () => {
+      const text = renderDayText(
+        day({ ...eating, handover: { status: "pending", toName: "Chi Le" } }),
+        money,
+      );
+      expect(text).toContain("You've offered it to <b>Chi Le</b>.");
+      expect(text).toContain("It stays yours, and on your bill, until they accept.");
+    });
+
+    it("says who is billed once somebody has accepted", () => {
+      const text = renderDayText(
+        day({ ...eating, handover: { status: "accepted", toName: "Chi Le" } }),
+        money,
+      );
+      expect(text).toContain("<b>Chi Le</b> took this meal, so it is on their bill rather than yours.");
+      expect(text).not.toContain("until they accept");
+    });
+
+    it("still says something when the colleague cannot be named", () => {
+      expect(renderDayText(day({ ...eating, handover: { status: "pending", toName: null } }), money))
+        .toContain("You've offered it to <b>a colleague</b>.");
+      expect(renderDayText(day({ ...eating, handover: { status: "accepted", toName: null } }), money))
+        .toContain("<b>A colleague</b> took this meal");
+    });
+
+    it("escapes a colleague's name, which reaches Telegram as HTML", () => {
+      const text = renderDayText(
+        day({ ...eating, handover: { status: "pending", toName: "Chi <b>Le</b>" } }),
+        money,
+      );
+      expect(text).toContain("Chi &lt;b&gt;Le&lt;/b&gt;");
+      expect(text).not.toContain("Chi <b>Le</b>");
+    });
+
+    // A line about somebody taking a lunch the reader is not down for reads as
+    // a mistake, and it is: the handover belongs to an order they cancelled.
+    it("says nothing about a handover on a meal the member no longer has", () => {
+      const cancelled = day({
+        order: { status: "cancelled", dishName: "Cơm gà", amountMinor: 45_000 },
+        handover: { status: "pending", toName: "Chi Le" },
+      });
+      expect(renderDayText(cancelled, money)).not.toContain("Chi Le");
+      const none = day({ handover: { status: "pending", toName: "Chi Le" } });
+      expect(renderDayText(none, money)).not.toContain("Chi Le");
+    });
+
+    it("leaves the message exactly as it was when nothing is being passed on", () => {
+      expect(renderDayText(day(eating), money)).toBe(
+        [
+          "<b>Wed 23/09</b>",
+          "Orders close 21:00 22/09.",
+          "",
+          `- Cơm gà  ${money(45_000)}`,
+          "",
+          `You: <b>Cơm gà</b> (${money(45_000)})`,
+        ].join("\n"),
+      );
+    });
+  });
+
+  describe("the question asked before a colleague is charged", () => {
+    const meal = {
+      orgName: null,
+      serviceDate: "2026-09-23",
+      dishName: "Cơm gà",
+      amountMinor: 45_000,
+    };
+
+    it("names the meal and the day, and says nothing has happened yet", () => {
+      const text = renderHandoverPickText(meal, money);
+      expect(text).toContain("<b>Wed 23/09</b>");
+      expect(text).toContain(`Who gets your <b>Cơm gà</b> (${money(45_000)})?`);
+      expect(text).toContain("Nothing moves until they accept, and until then the meal is still yours.");
+    });
+
+    it("does not quote 0 ₫ for a meal the caterer has not priced", () => {
+      const text = renderHandoverPickText({ ...meal, amountMinor: null }, money);
+      expect(text).toContain(`your <b>Cơm gà</b> (${PRICE_TO_COME})`);
+      expect(text).not.toContain("₫");
+    });
+
+    it("still asks when the member is down to eat but has chosen no dish", () => {
+      expect(renderHandoverPickText({ ...meal, dishName: null }, money))
+        .toContain("Who gets your lunch?");
+    });
+
+    it("names the office for a member who belongs to more than one", () => {
+      expect(renderHandoverPickText({ ...meal, orgName: "Test Office" }, money))
+        .toContain("<b>Test Office</b>\n");
+      expect(renderHandoverPickText(meal, money)).not.toContain("Test Office");
+    });
+
+    it("escapes a dish name on its way to Telegram's HTML parser", () => {
+      expect(renderHandoverPickText({ ...meal, dishName: "Cơm <b>gà</b>" }, money))
+        .toContain("Cơm &lt;b&gt;gà&lt;/b&gt;");
+    });
+  });
+
+  describe("what the member is told once it is offered", () => {
+    const offered = {
+      orgName: null,
+      serviceDate: "2026-09-23",
+      dishName: "Cơm gà",
+      amountMinor: 45_000,
+      toName: "Chi Le",
+    };
+
+    it("names who has it and says the bill has not moved", () => {
+      const text = renderHandoverOfferedText(offered, money);
+      expect(text).toContain("<b>Offered to Chi Le.</b>");
+      expect(text).toContain(`They can take your <b>Cơm gà</b> (${money(45_000)}) on <b>Wed 23/09</b>.`);
+      expect(text).toContain("It stays yours, and on your bill, until they accept.");
+    });
+
+    it("does not promise a price nobody has set", () => {
+      const text = renderHandoverOfferedText({ ...offered, amountMinor: null }, money);
+      expect(text).toContain(PRICE_TO_COME);
+      expect(text).not.toContain("₫");
+    });
+
+    it("escapes a colleague's name and a dish name alike", () => {
+      const text = renderHandoverOfferedText(
+        { ...offered, toName: "Chi <b>Le</b>", dishName: "Cơm & Gà" }, money,
+      );
+      expect(text).toContain("Chi &lt;b&gt;Le&lt;/b&gt;");
+      expect(text).toContain("Cơm &amp; Gà");
+    });
+  });
+
+  describe("the two refusals with nothing to refuse", () => {
+    /**
+     * The board greys the control out with this claim; the bot has no control
+     * to grey, so it says it. One sentence, so the two surfaces cannot come to
+     * describe the same emptiness two different ways.
+     */
+    it("is the board's own sentence about a day with no meal on it", () => {
+      const boardsWords = passOnReason({
+        cell: null, serviceDate: "2026-09-23", openWeekStart: "2026-09-21", offeredTo: null,
+      });
+      expect(NOTHING_TO_PASS_ON).toBe(`${boardsWords}.`);
+    });
+
+    it("says an office of one has nobody to pass a meal to", () => {
+      expect(NOBODY_TO_PASS_IT_TO).toContain("nobody else in this office");
+    });
   });
 });
 

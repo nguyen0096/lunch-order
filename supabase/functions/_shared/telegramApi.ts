@@ -119,6 +119,40 @@ export function editMessageText(
 }
 
 /**
+ * The menu behind the client's `/` button, for one chat only.
+ *
+ * Scoped to the chat rather than set once at the default scope, because the
+ * two kinds of member are offered different ways out and nothing outside an
+ * update tells the bot which kind a chat is. Telegram resolves a chat's menu
+ * from the narrowest scope that has a list, so a per-chat list wins over
+ * anything set wider.
+ *
+ * `commands` is the whole list rather than an addition: Telegram replaces the
+ * scope's list with what is sent.
+ */
+export function setMyCommands(
+  token: string, chatId: number, commands: Array<{ command: string; description: string }>,
+): Promise<BotResult<boolean>> {
+  return callBot<boolean>(token, "setMyCommands", {
+    commands,
+    scope: { type: "chat", chat_id: chatId },
+  });
+}
+
+/**
+ * Take a chat's own list away again, for a chat that is nobody's any more.
+ *
+ * Not setMyCommands with an empty array: an empty list is still a list, and
+ * Telegram stops at the narrowest scope that has one. Deleting the scope lets
+ * the fallback carry on, which is what a disconnected chat should fall back to.
+ */
+export function deleteMyCommands(token: string, chatId: number): Promise<BotResult<boolean>> {
+  return callBot<boolean>(token, "deleteMyCommands", {
+    scope: { type: "chat", chat_id: chatId },
+  });
+}
+
+/**
  * The client spins until this is answered, whatever the outcome, so every
  * path through a callback handler must reach it.
  */

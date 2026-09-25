@@ -47,31 +47,23 @@ import { asMember, asSystem, isDatabaseError, type Tx } from "../_shared/db.ts";
 import { signedOutClient } from "../_shared/supabaseClient.ts";
 import { secretsMatch } from "../_shared/secrets.ts";
 import {
-  answerCallbackQuery, editMessageText, sendMessage, type InlineKeyboard,
+  answerCallbackQuery, deleteMyCommands, editMessageText, sendMessage, setMyCommands,
+  type InlineKeyboard,
 } from "../_shared/telegramApi.ts";
 import {
-  addDaysIso, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
-  humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt, normalizeJoinCode,
-  NOTHING_TO_LEAVE, orderingClosedReason, orgHeading, parseCommand, renderAccountText,
-  renderDayText, renderExitCancelledText, renderExitRefusedText, renderLeaveConfirmText,
-  renderLeftText, renderOfferText, renderUnlinkConfirmText,
-  renderUnlinkedText, targetMenu, todayIn, vietQrLink,
-  type CallbackAction, type ExitKind, type Money,
+  addDaysIso, commandsFor, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
+  helpFor, humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt,
+  NOBODY_TO_PASS_IT_TO, normalizeJoinCode, NOTHING_TO_LEAVE, NOTHING_TO_PASS_ON,
+  orderingClosedReason, orgHeading, parseCommand, randomDish, renderAccountText,
+  renderDayText, renderExitCancelledText, renderExitRefusedText, renderHandoverOfferedText,
+  renderHandoverPickText, renderLeaveConfirmText, renderLeftText, renderOfferText,
+  renderUnlinkConfirmText, renderUnlinkedText, targetMenu, todayIn, vietQrLink,
+  type CallbackAction, type ExitKind, type Handover, type MemberKind, type Money,
 } from "../_shared/telegram.ts";
 import { formatMoney, type Currency } from "../_shared/money.ts";
 
 const BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") ?? "";
 const WEBHOOK_SECRET = Deno.env.get("TELEGRAM_WEBHOOK_SECRET");
-
-const HELP = [
-  "<b>What I can do</b>",
-  "/order - the next menu, and order from it",
-  "/cancel - cancel your next order",
-  "/me - what you owe, and how to pay it",
-  "/unlink - disconnect this chat, and stay a member",
-  "/leave - leave your office",
-  "/help - this message",
-].join("\n");
 
 // Says nothing about whether an account exists: an unlinked chat and a chat
 // belonging to nobody get the same answer. It names both doors, because the two
@@ -103,6 +95,17 @@ type Link = {
   membershipId: number;
   /** profiles.full_name, not the per-org display name: join_with_code writes it. */
   fullName: string;
+  /**
+   * Whether this member has a way in that is not this chat.
+   *
+   * profiles.email is null for exactly one kind of person: somebody signed up
+   * by join_with_code() off an anonymous sign-in, who has no password, no
+   * Google account and no address anybody could send a magic link to. See
+   * 20260924100000_emailless_members. It is the only column in the schema that
+   * records the difference, and it is what decides which exit this chat is
+   * offered.
+   */
+  hasWebAccount: boolean;
   org: Org;
 };
 
@@ -258,11 +261,14 @@ async function onMessage(message: Message): Promise<void> {
     case "start":
     case "help": {
       const name = escapeHtml(message.from?.first_name ?? "there");
-      await say(chatId, `Hi ${name}, you're connected.\n\n${HELP}`);
+      // Republished here as well as on the four events that change it, so a
+      // chat linked before this bot ever called setMyCommands gets its menu
+      // the first time somebody asks for help rather than never.
+      await say(chatId, `Hi ${name}, you're connected.\n\n${await publishCommands(chatId, links)}`);
       return;
     }
     default:
-      await say(chatId, HELP);
+      await say(chatId, helpFor(memberKind(links)));
       return;
   }
 }
@@ -293,7 +299,8 @@ async function onLinkToken(chatId: number, token: string): Promise<void> {
 
   const orgName = escapeHtml(link.org_name);
   if (link.chat_id === chatId) {
-    return await say(chatId, `You're already connected to <b>${orgName}</b>.\n\n${HELP}`);
+    return await say(chatId,
+      `You're already connected to <b>${orgName}</b>.\n\n${await refreshCommands(chatId)}`);
   }
 
   try {
@@ -316,7 +323,7 @@ async function onLinkToken(chatId: number, token: string): Promise<void> {
     return await say(chatId, "Something went wrong connecting you. Try again.");
   }
 
-  await say(chatId, `Connected to <b>${orgName}</b>.\n\n${HELP}`);
+  await say(chatId, `Connected to <b>${orgName}</b>.\n\n${await refreshCommands(chatId)}`);
 }
 
 /** The org a join code opens, read before anything is created. */
@@ -345,7 +352,8 @@ async function onJoinCode(chatId: number, links: Link[], raw: string): Promise<v
 
   if (links.some((l) => l.org.id === org.id)) {
     return await say(chatId,
-      `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n${HELP}`);
+      `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n` +
+      `${await refreshCommands(chatId)}`);
   }
 
   const returning = await dormantLink(chatId, org.id);
@@ -403,7 +411,8 @@ async function onName(
   if (org === null) return await say(chatId, "That join code is not valid.");
   if (links.some((l) => l.org.id === org.id)) {
     return await say(chatId,
-      `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n${HELP}`);
+      `You're already connected to <b>${escapeHtml(org.name)}</b>.\n\n` +
+      `${await refreshCommands(chatId)}`);
   }
 
   // Asked again here for the reason the two checks above are: a step that
@@ -479,7 +488,10 @@ async function sayJoined(
 ): Promise<void> {
   if (!outcome.ok) return await say(chatId, escapeHtml(outcome.reason));
   const orgName = escapeHtml(outcome.value[0]?.org_name ?? "your office");
-  await say(chatId, `You're in, at <b>${orgName}</b>.\n\n${HELP}`);
+  // The menu is published from what the join just wrote, not from what was
+  // true when this update arrived: somebody who joined by code has no web
+  // account, and the list they are given has to know that already.
+  await say(chatId, `You're in, at <b>${orgName}</b>.\n\n${await refreshCommands(chatId)}`);
 }
 
 /* ------------------------------------------------------------------- /order */
@@ -492,7 +504,7 @@ async function onOrder(chatId: number, links: Link[]): Promise<void> {
     // transaction open.
     const outcome = await attempt(() =>
       asMember(link.profileId, async (tx) => ({
-        day: await dayView(tx, link, links.length > 1),
+        days: await dayViews(tx, link, links.length > 1),
         offers: await offerViews(tx, link),
       })));
     if (!outcome.ok) {
@@ -500,7 +512,7 @@ async function onOrder(chatId: number, links: Link[]): Promise<void> {
       continue;
     }
 
-    await say(chatId, outcome.value.day.text, outcome.value.day.keyboard);
+    for (const day of outcome.value.days) await say(chatId, day.text, day.keyboard);
     for (const offer of outcome.value.offers) await say(chatId, offer.text, offer.keyboard);
   }
 }
@@ -580,8 +592,11 @@ async function resolveTarget(tx: Tx, link: Link): Promise<Target | null> {
 async function targetById(tx: Tx, link: Link, menuId: number): Promise<Target | null> {
   const now = new Date();
   const [menu] = await menuRows(tx, link, todayIn(link.org.timezone, now), menuId);
-  if (menu === undefined) return null;
+  return menu === undefined ? null : targetOf(link, menu, now);
+}
 
+/** One menu row, and why ordering from it is shut, at one instant. */
+function targetOf(link: Link, menu: MenuRow, now: Date): Target {
   return {
     menu,
     closedReason: orderingClosedReason({
@@ -596,16 +611,48 @@ async function targetById(tx: Tx, link: Link, menuId: number): Promise<Target | 
   };
 }
 
-/** The next menu, and where this member stands on it. */
-async function dayView(tx: Tx, link: Link, showOrgName: boolean): Promise<Rendered> {
+/** The next menu, where this member stands on it, and today's meal beside it. */
+async function dayViews(tx: Tx, link: Link, showOrgName: boolean): Promise<Rendered[]> {
   const target = await resolveTarget(tx, link);
   if (target === null) {
-    return {
+    return [{
       text: `${orgHeader(link, showOrgName)}No menu is up yet. I'll be here when there is one.`,
       keyboard: [],
-    };
+    }];
   }
-  return renderDay(link, showOrgName, target, await myOrder(tx, link, target.menu.id));
+
+  const views = [renderDay(link, showOrgName, target, await myMeal(tx, link, target.menu.id))];
+  const stillMine = await todaysMeal(tx, link, showOrgName, target.menu.service_date);
+  if (stillMine !== null) views.push(stillMine);
+  return views;
+}
+
+/**
+ * Today's own lunch, when today is not the day the message above is about.
+ *
+ * The day somebody needs to pass a meal on is almost never the day they can
+ * still order for. Ordering shuts the evening before, so from the cutoff until
+ * the kitchen has finished, resolveTarget has moved on to tomorrow while
+ * today's lunch is still sitting there with their name on it -- and being
+ * called into a meeting at eleven is the whole case passing a meal on exists
+ * for. So /order says so rather than leaving today unreachable.
+ *
+ * Null whenever there is nothing to add: no menu today, today is already the
+ * day being shown, or they are not down as eating on it. /order is not a diary.
+ */
+async function todaysMeal(
+  tx: Tx, link: Link, showOrgName: boolean, shownDate: string,
+): Promise<Rendered | null> {
+  const now = new Date();
+  const today = todayIn(link.org.timezone, now);
+  if (shownDate === today) return null;
+
+  const menu = (await menuRows(tx, link, today)).find((m) => m.service_date === today);
+  if (menu === undefined) return null;
+
+  const meal = await myMeal(tx, link, menu.id);
+  if (meal.order === null || meal.order.status !== "placed") return null;
+  return renderDay(link, showOrgName, targetOf(link, menu, now), meal);
 }
 
 /**
@@ -621,10 +668,7 @@ async function menuView(
   if (target === null) {
     return { text: `${orgHeader(link, showOrgName)}That menu is gone.`, keyboard: [] };
   }
-  return renderDay(
-    link, showOrgName, target,
-    order === undefined ? await myOrder(tx, link, menuId) : order,
-  );
+  return renderDay(link, showOrgName, target, await myMeal(tx, link, menuId, order));
 }
 
 /** A member belonging to two offices needs to be told which one is speaking. */
@@ -633,9 +677,10 @@ function orgHeader(link: Link, showOrgName: boolean): string {
 }
 
 function renderDay(
-  link: Link, showOrgName: boolean, target: Target, order: OrderRow | null,
+  link: Link, showOrgName: boolean, target: Target, meal: Meal,
 ): Rendered {
   const { menu, closedReason } = target;
+  const { order, handover } = meal;
 
   // The words are renderDayText()'s, in src/shared, so a price the caterer has
   // not set is one sentence the whole app over and vitest can reach it. This
@@ -652,42 +697,136 @@ function renderDay(
       dishName: order.item_name_snapshot,
       amountMinor: order.line_total_minor,
     },
+    handover,
   }, moneyIn(link.org));
 
   const keyboard: InlineKeyboard = closedReason !== null ? [] : menu.items.map((d) => [{
-    text: d.name.length > 40 ? `${d.name.slice(0, 39)}…` : d.name,
+    text: buttonLabel(d.name),
     callback_data: encodeCallback({ kind: "pick", menuId: menu.id, itemId: d.id }),
   }]);
+  // Beside the dishes rather than instead of them, and only where there is
+  // something to choose between: the board shows its dice on two dishes or
+  // more for the same reason, because with one dish there is nothing to
+  // randomise and the dish's own button already orders it.
+  if (closedReason === null && menu.items.length > 1) {
+    keyboard.push([{
+      text: "Surprise me",
+      callback_data: encodeCallback({ kind: "surprise", menuId: menu.id }),
+    }]);
+  }
   if (closedReason === null && order && order.status === "placed") {
     keyboard.push([{
       text: "Not eating today",
       callback_data: encodeCallback({ kind: "clear", menuId: menu.id }),
     }]);
   }
+  // Outside the closed guard, deliberately. Ordering shuts at the cutoff and
+  // passing a meal on outlives it by most of a day: somebody finding at eleven
+  // that they cannot make lunch is the case this exists for, and by then the
+  // headcount has long gone to the caterer. How late is too late belongs to
+  // enforce_transfer_rules, not to this keyboard, and it says so in its own
+  // words. Withheld only where the meal is already spoken for, because
+  // transfers_one_live_uk would turn a second offer into a unique violation.
+  if (order !== null && order.status === "placed" && handover === null) {
+    keyboard.push([{
+      text: "Pass this meal on",
+      callback_data: encodeCallback({ kind: "handover", menuId: menu.id }),
+    }]);
+  }
 
   return { text, keyboard };
+}
+
+/**
+ * Button text, which Telegram renders literally: not HTML, so not escaped, and
+ * escaping it would spell an ampersand out on the button of a dish called
+ * Bún & Chả. Trimmed because a long label wraps a row out of legibility.
+ */
+function buttonLabel(text: string): string {
+  return text.length > 40 ? `${text.slice(0, 39)}…` : text;
 }
 
 type OrderRow = {
   id: number;
   status: string;
+  /** The dish they are already on, which is the one "Surprise me" must avoid. */
+  menu_item_id: number | null;
   item_name_snapshot: string | null;
   line_total_minor: number | null;
 };
+
+/** This member's own meal on a day, and whoever it is on its way to. */
+type Meal = { order: OrderRow | null; handover: Handover | null };
 
 async function myOrder(tx: Tx, link: Link, menuId: number): Promise<OrderRow | null> {
   // The profile_id filter is mandatory, not defensive: orders became org-wide
   // readable with the shared board, so without it this returns a colleague's
   // order as if it were this member's own.
   const [row] = await tx<OrderRow[]>`
-    select o.id, o.status, oi.item_name_snapshot, oi.line_total_minor
+    select o.id, o.status, oi.menu_item_id, oi.item_name_snapshot, oi.line_total_minor
       from public.orders o
       left join lateral (
-        select i.item_name_snapshot, i.line_total_minor
+        select i.menu_item_id, i.item_name_snapshot, i.line_total_minor
           from public.order_items i where i.order_id = o.id
          order by i.id limit 1) oi on true
      where o.menu_id = ${menuId} and o.profile_id = ${link.profileId}::uuid`;
   return row ?? null;
+}
+
+/**
+ * The order and its handover together, because the day message needs both.
+ *
+ * `order` is passed in on the path where the write that prompted the redraw
+ * already returned it. The transfer is read either way: nothing on that path
+ * wrote one, and a pick on a meal already offered leaves the offer standing.
+ */
+async function myMeal(
+  tx: Tx, link: Link, menuId: number, order?: OrderRow | null,
+): Promise<Meal> {
+  const mine = order === undefined ? await myOrder(tx, link, menuId) : order;
+  if (mine === null || mine.status !== "placed") return { order: mine, handover: null };
+  return { order: mine, handover: await liveHandover(tx, link, mine.id) };
+}
+
+/**
+ * The dish "Surprise me" lands on, or null when there is nothing to land on.
+ *
+ * The rule is randomDish()'s, in src/shared, which is the board's rule too:
+ * anything but the dish they already have, and the whole menu again when that
+ * leaves nothing. Read inside the caller's transaction, so the dish that is
+ * ordered is one that was on the menu at the moment it was ordered.
+ */
+async function surpriseItemId(tx: Tx, link: Link, menuId: number): Promise<number | null> {
+  const [menu] = await menuRows(tx, link, todayIn(link.org.timezone, new Date()), menuId);
+  if (menu === undefined) return null;
+  const mine = await myOrder(tx, link, menuId);
+  return randomDish(menu.items, { excludeId: mine?.menu_item_id ?? null })?.id ?? null;
+}
+
+/**
+ * The live offer or settled pass on one of this member's own orders.
+ *
+ * transfers_one_live_uk makes this at most one row, which is exactly why the
+ * day message reports it rather than offering the button a second time: a
+ * second offer on the same meal is a unique violation, not a queue.
+ *
+ * from_profile_id pins it to meals this member is giving away.
+ * transfers_select_party would also show them meals coming the other way, and
+ * those are offerViews', which speak for the other side of the same row.
+ */
+async function liveHandover(tx: Tx, link: Link, orderId: number): Promise<Handover | null> {
+  const [row] = await tx<Array<{ status: string; to_name: string | null }>>`
+    select t.status,
+           coalesce(mem.display_name, p.full_name, mem.short_code) as to_name
+      from public.meal_transfers t
+      left join public.memberships mem
+             on mem.org_id = t.org_id and mem.profile_id = t.to_profile_id
+      left join public.profiles p on p.id = t.to_profile_id
+     where t.order_id = ${orderId}
+       and t.from_profile_id = ${link.profileId}::uuid
+       and t.status in ('pending','accepted')`;
+  if (!row) return null;
+  return { status: row.status === "accepted" ? "accepted" : "pending", toName: row.to_name };
 }
 
 /* ---------------------------------------------------------------- transfers */
@@ -739,6 +878,187 @@ async function offerViews(tx: Tx, link: Link): Promise<Rendered[]> {
       },
     ]],
   }));
+}
+
+/**
+ * Everybody else in the office, as this member is allowed to see them.
+ *
+ * memberships_select shows a member their whole office, which is what the
+ * board's own picker is built on. Named by membership rather than by profile
+ * because the button has to carry the id home and callback_data has 64 bytes
+ * for everything; the profile is resolved from it inside the transaction that
+ * writes, so a stale button cannot name somebody who has since left.
+ *
+ * display_name first, because that is the name the office chose for them and
+ * the name their colleagues see on the board.
+ */
+async function otherMembers(tx: Tx, link: Link): Promise<Array<{ id: number; name: string }>> {
+  return await tx<Array<{ id: number; name: string }>>`
+    select m.id, coalesce(m.display_name, p.full_name, m.short_code) as name
+      from public.memberships m
+      join public.profiles p on p.id = m.profile_id
+     where m.org_id = ${link.org.id}
+       and m.status = 'active'
+       and m.profile_id <> ${link.profileId}::uuid
+     order by name, m.id`;
+}
+
+/**
+ * Passing a meal on, which until now could only be done from the board.
+ *
+ * Two taps and no typing: the day's message offers the meal, this replaces it
+ * with the office, and the colleague's own button writes the transfer. The
+ * question takes over the message it was asked from rather than arriving as a
+ * new one, so "never mind" can put the day back exactly as it was.
+ *
+ * Nothing here decides whether the pass is allowed. RLS decides that the order
+ * being given away is this member's own, and enforce_transfer_rules refuses a
+ * meal on a closed bill and a lunch that is already over, in sentences written
+ * for people that attempt() brings back as they were written. Reimplementing
+ * either of those here would be a second copy of a rule, and the copy would
+ * drift.
+ */
+async function onHandoverCallback(
+  cb: CallbackQuery, chatId: number, messageId: number,
+  link: Link, showOrgName: boolean,
+  action: Extract<CallbackAction, { kind: "day" | "handover" | "handTo" }>,
+): Promise<void> {
+  const menuId = action.menuId;
+  // Picked apart out here rather than inside the callback, for orgOfCallback's
+  // reason: a union this wide is no longer narrowed once it is read from
+  // inside a closure, and only one of these three shapes names a colleague.
+  const membershipId = action.kind === "handTo" ? action.membershipId : null;
+
+  // "Never mind". The question took over the day's own message, so the way
+  // back is to put that message back rather than to leave a dead keyboard.
+  if (action.kind === "day") {
+    await answerCallbackQuery(BOT_TOKEN, cb.id);
+    return await redraw(chatId, messageId, link, showOrgName, menuId);
+  }
+
+  const outcome = await attempt(() =>
+    asMember(link.profileId, async (tx) => {
+      const target = await targetById(tx, link, menuId);
+      if (target === null) return refused("That menu is gone.");
+
+      // Read rather than trusted: the button was drawn against a meal that may
+      // since have been cancelled, passed on already, or never existed, and
+      // the message it was drawn on is still sitting in the chat.
+      const { order, handover } = await myMeal(tx, link, menuId);
+      if (order === null || order.status !== "placed") return refused(NOTHING_TO_PASS_ON);
+      // transfers_one_live_uk is what would otherwise stop this, as a unique
+      // violation whose words are about an index rather than about the meal.
+      // The board greys the same two cases out in these words.
+      if (handover !== null) {
+        const who = handover.toName ?? "a colleague";
+        return refused(handover.status === "accepted"
+          ? `Already passed to ${who}.`
+          : `Already offered to ${who}.`);
+      }
+
+      const meal = {
+        orgName: showOrgName ? link.org.name : null,
+        serviceDate: target.menu.service_date,
+        dishName: order.item_name_snapshot,
+        amountMinor: order.line_total_minor,
+      };
+      const money = moneyIn(link.org);
+
+      if (membershipId === null) {
+        const others = await otherMembers(tx, link);
+        if (others.length === 0) return refused(NOBODY_TO_PASS_IT_TO);
+        return {
+          refusal: null,
+          toName: null,
+          rendered: {
+            text: renderHandoverPickText(meal, money),
+            keyboard: [
+              ...others.map((o) => [{
+                text: buttonLabel(o.name),
+                callback_data: encodeCallback({
+                  kind: "handTo", menuId, membershipId: o.id,
+                }),
+              }]),
+              // Last, and its own row, so the thumb reaching for it is nowhere
+              // near a colleague's name.
+              [{ text: "Never mind", callback_data: encodeCallback({ kind: "day", menuId }) }],
+            ] as InlineKeyboard,
+          },
+        };
+      }
+
+      const [to] = await tx<Array<{ profile_id: string; name: string }>>`
+        select m.profile_id, coalesce(m.display_name, p.full_name, m.short_code) as name
+          from public.memberships m
+          join public.profiles p on p.id = m.profile_id
+         where m.id = ${membershipId}
+           and m.org_id = ${link.org.id}
+           and m.status = 'active'
+           and m.profile_id <> ${link.profileId}::uuid`;
+      if (!to) return refused("That colleague isn't in this office any more.");
+
+      // org_id and from_profile_id are overwritten by the trigger from the
+      // order; they are sent only because both columns are NOT NULL. The same
+      // insert the Bill screen's createTransfer() makes, so one trigger
+      // decides for both surfaces who may pass what, and when.
+      await tx`insert into public.meal_transfers
+                 (org_id, order_id, to_profile_id, from_profile_id, created_by)
+               values (${link.org.id}, ${order.id}, ${to.profile_id}::uuid,
+                       ${link.profileId}::uuid, ${link.profileId}::uuid)`;
+
+      return {
+        refusal: null,
+        toName: to.name,
+        rendered: {
+          text: renderHandoverOfferedText({ ...meal, toName: to.name }, money),
+          // Deliberately none. The offer is the other person's to answer now,
+          // and a keyboard here would be a button for taking it back that
+          // neither the board nor this bot has anywhere else.
+          keyboard: [] as InlineKeyboard,
+        },
+      };
+    })
+  );
+
+  const refusal = outcome.ok ? outcome.value.refusal : outcome.reason;
+  const toName = outcome.ok ? outcome.value.toName : null;
+  await answerCallbackQuery(
+    BOT_TOKEN, cb.id,
+    refusal ?? (toName === null ? undefined : `Offered to ${toName}`),
+    refusal !== null,
+  );
+
+  const rendered = outcome.ok ? outcome.value.rendered : null;
+  if (rendered !== null) {
+    return await edit(chatId, messageId, rendered.text, rendered.keyboard);
+  }
+  // Every refusal here says the message the button was on is out of date, so
+  // the member is left looking at what is true rather than at the stale offer
+  // they tapped. They already have the verdict from the callback answer.
+  await redraw(chatId, messageId, link, showOrgName, menuId);
+}
+
+/** A refusal in the shape onHandoverCallback's two branches both return. */
+function refused(reason: string): {
+  refusal: string; toName: null; rendered: null;
+} {
+  return { refusal: reason, toName: null, rendered: null };
+}
+
+/**
+ * The day's own message again, in place of whatever has taken it over.
+ *
+ * Its own transaction: a refusal above was a thrown database error, which
+ * rolled back the reads that could otherwise have ridden along with it. A
+ * redraw that itself fails leaves the old message alone rather than talking
+ * twice.
+ */
+async function redraw(
+  chatId: number, messageId: number, link: Link, showOrgName: boolean, menuId: number,
+): Promise<void> {
+  const redrawn = await attempt(() =>
+    asMember(link.profileId, (tx) => menuView(tx, link, showOrgName, menuId)));
+  if (redrawn.ok) await edit(chatId, messageId, redrawn.value.text, redrawn.value.keyboard);
 }
 
 /* ---------------------------------------------------------------------- /me */
@@ -957,14 +1277,8 @@ function exitAction(kind: ExitKind, orgId: number, confirmed: boolean): Callback
     : { kind: "unlink", orgId, confirmed };
 }
 
-/**
- * Button text, which Telegram renders literally: not HTML, so not escaped, and
- * escaping it would print &amp; on the button of an office called A & B.
- */
 function exitLabel(verb: string, link: Link, showOrgName: boolean): string {
-  if (!showOrgName) return verb;
-  const name = link.org.name;
-  return `${verb} ${name.length > 40 ? `${name.slice(0, 39)}…` : name}`;
+  return showOrgName ? buttonLabel(`${verb} ${link.org.name}`) : verb;
 }
 
 /** The office's shared join code, read as the member: the way back in. */
@@ -1040,6 +1354,10 @@ async function onExitCallback(
   await edit(chatId, messageId, action.kind === "leave"
     ? renderLeftText({ orgName, joinCode })
     : renderUnlinkedText({ orgName, joinCode }));
+  // After the message, not before it: the menu is the smaller promise of the
+  // two, and a chat that has just left its last office should not be left with
+  // a `/` button offering to cancel an order it can no longer place.
+  await refreshCommands(chatId);
 }
 
 /* ------------------------------------------------------------- button taps */
@@ -1108,12 +1426,27 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
     return;
   }
 
+  if (action.kind === "day" || action.kind === "handover" || action.kind === "handTo") {
+    return await onHandoverCallback(cb, chat.id, messageId, link, links.length > 1, action);
+  }
+
   const menuId = action.menuId;
   const outcome = await attempt(() =>
     asMember(link.profileId, async (tx) => {
-      const written = action.kind === "pick"
-        ? await placeOrder(tx, link, menuId, action.itemId)
-        : await clearOrder(tx, link, menuId);
+      // The roll happens on the tap, not when the keyboard was drawn, so a
+      // second tap is a second roll rather than the same dish again.
+      const itemId = action.kind === "pick"
+        ? action.itemId
+        : action.kind === "surprise"
+        ? await surpriseItemId(tx, link, menuId)
+        : null;
+      if (action.kind === "surprise" && itemId === null) {
+        return { reason: "There's nothing on this menu to pick from.", dish: null, rendered: null };
+      }
+
+      const written = itemId === null
+        ? await clearOrder(tx, link, menuId)
+        : await placeOrder(tx, link, menuId, itemId);
       if (written.refusal !== null) {
         return { reason: written.refusal, dish: null, rendered: null };
       }
@@ -1136,9 +1469,11 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
     BOT_TOKEN, cb.id,
     // Naming the dish lets the confirmation stand on its own, before the
     // message underneath it has been redrawn and whether or not it ever is.
-    reason ?? (action.kind === "pick"
-      ? (dish === null ? "Ordered" : `Ordered ${dish}`)
-      : "Cancelled"),
+    // It carries most of the weight for "Surprise me", which is the one tap
+    // whose outcome the member could not have predicted.
+    reason ?? (action.kind === "clear"
+      ? "Cancelled"
+      : dish === null ? "Ordered" : `Ordered ${dish}`),
     reason !== null,
   );
 
@@ -1147,15 +1482,9 @@ async function onCallback(cb: CallbackQuery): Promise<void> {
     return await edit(chat.id, messageId, rendered.text, rendered.keyboard);
   }
 
-  // A second transaction, deliberately: a refusal above was a thrown database
-  // error, which rolled the first one back and took its reads with it, so the
-  // redraw could not have ridden along. Redrawing from the database leaves the
-  // member looking at what is actually true rather than at their failed tap.
-  // They already have the verdict from the callback answer, so a failed redraw
-  // leaves the old message alone rather than talking twice.
-  const redrawn = await attempt(() =>
-    asMember(link.profileId, (tx) => menuView(tx, link, links.length > 1, menuId)));
-  if (redrawn.ok) await edit(chat.id, messageId, redrawn.value.text, redrawn.value.keyboard);
+  // Redrawn from the database, so the member is left looking at what is
+  // actually true rather than at their failed tap.
+  await redraw(chat.id, messageId, link, links.length > 1, menuId);
 }
 
 /**
@@ -1235,6 +1564,7 @@ async function placeOrder(
     order: {
       id: order.id,
       status: "placed",
+      menu_item_id: itemId,
       item_name_snapshot: item?.item_name_snapshot ?? null,
       line_total_minor: item?.line_total_minor ?? null,
     },
@@ -1257,6 +1587,7 @@ async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<Written> 
     order: order === undefined ? null : {
       id: order.id,
       status: "cancelled",
+      menu_item_id: null,
       item_name_snapshot: null,
       line_total_minor: null,
     },
@@ -1278,10 +1609,12 @@ async function linksForChat(chatId: number): Promise<Link[]> {
   const rows = await asSystem((tx) =>
     tx<Array<{
       profile_id: string; membership_id: number; full_name: string;
+      has_web_account: boolean;
       org_id: number; org_name: string; timezone: string; currency: string;
       currency_minor_units: number; locale: string; payment_config: unknown;
     }>>`
       select m.profile_id, tl.membership_id, p.full_name,
+             p.email is not null as has_web_account,
              o.id as org_id, o.name as org_name, o.timezone, o.currency,
              o.currency_minor_units, o.locale, o.payment_config
         from public.telegram_links tl
@@ -1296,6 +1629,7 @@ async function linksForChat(chatId: number): Promise<Link[]> {
     profileId: r.profile_id,
     membershipId: r.membership_id,
     fullName: r.full_name,
+    hasWebAccount: r.has_web_account,
     org: {
       id: r.org_id,
       name: r.org_name,
@@ -1306,6 +1640,48 @@ async function linksForChat(chatId: number): Promise<Link[]> {
       payment_config: r.payment_config,
     },
   }));
+}
+
+/* ------------------------------------------------------- the command menu */
+
+/**
+ * Which list this chat gets.
+ *
+ * One link with no web account is enough to make the whole chat Telegram-only,
+ * and deliberately so. A chat can hold two memberships in two offices, and the
+ * two lists differ by exactly one command: offering /leave to somebody who
+ * also has a web account costs them nothing, because /unlink still works when
+ * typed, whereas offering /unlink to somebody who has no other way in puts a
+ * one-tap route to being locked out of their own bill in front of them.
+ */
+function memberKind(links: Link[]): MemberKind {
+  return links.some((l) => !l.hasWebAccount) ? "telegram-only" : "web";
+}
+
+/**
+ * Publish this chat's command menu, and hand back the help that agrees with it.
+ *
+ * The two are one decision, which is why one call does both: the list behind
+ * the `/` button and the list /help prints are the same list, and a bot whose
+ * help advertises a command its own menu withholds is telling somebody two
+ * different things about the same office.
+ *
+ * A failure is logged and swallowed. setMyCommands is cosmetic; every command
+ * works whether or not Telegram ever heard about it, and a chat left with a
+ * stale menu is a far better outcome than a join that reports itself failed.
+ */
+async function publishCommands(chatId: number, links: Link[]): Promise<string> {
+  const kind = memberKind(links);
+  const res = links.length === 0
+    ? await deleteMyCommands(BOT_TOKEN, chatId)
+    : await setMyCommands(BOT_TOKEN, chatId, commandsFor(kind));
+  if (!res.ok) console.error("command menu not updated", res.status, res.description);
+  return helpFor(kind);
+}
+
+/** The same, for the paths that have just changed what linksForChat answers. */
+async function refreshCommands(chatId: number): Promise<string> {
+  return await publishCommands(chatId, await linksForChat(chatId));
 }
 
 /**

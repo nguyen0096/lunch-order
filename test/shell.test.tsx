@@ -73,6 +73,7 @@ describe("AppShell navigation", () => {
     expect(links("Menu")).toHaveLength(0);
     expect(links("People")).toHaveLength(0);
     expect(links("Payments")).toHaveLength(0);
+    expect(links("Messages")).toHaveLength(0);
   });
 
   it("adds the admin chores under their own heading, not into the same list", () => {
@@ -80,6 +81,7 @@ describe("AppShell navigation", () => {
     expect(links("Menu")).toHaveLength(2);
     expect(links("People")).toHaveLength(2);
     expect(links("Payments")).toHaveLength(2);
+    expect(links("Messages")).toHaveLength(2);
     expect(screen.getByText("Admin")).toBeInTheDocument();
   });
 
@@ -322,8 +324,10 @@ describe("switchTarget", () => {
   it("carries an admin chore over only for an admin", () => {
     expect(switchTarget("menu", "admin")).toBe("menu");
     expect(switchTarget("people", "owner")).toBe("people");
+    expect(switchTarget("messages", "admin")).toBe("messages");
     expect(switchTarget("menu", "member")).toBe("board");
     expect(switchTarget("people", "member")).toBe("board");
+    expect(switchTarget("messages", "member")).toBe("board");
   });
 
   it("sends a page that does not exist to the board", () => {

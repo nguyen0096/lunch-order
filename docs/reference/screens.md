@@ -447,6 +447,73 @@ with no explanation is what made this screen look broken while it was working.
 | no code set | "No join code yet" with Create |
 | role changed | toast, "Now an admin" |
 
+## Messages (admin)
+
+**Job.** Decide what the office hears automatically, and say something to it now.
+
+**It is in the nav, unlike Corrections.** Correcting a finished day is a rare
+weekend job reached from where it is noticed; deciding what the office hears is
+something an admin comes back to. Route `#/o/<slug>/messages`, and a member who
+follows the link gets the same admin explanation every other admin page gives.
+
+Three parts, in the order somebody arrives wanting them: the setting, the
+errand, and the reason nothing works yet.
+
+### Sent by itself
+
+One card per kind, each with its own switch and its own Save, because they are
+three unrelated decisions and a single Save would make turning one off look like
+a change to everything.
+
+| Message | Timing |
+| --- | --- |
+| A new menu is published | none. It goes out when you publish a day, and the card says so rather than showing an empty box |
+| Ordering closes | minutes before that day's cutoff, 70 by default |
+| The weekly bill | an hour of the day in the office's own zone, 09:00 by default |
+
+The floor on the minutes is 60 and it is not taste. The bot wakes once an hour
+and tests a window of exactly this length, so a window shorter than the gap
+between two wakings falls between them and the last call is never sent at all.
+The card says that where the number is typed.
+
+**A missing row is today's behaviour, not an absence.** `org_notifications`
+holds nothing until an admin saves something, so the screen renders the
+timings the tick has always used -- on, 70, 09:00 -- and says they have never
+been changed. Anything else would describe an office as having switched off
+messages it has been sending for months.
+
+Each card carries **Send me a test**, which queues the real message, to the
+admin who asked and nobody else. No confirmation: it reaches one person, and
+reading it is the only way to know what the office reads. It is refused, in the
+database's words, when there is no published menu or no billed week to render.
+
+### An announcement
+
+A message, an audience of the whole office, one person, or everybody who owes
+money, and a person picker that appears for the middle one alone.
+
+**The count comes before the send and both counts come after it**, because they
+answer different questions: who is about to hear this, and who did not. "Sent
+to 9 people. 4 people have not connected Telegram" is the useful answer and
+"Sent" is not. Sending confirms first, naming the audience and the count, the
+way publishing a menu does.
+
+### What Telegram needs to work
+
+Last, because it explains a screen that otherwise appears to do nothing, and an
+explanation read before the thing it explains is a warning. Three facts -- the
+group chat, the office join code, and how many people have connected -- each
+linking to the screen that owns it. The controls are not repeated here; two
+places to change one setting disagree the first time somebody uses the other.
+
+| State | |
+| --- | --- |
+| loading | skeleton shaped like the cards |
+| nothing ever saved | the timings the office has always run on, said to be exactly that |
+| nothing to save | the reason on the Save, per card |
+| nobody in the audience has Telegram | Send carries the reason instead of queueing nothing |
+| refused | the database's own sentence, in the dialog and in the toast, and the message is kept |
+
 ## Settings (behind the avatar)
 
 **Job.** Things set once and forgotten.

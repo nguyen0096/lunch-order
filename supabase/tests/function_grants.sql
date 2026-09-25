@@ -35,7 +35,11 @@ insert into expected (name, anon_may) values
   ('correct_meal',          false),
   ('correct_meal_off_menu', false),
   ('remove_meal',           false),
-  ('reprice_dish',          false);
+  ('reprice_dish',          false),
+  -- The settings screen. Same shape again: the grant says a signed-in browser
+  -- may ask, and each one decides for itself whether this admin gets an answer.
+  ('send_announcement',      false),
+  ('send_test_notification', false);
 
 create temp table found as
 select p.proname::text as name,

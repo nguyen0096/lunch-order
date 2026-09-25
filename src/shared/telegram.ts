@@ -112,11 +112,83 @@ export function parseCommand(text: string): Command | null {
   return { name, arg };
 }
 
+/* ------------------------------------------------------- the command menu */
+
+/**
+ * Which way into the app a chat belongs to, and so which way out it is offered.
+ *
+ * A member who signed up on the web keeps their account whatever this chat
+ * does, so /unlink is the exit that fits: it stops the bot talking and leaves
+ * the membership alone, and ending a membership belongs in Settings, where
+ * their account lives. A member who joined by sending a join code has no
+ * account anywhere else, so /unlink would cut the only thread they have to
+ * their own bill; /leave is the exit that means something to them.
+ *
+ * Both commands keep working when typed by hand whichever list a chat was
+ * given. This decides what is offered, never what is permitted.
+ */
+export type MemberKind = "web" | "telegram-only";
+
+/** setMyCommands' shape: a name without its slash, and one line about it. */
+export type BotCommand = { command: string; description: string };
+
+const EVERY_CHAT: BotCommand[] = [
+  { command: "order", description: "the next menu, and order from it" },
+  { command: "cancel", description: "cancel your next order" },
+  { command: "me", description: "what you owe, and how to pay it" },
+  { command: "help", description: "the list of commands" },
+];
+
+const UNLINK: BotCommand = {
+  command: "unlink",
+  description: "disconnect this chat, and stay a member",
+};
+
+const LEAVE: BotCommand = { command: "leave", description: "leave your office" };
+
+/**
+ * The list a chat is given, in the order Telegram shows it.
+ *
+ * /today is left out on purpose, as it always has been from the help: it was
+ * named wrongly, it still works for the people who have it in their fingers,
+ * and putting it in a menu would teach it to everybody else.
+ */
+export function commandsFor(kind: MemberKind): BotCommand[] {
+  return [...EVERY_CHAT, kind === "web" ? UNLINK : LEAVE];
+}
+
+/**
+ * /help, which says exactly what that chat's own command menu says.
+ *
+ * Built from the same list rather than written out beside it. One static help
+ * string was how the bot came to advertise /leave to somebody whose menu did
+ * not offer it, and /unlink to somebody it would have stranded.
+ */
+export function helpFor(kind: MemberKind): string {
+  return [
+    "<b>What I can do</b>",
+    ...commandsFor(kind).map((c) => `/${c.command} - ${c.description}`),
+  ].join("\n");
+}
+
 /* -------------------------------------------------------- callback payloads */
 
 export type CallbackAction =
   | { kind: "pick"; menuId: number; itemId: number }
   | { kind: "clear"; menuId: number }
+  // A dish nobody has chosen yet: the menu is read when the button is tapped,
+  // not when it is drawn, so two taps are two rolls rather than the same dish
+  // twice.
+  | { kind: "surprise"; menuId: number }
+  // The day itself, redrawn. The way back from a question that took over the
+  // message, so answering "never mind" leaves the member where they started.
+  | { kind: "day"; menuId: number }
+  // Passing a meal on, in two taps: which day, then which colleague. The
+  // colleague is named by membership rather than by profile because a
+  // membership id is a small integer and a profile id is a 36-character uuid,
+  // and callback_data has 64 bytes for everything.
+  | { kind: "handover"; menuId: number }
+  | { kind: "handTo"; menuId: number; membershipId: number }
   | { kind: "transfer"; transferId: number; decision: "accepted" | "declined" }
   // The org id rides along for the same reason menu_id does: it is a routing
   // key, matched against the chat's own links before anything happens, never
@@ -136,6 +208,10 @@ export function encodeCallback(a: CallbackAction): string {
   switch (a.kind) {
     case "pick": return `p:${a.menuId}:${a.itemId}`;
     case "clear": return `c:${a.menuId}`;
+    case "surprise": return `s:${a.menuId}`;
+    case "day": return `d:${a.menuId}`;
+    case "handover": return `h:${a.menuId}`;
+    case "handTo": return `h:${a.menuId}:${a.membershipId}`;
     case "transfer": return `t:${a.transferId}:${a.decision === "accepted" ? "a" : "d"}`;
     case "leave": return `l:${a.orgId}:${a.confirmed ? "y" : "n"}`;
     case "unlink": return `u:${a.orgId}:${a.confirmed ? "y" : "n"}`;
@@ -150,9 +226,18 @@ export function decodeCallback(data: string): CallbackAction | null {
     const itemId = toId(parts[2]);
     return menuId === null || itemId === null ? null : { kind: "pick", menuId, itemId };
   }
-  if (tag === "c" && parts.length === 2) {
+  if ((tag === "c" || tag === "s" || tag === "d") && parts.length === 2) {
     const menuId = toId(parts[1]);
-    return menuId === null ? null : { kind: "clear", menuId };
+    if (menuId === null) return null;
+    if (tag === "c") return { kind: "clear", menuId };
+    return tag === "s" ? { kind: "surprise", menuId } : { kind: "day", menuId };
+  }
+  if (tag === "h" && (parts.length === 2 || parts.length === 3)) {
+    const menuId = toId(parts[1]);
+    if (menuId === null) return null;
+    if (parts.length === 2) return { kind: "handover", menuId };
+    const membershipId = toId(parts[2]);
+    return membershipId === null ? null : { kind: "handTo", menuId, membershipId };
   }
   if (tag === "t" && parts.length === 3) {
     const transferId = toId(parts[1]);
@@ -293,6 +378,38 @@ export function targetMenu<T extends MenuLike>(
   return { menu: first, closedReason: orderingClosedReason({ ...args, menu: first }) };
 }
 
+/* --------------------------------------------------------- a dish at random */
+
+export type DishLike = { id: number; name: string };
+
+/**
+ * The dish "Surprise me" orders: the twin of pickDish() in
+ * src/web/components/boardModel.ts, arithmetic included.
+ *
+ * A twin rather than a call, because that module is the board's and this file
+ * must stay import-free (see the header), so the Edge Function cannot reach it.
+ * test/telegram.test.ts rolls both over the same menus with the same random()
+ * and asserts they land on the same dish, the way orderingClosedReason is
+ * pinned to gating.ts: a rule changed in one place fails the build rather than
+ * letting the board and the bot disagree about what random means.
+ *
+ * Not repeating the dish somebody already has is the whole of the rule --
+ * tapping the dice again should move you, not hand back what you were holding.
+ * Falling back to the full list is what makes a menu of one dish re-offer it
+ * rather than go blank.
+ */
+export function randomDish<T extends DishLike>(
+  dishes: T[],
+  options: { excludeId?: number | null; random?: () => number } = {},
+): T | null {
+  const without = dishes.filter((d) => d.id !== options.excludeId);
+  const pool = without.length > 0 ? without : dishes;
+  if (pool.length === 0) return null;
+  const roll = (options.random ?? Math.random)();
+  const index = Math.min(pool.length - 1, Math.max(0, Math.floor(roll * pool.length)));
+  return pool[index] ?? null;
+}
+
 /* ------------------------------------------------------- prices in messages */
 
 /**
@@ -370,7 +487,19 @@ export type DayMessage = {
     /** Null when the dish carried no price at the moment they chose it. */
     amountMinor: number | null;
   } | null;
+  /** Null when the meal is still this member's own. */
+  handover: Handover | null;
 };
+
+/**
+ * This member's meal on its way to somebody else.
+ *
+ * `pending` is an offer nobody has answered, and the meal is still theirs and
+ * still on their bill until it is answered. `accepted` is the meal gone.
+ * `toName` is null when the colleague cannot be named, the same absence
+ * renderOfferText copes with from the other side.
+ */
+export type Handover = { status: "pending" | "accepted"; toName: string | null };
 
 /** The day's menu, and where this member stands on it. */
 export function renderDayText(m: DayMessage, money: Money): string {
@@ -408,6 +537,19 @@ export function renderDayText(m: DayMessage, money: Money): string {
     }
   }
 
+  // Under the meal it is about, and only where there is a meal: a line saying
+  // somebody is taking a lunch the member is not down for reads as a mistake.
+  // It also stands in for the button, which is not offered twice on one meal.
+  if (m.handover !== null && order !== null && order.status !== "cancelled") {
+    lines.push(
+      m.handover.status === "pending"
+        ? `You've offered it to <b>${escapeHtml(m.handover.toName ?? "a colleague")}</b>. ` +
+          "It stays yours, and on your bill, until they accept."
+        : `<b>${escapeHtml(m.handover.toName ?? "A colleague")}</b> took this meal, ` +
+          "so it is on their bill rather than yours.",
+    );
+  }
+
   return lines.join("\n");
 }
 
@@ -431,6 +573,75 @@ export function renderOfferText(o: OfferMessage, money: Money): string {
   return `${who} is offering you ${what} on <b>${formatServiceDate(o.serviceDate)}</b>.\n` +
     consequence;
 }
+
+/* ------------------------------------------------------ passing a meal on */
+
+/**
+ * Handing a meal over from the chat, which until now could only be done from
+ * the board.
+ *
+ * Two taps and no typing: the day, then the colleague. Nothing here decides
+ * whether the pass is allowed. enforce_transfer_rules refuses a meal on a
+ * closed bill and a lunch that is already over, in sentences written for
+ * people, and the bot shows those rather than guessing at them first.
+ */
+export type HandoverMessage = {
+  /** The office's name, for a member who belongs to more than one. */
+  orgName: string | null;
+  serviceDate: string;
+  /** The dish they are giving away; null when they are down but undecided. */
+  dishName: string | null;
+  amountMinor: number | null;
+};
+
+/** The dish as this member's meal, named where naming it is the point. */
+function theirMeal(m: HandoverMessage, money: Money): string {
+  return m.dishName === null
+    ? "your lunch"
+    : `your <b>${escapeHtml(m.dishName)}</b> (${escapeHtml(priceText(m.amountMinor, money))})`;
+}
+
+/** Step two: the question the list of colleagues is the answer to. */
+export function renderHandoverPickText(m: HandoverMessage, money: Money): string {
+  return [
+    `${orgHeading(m.orgName)}<b>${formatServiceDate(m.serviceDate)}</b>`,
+    "",
+    `Who gets ${theirMeal(m, money)}?`,
+    "",
+    // Said before the tap, because the tap charges a colleague money and the
+    // only thing that stops it is their own answer. How they hear about it is
+    // stated as what is certain rather than as a message they may or may not
+    // get: the board shows a pending offer and so does /order.
+    "They'll see it on the board, and the next time they ask me for the menu. " +
+    "Nothing moves until they accept, and until then the meal is still yours.",
+  ].join("\n");
+}
+
+/** Offered, and what that does and does not mean yet. */
+export function renderHandoverOfferedText(
+  m: HandoverMessage & { toName: string | null }, money: Money,
+): string {
+  return [
+    `${orgHeading(m.orgName)}<b>Offered to ${escapeHtml(m.toName ?? "a colleague")}.</b>`,
+    "",
+    `They can take ${theirMeal(m, money)} on <b>${formatServiceDate(m.serviceDate)}</b>.`,
+    "",
+    "It stays yours, and on your bill, until they accept.",
+  ].join("\n");
+}
+
+/**
+ * The board's own reason, in a sentence.
+ *
+ * passOnReason() in boardModel.ts greys the control out with "There is no meal
+ * here to pass on"; this is the same claim where there is no control to grey,
+ * so both surfaces say the same thing about the same emptiness.
+ */
+export const NOTHING_TO_PASS_ON = "There is no meal here to pass on.";
+
+/** An office of one. Rare, and the one case with nothing to put on a keyboard. */
+export const NOBODY_TO_PASS_IT_TO =
+  "There's nobody else in this office to pass it to.";
 
 export type AccountMessage = {
   /**
