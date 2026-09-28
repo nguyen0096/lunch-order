@@ -793,7 +793,7 @@ export function renderLeftText(m: ExitMessage): string {
     `${orgHeading(m.orgName)}<b>You've left this office.</b>`,
     "",
     "Nothing was deleted. Your orders and your bill stay on record, and the " +
-    "membership is deactivated rather than removed.",
+    "membership is kept for when you come back.",
     "",
     comeBackLine(m.joinCode),
   ].join("\n");

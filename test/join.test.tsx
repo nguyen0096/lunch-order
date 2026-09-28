@@ -123,17 +123,18 @@ describe("No office", () => {
       />,
     );
     expect(screen.queryByText(/yet/)).not.toBeInTheDocument();
-    expect(screen.getByText(/An admin may have removed you/)).toBeInTheDocument();
+    expect(screen.getByText(/If you left it, its join code brings you back. If an\s+admin removed you/)).toBeInTheDocument();
   });
 });
 
 describe("No office, when the database has answered", () => {
-  function renderWith(removedFrom: string[]) {
+  function renderWith(removedFrom: string[], leftFrom: string[] = []) {
     render(
       <NoOfficeScreen
         email="neyu@example.com"
         fullName="Neyu"
         removedFrom={removedFrom}
+        leftFrom={leftFrom}
         mayFoundOffice={false}
         onSignOut={vi.fn()}
         onCreated={vi.fn()}
@@ -142,16 +143,34 @@ describe("No office, when the database has answered", () => {
     );
   }
 
-  it("tells a removed member which office removed them", () => {
+  it("tells a removed member which office removed them, and that the code will not help", () => {
     renderWith(["Acme"]);
-    expect(screen.getByText("You were removed from Acme. Ask an admin to add you back.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "You were removed from Acme. Its join code will not bring you back; ask an admin there to add you back.",
+    )).toBeInTheDocument();
     expect(screen.queryByText(/not a member of any office/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/may have removed you/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/If you left it/)).not.toBeInTheDocument();
   });
 
   it("names every office they were removed from", () => {
     renderWith(["Acme", "Beta", "Gamma"]);
-    expect(screen.getByText("You were removed from Acme, Beta and Gamma. Ask an admin to add you back.")).toBeInTheDocument();
+    expect(screen.getByText(
+      "You were removed from Acme, Beta and Gamma. Their join codes will not bring you back; ask an admin there to add you back.",
+    )).toBeInTheDocument();
+  });
+
+  it("tells somebody who left, without saying anybody removed them", () => {
+    renderWith([], ["Acme"]);
+    expect(screen.getByText(
+      "You're signed in as neyu@example.com, but you're not active in any office. You're no longer a member of Acme. Its join code will bring you back.",
+    )).toBeInTheDocument();
+    expect(screen.queryByText(/removed/)).not.toBeInTheDocument();
+  });
+
+  it("says both when both happened", () => {
+    renderWith(["Acme"], ["Beta"]);
+    expect(screen.getByText(/You were removed from Acme/)).toBeInTheDocument();
+    expect(screen.getByText("You're no longer a member of Beta. Its join code will bring you back.")).toBeInTheDocument();
   });
 
   it("tells somebody new they are new, and nothing about removals", () => {

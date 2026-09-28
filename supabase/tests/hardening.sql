@@ -321,10 +321,10 @@ begin
   set local role authenticated;
   perform pg_temp.act_as(pg_temp.c('new'));
   insert into probe values ('H2 joining with a code that overlaps is refused',
-    pg_temp.attempt($q$select * from public.join_with_code('HRDJXKNA', 'Moi Den', null, 'TEO1')$q$),
+    pg_temp.attempt($q$select * from public.join_with_code('HRDJXKNA', 'Moi Den', p_short_code => 'TEO1')$q$),
     '23505 TEO1 is too close to TEO in this office: one would match a transfer meant for the other. Pick a code that neither contains nor sits inside another person''s.');
   insert into probe values ('H2 joining with a code of your own',
-    pg_temp.attempt($q$select * from public.join_with_code('HRDJXKNA', 'Moi Den', null, 'moi')$q$),
+    pg_temp.attempt($q$select * from public.join_with_code('HRDJXKNA', 'Moi Den', p_short_code => 'moi')$q$),
     'ok 1');
   insert into probe values ('H2 and it is yours, with the one change still to come',
     (select short_code || ' ' || short_code_changes from public.memberships

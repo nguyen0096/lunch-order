@@ -50,7 +50,7 @@ insert into expected (name, anon_may) values
   ('my_telegram_link',        false),
   ('create_my_telegram_link', false),
   ('invitation_preview',      false),
-  ('my_removed_offices',      false);
+  ('my_former_offices',       false);
 
 create temp table found as
 select p.proname::text as name,

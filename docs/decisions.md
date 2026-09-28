@@ -118,12 +118,55 @@ Accept already reveals as much, so this opens nothing new. Invitation tokens
 are `gen_random_uuid()` v4 uuids, 122 random bits: enumeration is not a
 threat worth a rate limit.
 
-**A removed member is told so.** `my_org_ids()` sees active memberships only,
-so a removed member got the new-user screen, hedged to cover both. Now
-`my_removed_offices` names the live offices where their own membership is
-inactive, and nothing else. Leaving through `leave_office` also leaves the row
-inactive and the row does not record which happened; the sentence is written
-for the person who did not leave, because the one who did already knows.
+**A removed member is told so, and somebody who left is not told they were
+removed.** `my_org_ids()` sees active memberships only, so a removed member got
+the new-user screen, hedged to cover both. `my_former_offices` names the live
+offices where their own membership is inactive and says whether an admin
+removed them; it replaced `my_removed_offices`, which could not tell. Somebody
+who left is told they are no longer a member and that the join code brings them
+back, which is also true of a row inactive from before removals were recorded.
+
+**A removal is two columns, not a third status.** `removed_at` and `removed_by`
+on `memberships`, null for somebody who left. Every policy, index and helper
+reads `status = 'active'`, and a third value would have meant touching all of
+them and refusing the `'inactive'` a browser bundle already loaded still
+sends. The rule "an invitation issued before the removal does not work" needs
+the moment of removal anyway, and a status cannot carry one. A trigger writes
+both columns, so the People screen's plain `status` PATCH and `leave_office`
+record themselves without either knowing: you going inactive is leaving,
+anybody else making you inactive is removing you.
+
+**Existing inactive rows count as left.** Nothing recorded which happened, so
+the migration picks the reading that locks nobody out: a person removed before
+2026-09-28 can still come back by code, exactly as they could the day before.
+An admin who wants them out for good adds them back and removes them again.
+
+**Only the bot binds a Telegram chat.** `join_with_code` took a chat id from
+whoever called it, so anybody with an office's join code could bind a
+colleague's (or a stranger's) Telegram chat to their own membership from a
+browser. A chat id is worth trusting only when it arrived in an update that
+passed the webhook secret, so the chat-binding join is
+`private.join_office_with_code`, which only the database owner and
+`service_role` can execute, and the bot calls it over its own connection with
+a profile it resolved from that same chat or has just signed up for it. The
+browser's `join_with_code` takes no chat at all.
+
+**The deploy window is closed on the database's side.** The Supabase
+integration applies migrations on the push to `main`; the Edge Functions and
+the SPA deploy after CI passes, minutes later. The old four-argument
+`join_with_code` stays for that window and for tabs loaded before it, and
+refuses any non-null chat, so the hole closes when the migration lands. The
+cost is that an old bot's Telegram joins fail with "Joining from Telegram is
+being updated" until the new bot is live. A new bot that lands first falls back
+to the old public call when the private function is missing. Drop the
+four-argument signature and the fallback once both are deployed.
+
+**Writing an invitation issues it again.** The app upserts on
+`(org_id, email)` and the upsert kept the row as it was, so re-inviting
+somebody whose invitation had been used returned the used row and the People
+screen showed nothing. A removed member's only way back by invitation is a new
+one, so an app-side write now refreshes `issued_at` and the expiry, and replaces
+the token when the old one was spent.
 
 **A join code grants membership and nothing else, on every path.** It hardcoded
 `'member'` on insert but the reactivation branch touched `status` alone, so a

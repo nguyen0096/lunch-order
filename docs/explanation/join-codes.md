@@ -49,9 +49,12 @@ was last set, and recent joins are listed beneath it with names and times. An
 admin who opens that screen sees an unfamiliar name. That is the mechanism, and
 it works precisely because the admin already goes there to manage people.
 
-The remedy is already built. Deactivating a membership sets `status = 'inactive'`,
-`private.my_org_ids()` filters on exactly that, and every policy stops matching on
-their next request.
+The remedy is already built. **Remove** on the People screen sets
+`status = 'inactive'`, `private.my_org_ids()` filters on exactly that, and every
+policy stops matching on their next request. It also stamps `removed_at`, so the
+join code does not bring them back: only an admin adding them back, or an
+invitation issued after the removal, does. Somebody who left by themselves is
+not stamped, and the code works for them as before.
 
 ## If this org ever grows
 

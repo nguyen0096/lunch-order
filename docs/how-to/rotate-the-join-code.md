@@ -27,7 +27,7 @@ across every org.
 
 ## Removing somebody who got in
 
-Rotating does not remove them. Deactivate the membership:
+Rotating does not remove them. Remove the membership:
 
 ```sql
 update public.memberships
@@ -36,7 +36,9 @@ update public.memberships
    and profile_id = '<their profile id>';
 ```
 
-Or use **Deactivate** on the People screen, which is the same thing.
+Or use **Remove** on the People screen, which is the same thing. Either way the
+`memberships_removal` trigger stamps `removed_at`, so the old or the new join
+code will not bring them back.
 
 `private.my_org_ids()` filters on `status = 'active'`, so this takes effect on
 their next request: every policy stops matching and they see nothing. Their past

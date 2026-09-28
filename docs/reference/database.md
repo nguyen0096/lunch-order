@@ -23,7 +23,8 @@ and whether it rolls back. The ones to know first:
 | `invitations.sql` | the invitation path, the only way a non-member gets in | no, rolls back |
 | `materialize_on_publish.sql` | publishing a menu creates an order for everyone whose weekday rule covers it | no, rolls back |
 | `hardening.sql` | the rules under [Invariants](#invariants) on offices, owners, short codes, money and Telegram links | no, rolls back |
-| `hardening_follow_up.sql` | link tokens closed to admins, an outbox no browser writes, the invitation preview and the removed-member answer | no, rolls back |
+| `hardening_follow_up.sql` | link tokens closed to admins, an outbox no browser writes, the invitation preview and the former-offices answer | no, rolls back |
+| `removal_and_chat_binding.sql` | only the bot binds a Telegram chat; a removed member stays out of the join code and old invitations, somebody who left does not; an admin or owner adds them back | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -72,6 +73,23 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   except a `manual` payment.
 - **A Telegram link stays in its membership's office**, by composite foreign
   key, and a browser can clear `chat_id` but never set it.
+- **Only the bot binds a chat.** A chat id is trusted only when it arrived in
+  an update that passed the webhook secret. The browser's `join_with_code`
+  takes no chat; `private.join_office_with_code`, which joins and binds in one
+  transaction, is executable by the database owner and `service_role` only.
+  The old four-argument `join_with_code` refuses any non-null chat and is kept
+  only for bundles loaded before 20261013100000.
+- **Leaving and being removed are different rows.** Both set `status` to
+  `inactive`; `memberships.removed_at` and `removed_by` say which, and only the
+  `memberships_removal` trigger writes them: a member going inactive by their
+  own hand (only `leave_office` allows it) left, anyone else's hand removed
+  them, and going active clears both. A removed member is refused by the join
+  code, by the Telegram join and by any invitation whose `issued_at` is before
+  `removed_at`. Only an admin or owner setting them active, or an invitation
+  issued after the removal, brings them back. Rows inactive before this rule
+  read as left.
+- **Writing an invitation from the app issues it again**: fresh `issued_at` and
+  expiry, and a new token when the old one was used.
 - **A link token is its owner's alone.** No browser role holds SELECT on
   `telegram_links.link_token`; an admin reads the other columns (who is
   connected, since when) and nothing more. A member gets their own token from

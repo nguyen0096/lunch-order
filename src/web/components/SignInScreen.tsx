@@ -92,6 +92,7 @@ export function NoOfficeScreen({
   email,
   fullName,
   removedFrom,
+  leftFrom,
   mayFoundOffice,
   onSignOut,
   onCreated,
@@ -102,6 +103,8 @@ export function NoOfficeScreen({
   fullName: string;
   /** `Me.removedFrom`: whom to name, or undefined when it is not known. */
   removedFrom?: string[];
+  /** `Me.leftFrom`: offices whose join code still works for them. */
+  leftFrom?: string[];
   /** Off while the app lives inside one company: joining is the only way in. */
   mayFoundOffice: boolean;
   onSignOut: () => void;
@@ -116,13 +119,26 @@ export function NoOfficeScreen({
   // app was most careful to support.
   const signedIn = email === "" ? "You're signed in" : `You're signed in as ${email}`;
   const removed = removedFrom !== undefined && removedFrom.length > 0;
+  const left = leftFrom !== undefined && leftFrom.length > 0;
+  // Worded so it is true whether they left or were inactive before removals
+  // were recorded: either way the join code works.
+  const leftLine = left
+    ? `You're no longer a member of ${listOf(leftFrom)}. ${codes(leftFrom)} will bring you back.`
+    : null;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
       <h1 className="text-xl font-semibold">No office</h1>
       {removed ? (
+        <>
+          <p role="status" className="text-muted">
+            {`You were removed from ${listOf(removedFrom)}. ${codes(removedFrom)} will not bring you back; ask an admin there to add you back.`}
+          </p>
+          {leftLine !== null && <p className="text-muted">{leftLine}</p>}
+        </>
+      ) : left ? (
         <p role="status" className="text-muted">
-          {`You were removed from ${listOf(removedFrom)}. Ask an admin to add you back.`}
+          {`${signedIn}, but you're not active in any office. ${leftLine}`}
         </p>
       ) : removedFrom === undefined ? (
         <>
@@ -132,8 +148,8 @@ export function NoOfficeScreen({
           {/* Said only when the database could not be asked: without an
               answer, the words cover both cases rather than guessing. */}
           <p className="text-sm text-muted">
-            Were you in an office before? An admin may have removed you from it. Ask them to add
-            you back, or join again with the office's code.
+            Were you in an office before? If you left it, its join code brings you back. If an
+            admin removed you, ask them to add you back.
           </p>
         </>
       ) : (
@@ -172,6 +188,10 @@ export function NoOfficeScreen({
       />
     </main>
   );
+}
+
+function codes(names: string[]): string {
+  return names.length > 1 ? "Their join codes" : "Its join code";
 }
 
 /** "A", "A and B", "A, B and C". */
