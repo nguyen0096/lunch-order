@@ -1,10 +1,11 @@
 /**
  * What a week cost and what has been paid against it.
  *
- * Read-only from the browser. A member has no write path into billing at all:
- * `billing_lines` are written by `run_billing()` and nothing else, and
- * `billing_statements.paid_minor` moves only through
- * `apply_payment_to_statement()` when a bank payment arrives.
+ * A member has no write path into billing at all, and an admin has four: a
+ * manual payment INSERT, and the `move_payment`, `void_payment` and
+ * `waive_statement` RPCs. `billing_lines` and `billing_statements` are written
+ * by `run_billing()` and by the allocation that follows every payment, and by
+ * nothing a browser can reach.
  */
 
 import { supabase } from "../supabase.js";
@@ -445,6 +446,7 @@ export async function fetchPayments(args: {
       // that found its owner perfectly well, and asking that column would put
       // every top-up back at the top of the screen as a failure.
       .is("profile_id", null)
+      .is("voided_at", null)
       .order("received_at", { ascending: false })
       .limit(50),
   ]);
@@ -559,13 +561,13 @@ function toAccount(row: AccountRow): Account {
 }
 
 /**
- * Strays an admin has already dealt with.
+ * Strays an admin dealt with before `move_payment` existed.
  *
- * A stray keeps its null `profile_id` for good once it has been applied: the
- * money went in as a second row carrying the person's reference, and naming an
- * owner on this one as well would count a single arrival twice on that
- * person's account. The row that took the money names this one in `raw`, and
- * that pointer is what retires it here.
+ * Applying one used to record a second, manual row carrying the person's
+ * reference and naming the stray in `raw`, and the stray kept its null
+ * `profile_id` so the arrival was counted once. Those pairs are still in the
+ * books, so the pointer still retires them here. A stray applied now is moved
+ * to its person and leaves the list by having a `profile_id`.
  */
 async function resolvedStrayIds(orgId: number, strays: StrayRow[]): Promise<Set<number>> {
   // Ordered newest first, so the last one bounds the search. An applied row
@@ -573,11 +575,14 @@ async function resolvedStrayIds(orgId: number, strays: StrayRow[]): Promise<Set<
   const oldest = strays.at(-1)?.received_at;
   if (oldest === undefined) return new Set();
 
+  // A voided copy gave the money back, so the stray it stood in for is
+  // unresolved again.
   const { data, error } = await supabase
     .from("payments")
     .select("raw")
     .eq("org_id", orgId)
     .eq("provider", MANUAL_PROVIDER)
+    .is("voided_at", null)
     .gte("received_at", oldest);
   if (error) throw error;
 
@@ -769,10 +774,10 @@ function randomSuffix(): string {
  * special happens: the money sits on their account as credit and next week's
  * meals eat into it.
  *
- * IRREVERSIBLE, and the interface has to say so. The trigger is AFTER INSERT
- * only: nothing takes a credit back on update or delete, and
- * `amount_minor > 0` blocks a corrective negative row. A payment recorded in
- * error can only be fixed in the database by hand.
+ * Not editable afterwards. An admin cannot update or delete a payment row; a
+ * payment recorded by mistake is voided with `voidPayment`, and one recorded
+ * against the wrong person is moved with `movePayment`. Both leave the row and
+ * add one to `payment_corrections`.
  */
 export async function recordPayment(args: {
   orgId: number;
@@ -792,8 +797,6 @@ export async function recordPayment(args: {
   recordedBy: string;
   /** When the money arrived, not when it was typed in. Both are NOT NULL here. */
   receivedAt: string;
-  /** The unmatched payment this one is being recorded on behalf of, if any. */
-  resolvesPaymentId?: number;
 }): Promise<RecordedPayment> {
   const { data: inserted, error } = await supabase
     .from("payments")
@@ -808,13 +811,7 @@ export async function recordPayment(args: {
       // `raw` is NOT NULL with no default, and it is the only place the reason
       // for a hand-recorded payment can live. A bank row holds the webhook
       // body here; this one holds who said the money came in.
-      raw: {
-        source: "admin",
-        recorded_by: args.recordedBy,
-        ...(args.resolvesPaymentId === undefined
-          ? {}
-          : { resolves_payment_id: args.resolvesPaymentId }),
-      },
+      raw: { source: "admin", recorded_by: args.recordedBy },
     })
     .select("id, amount_minor")
     .single();
@@ -830,59 +827,104 @@ export async function recordPayment(args: {
     .single();
   if (readError) throw readError;
 
-  const recorded: RecordedPayment = {
+  return {
     id: inserted.id,
     amountMinor: inserted.amount_minor,
     profileId: applied.profile_id,
     matchedStatementId: applied.matched_statement_id,
   };
+}
 
-  // Point the original at how far its money got. It moves
-  // no money: the trigger credits only on INSERT, so the money had to come in
-  // as the new row above, and this one is left with no `profile_id` for ever
-  // so that a single arrival is counted once on the account. What takes it off
-  // the unmatched list is the `resolves_payment_id` the new row carries; this
-  // is the annotation that makes the pair legible in the database.
-  if (args.resolvesPaymentId !== undefined && recorded.matchedStatementId !== null) {
-    const { error: linkError } = await supabase
-      .from("payments")
-      .update({ matched_statement_id: recorded.matchedStatementId })
-      .eq("id", args.resolvesPaymentId)
-      .eq("org_id", args.orgId);
-    if (linkError) throw linkError;
-  }
+/**
+ * Put a payment on the person it belongs to: a stray that matched nobody, or
+ * one the memo put on the wrong colleague.
+ *
+ * The same row moves; no second payment is written. `move_payment` checks the
+ * caller is an admin or owner of the office, redraws both people's weeks and
+ * writes `payment_corrections`.
+ */
+export async function movePayment(args: {
+  paymentId: number;
+  toProfileId: string;
+  reason?: string;
+}): Promise<{ matchedStatementId: number | null }> {
+  const { data, error } = await supabase.rpc("move_payment", {
+    p_payment_id: args.paymentId,
+    p_to_profile_id: args.toProfileId,
+    p_reason: args.reason?.trim() || null,
+  });
+  if (error) throw error;
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { matched_statement_id: number | null }
+    | null
+    | undefined;
+  return { matchedStatementId: row?.matched_statement_id ?? null };
+}
 
-  return recorded;
+/**
+ * Take back a payment an admin recorded by hand in error. Only `manual` rows:
+ * money the bank reported did arrive, and is moved instead. The row stays, and
+ * counts towards nobody.
+ */
+export async function voidPayment(args: { paymentId: number; reason: string }): Promise<void> {
+  const { error } = await supabase.rpc("void_payment", {
+    p_payment_id: args.paymentId,
+    p_reason: args.reason.trim(),
+  });
+  if (error) throw error;
+}
+
+/** Money on a person's account, newest first, for moving or voiding one. */
+export type PersonPayment = {
+  id: number;
+  amountMinor: number;
+  memo: string | null;
+  receivedAt: string;
+  provider: string;
+  /** Only a payment recorded by hand can be voided. */
+  voidable: boolean;
+};
+
+export async function fetchPersonPayments(args: {
+  orgId: number;
+  profileId: string;
+  limit?: number;
+}): Promise<PersonPayment[]> {
+  const { data, error } = await supabase
+    .from("payments")
+    .select("id, amount_minor, memo, received_at, provider")
+    .eq("org_id", args.orgId)
+    .eq("profile_id", args.profileId)
+    .is("voided_at", null)
+    .order("received_at", { ascending: false })
+    .limit(args.limit ?? 10);
+  if (error) throw error;
+  return (data ?? []).map((p) => ({
+    id: p.id,
+    amountMinor: p.amount_minor,
+    memo: p.memo,
+    receivedAt: p.received_at,
+    provider: p.provider,
+    voidable: p.provider === MANUAL_PROVIDER,
+  }));
 }
 
 /**
  * Stop asking somebody for a week. Not a payment, and never counted as one.
  *
- * `paid_at` is set back to null explicitly because `billing_statements_paid_ck`
- * asserts `(status = 'paid') = (paid_at is not null)`: a statement that was
- * paid and is now waived keeps a stamp the constraint refuses.
- *
- * `paid_minor` is deliberately untouched. Waiving says nobody is being asked
- * for the money, not that the money arrived.
+ * `waive_statement` checks the caller is an admin or owner of the office,
+ * records who waived it in `payment_corrections`, and the waiver trigger
+ * redraws the person's other weeks.
  */
 export async function waiveStatement(args: {
-  orgId: number;
   statementId: number;
-  waivedBy: string;
+  reason?: string;
 }): Promise<void> {
-  const { data, error } = await supabase
-    .from("billing_statements")
-    .update({ status: "waived", paid_at: null, marked_paid_by: args.waivedBy })
-    .eq("id", args.statementId)
-    .eq("org_id", args.orgId)
-    .select("id")
-    .maybeSingle();
+  const { error } = await supabase.rpc("waive_statement", {
+    p_statement_id: args.statementId,
+    p_reason: args.reason?.trim() || null,
+  });
   if (error) throw error;
-  // RLS refuses an UPDATE by matching no rows rather than by raising, so a
-  // demoted admin gets a silent success. Say what happened instead.
-  if (!data) {
-    throw new Error("That week was not waived. You may no longer be an admin of this office.");
-  }
 }
 
 /* ========================================================================= */

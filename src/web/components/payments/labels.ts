@@ -14,7 +14,7 @@ import { formatMoney, type Currency } from "../../../shared/money.js";
 
 /** Said wherever a payment is about to be written, in the same words. */
 export const CANNOT_UNDO =
-  "A recorded payment cannot be taken back from this screen. Nothing subtracts it, so check the amount and the person before you record it.";
+  "A recorded payment cannot be edited. If it was a mistake it can be voided from the person's payments, and the void stays on the record, so check the amount and the person before you record it.";
 
 /**
  * Where somebody's account stands, as a phrase that fits inside a sentence.

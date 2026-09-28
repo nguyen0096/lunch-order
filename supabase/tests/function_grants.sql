@@ -39,7 +39,12 @@ insert into expected (name, anon_may) values
   -- The settings screen. Same shape again: the grant says a signed-in browser
   -- may ask, and each one decides for itself whether this admin gets an answer.
   ('send_announcement',      false),
-  ('send_test_notification', false);
+  ('send_test_notification', false),
+  -- The Payments screen's three doors into money. Each checks for an admin or
+  -- owner of the office and writes payment_corrections.
+  ('move_payment',    false),
+  ('void_payment',    false),
+  ('waive_statement', false);
 
 create temp table found as
 select p.proname::text as name,
@@ -69,7 +74,7 @@ select case when count(*) = 0 then 'PASS: every intended function is callable'
 -- 3. anon reaches nothing. Every one of these needs a signed-in caller, and
 --    anon holding EXECUTE means an unauthenticated browser can reach it.
 select case when count(*) = 0 then 'PASS: anon can execute nothing'
-            else 'FAIL: anon can execute -> ' || string_agg(name, ', ')
+            else 'FAIL: anon can execute -> ' || string_agg(f.name, ', ')
        end as check_3_anon_blocked
   from found f join expected e on e.name = f.name
  where f.anon and not e.anon_may;

@@ -13,7 +13,7 @@ import {
 } from "@/ui";
 import type { PaymentsPerson, UnmatchedPayment } from "../../api.js";
 import { formatMoney, type Currency } from "../../../shared/money.js";
-import { CANNOT_UNDO, accountState, arrivedLabel, landsOn } from "./labels.js";
+import { accountState, arrivedLabel, landsOn } from "./labels.js";
 
 /**
  * Whose money was it.
@@ -25,14 +25,13 @@ import { CANNOT_UNDO, accountState, arrivedLabel, landsOn } from "./labels.js";
  * chosen, which used to be refused and is now simply a top-up that came in by
  * bank transfer with a memo nobody could read.
  *
- * Applying is not a correction to the payment that arrived: the trigger
- * credits on INSERT and on nothing else, so the only thing that moves an
- * account is a new payment carrying that person's reference. This dialog
- * therefore says plainly that it is about to write a second row, because an
- * admin who thinks they are re-filing one row will not expect to find two.
+ * The same dialog moves a payment that landed on the wrong colleague. Either
+ * way it is the one row that moves, through `move_payment`, which redraws both
+ * people's weeks and writes the change to `payment_corrections`.
  */
 export function ApplyDialog({
   payment,
+  from,
   people,
   currency,
   timeZone,
@@ -42,6 +41,8 @@ export function ApplyDialog({
 }: {
   /** Null closes the dialog. */
   payment: UnmatchedPayment | null;
+  /** Whose account it is on now. Null for money that matched nobody. */
+  from: PaymentsPerson | null;
   people: PaymentsPerson[];
   currency: Currency;
   timeZone: string;
@@ -63,7 +64,9 @@ export function ApplyDialog({
 
   // Everybody, including people who have left: money can arrive from somebody
   // whose membership was deactivated while they still owed for a week.
-  const options: ComboboxOption[] = people.map((p) => ({
+  const options: ComboboxOption[] = people
+    .filter((p) => p.profileId !== from?.profileId)
+    .map((p) => ({
     value: p.profileId,
     label: `${p.name} · ${accountState(p.account, currency)}`,
     keywords: [p.shortCode, p.paymentRef],
@@ -82,7 +85,11 @@ export function ApplyDialog({
     <Dialog open onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85dvh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{`Apply ${formatMoney(payment.amountMinor, currency)} to a person`}</DialogTitle>
+          <DialogTitle>
+            {from === null
+              ? `Apply ${formatMoney(payment.amountMinor, currency)} to a person`
+              : `Move ${formatMoney(payment.amountMinor, currency)} off ${from.name}`}
+          </DialogTitle>
           <DialogDescription>
             {`Arrived ${arrivedLabel(payment.receivedAt, timeZone)} via ${payment.provider}.`}
           </DialogDescription>
@@ -92,7 +99,9 @@ export function ApplyDialog({
           <span className="text-sm font-medium">Memo, as the bank sent it</span>
           <p className="rounded-md bg-surface-sunken px-3 py-2 font-mono text-sm break-words text-text">
             {payment.memo === null || payment.memo.trim() === ""
-              ? "No memo at all, which is why nothing could match it."
+              ? from === null
+                ? "No memo at all, which is why nothing could match it."
+                : "No memo at all."
               : payment.memo}
           </p>
         </div>
@@ -134,20 +143,22 @@ export function ApplyDialog({
           <>
             <div className="flex flex-col gap-3 text-sm">
               <p className="text-base">
-                {`Credit ${formatMoney(payment.amountMinor, currency)} to ${chosen.name}, with the memo ${chosen.paymentRef}.`}
+                {from === null
+                  ? `Put ${formatMoney(payment.amountMinor, currency)} on ${chosen.name}'s account.`
+                  : `Move ${formatMoney(payment.amountMinor, currency)} from ${from.name} to ${chosen.name}.`}
               </p>
 
               <p className="text-muted">
-                {/* Said out loud because the row count is surprising and an
-                    admin who expected one row would read two as a bug. */}
-                {`This records a new payment carrying ${chosen.paymentRef}, because an account is only ever credited by a payment coming in. The one that arrived is marked as having been dealt with, so it leaves this list, and the money is counted once.`}
+                {from === null
+                  ? "The payment that arrived is the one that moves, so the money is counted once and leaves this list."
+                  : `${from.name}'s weeks are redrawn without it.`}
+                {" The change is kept on the record with your name on it."}
               </p>
 
               <p className="text-muted">
                 {landsOn(chosen.name, chosen.account, payment.amountMinor, currency)}
               </p>
 
-              <p className="text-muted">{CANNOT_UNDO}</p>
               <p className="text-muted">Nothing has been written yet. This is the write.</p>
             </div>
 
@@ -156,7 +167,7 @@ export function ApplyDialog({
                 Back
               </Button>
               <Action reason={null} pending={pending} onClick={() => onApply(chosen)}>
-                {pending ? "Recording…" : "Record"}
+                {pending ? "Moving…" : from === null ? "Apply" : "Move"}
               </Action>
             </DialogFooter>
           </>
