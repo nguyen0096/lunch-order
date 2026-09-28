@@ -15,8 +15,9 @@ Those settings now live in `supabase/config.toml`, which both paths read.
 git push origin main
 ```
 
-`.github/workflows/ci.yml` runs typecheck and tests, then deploys all three
-functions with `supabase functions deploy`. Nothing else is required, and this is
+`.github/workflows/ci.yml` runs typecheck and tests, then deploys all four
+functions (`telegram`, `outbox-drain`, `parse-assist`, `sepay`) with
+`supabase functions deploy`. Nothing else is required, and this is
 the path that should be used.
 
 ## Deploying by hand
@@ -46,9 +47,12 @@ thing. If you find yourself needing a flag, the fix is to add it to that file.
 npx supabase functions list --project-ref wvtbstticnactealupph
 ```
 
-Check `verify_jwt` matches `supabase/config.toml`: `false` for `telegram`, `true`
-for `outbox-drain` and `parse-assist`. A mismatch means something deployed
-outside the normal path.
+Check `verify_jwt` matches `supabase/config.toml`: `false` for `telegram` and
+`sepay`, `true` for `outbox-drain` and `parse-assist`. A mismatch means something
+deployed outside the normal path. For `sepay` it is the difference between
+working and silently dropping money: with the gate on, SePay's deliveries are
+refused before the function's per-office API key check runs, and after its
+retries give up nothing records the transfer.
 
 ## Rolling back
 

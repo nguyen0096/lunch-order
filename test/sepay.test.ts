@@ -109,15 +109,15 @@ describe("a transfer that is ours", () => {
     const transfer = transferOf(delivery({ content: "LUNCH39ZZZZ" }));
     expect(transfer.memo).toBe("LUNCH39ZZZZ");
 
-    const outcome = outcomeForInsert(transfer.providerTxnId, { id: 51, matchedStatementId: null });
+    const outcome = outcomeForInsert(transfer.providerTxnId, { id: 51, profileId: null });
 
     expect(outcome).toEqual({ result: "recorded", paymentId: 51, matched: false });
     expect(httpStatus(outcome)).toBe(200);
-    expect(responseBody(outcome)["detail"]).toMatch(/matching no statement/);
+    expect(responseBody(outcome)["detail"]).toMatch(/matching nobody/);
   });
 
-  it("says when the trigger did match one", () => {
-    const outcome = outcomeForInsert("92704", { id: 51, matchedStatementId: 9 });
+  it("says matched when the money found a person, a top-up with no week included", () => {
+    const outcome = outcomeForInsert("92704", { id: 51, profileId: "b3f0c1de-0000-4000-8000-000000000001" });
     expect(outcome).toEqual({ result: "recorded", paymentId: 51, matched: true });
     expect(httpStatus(outcome)).toBe(200);
   });
@@ -334,8 +334,10 @@ describe("folding the memo the way the database does", () => {
 describe("routing, which is all that happens before a caller is authenticated", () => {
   it("reads the account number and nothing else", () => {
     expect(routeTo(delivery())).toEqual({ kind: "account", accountNumber: "0123456789" });
-    // Whitespace around a pasted account number is not a different account.
+    // Whitespace anywhere in a pasted account number is not a different account.
     expect(routeTo(delivery({ accountNumber: " 0123456789 " })))
+      .toEqual({ kind: "account", accountNumber: "0123456789" });
+    expect(routeTo(delivery({ accountNumber: "0123 456\t789" })))
       .toEqual({ kind: "account", accountNumber: "0123456789" });
   });
 
@@ -420,8 +422,24 @@ describe("what only the deployed function can carry", () => {
     expect(fn).not.toContain("asMember");
   });
 
-  it("routes by the same account number the bill's QR is built from", () => {
-    expect(fn).toContain("payment_config -> 'vietqr' ->> 'accountNumber'");
+  it("routes by the same account number the bill's QR is built from, among live offices", () => {
+    expect(fn).toContain("private.account_number(o.payment_config) = ${accountNumber}");
+    expect(fn).toContain("o.deleted_at is null");
+    // One definition of "the account", shared with the unique index that makes
+    // an account belong to one office.
+    const oneWay = readFileSync(
+      join(ROOT, "supabase", "migrations", "20261011100000_an_office_is_founded_one_way.sql"),
+      "utf8",
+    );
+    expect(oneWay).toContain("p_config #>> '{vietqr,accountNumber}'");
+    expect(oneWay).toMatch(
+      /create unique index if not exists organizations_account_number_uk\s+on public\.organizations \(private\.account_number\(payment_config\)\)/,
+    );
+  });
+
+  it("reports matched on whether the money found a person", () => {
+    expect(fn).toContain("select p.profile_id from public.payments p");
+    expect(fn).not.toContain("matched_statement_id");
   });
 
   it("keeps the secrets table out of reach of every client", () => {

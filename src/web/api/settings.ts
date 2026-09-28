@@ -73,10 +73,19 @@ export async function createTelegramLink(
     .eq("org_id", orgId).eq("profile_id", profileId).single();
   if (membership.error) throw membership.error;
 
+  // Insert-or-nothing, then read. An upsert would rewrite membership_id and
+  // org_id on conflict, and a browser holds no UPDATE on either: the office a
+  // link belongs to is its membership's, and nobody moves it.
+  const inserted = await supabase
+    .from("telegram_links")
+    .upsert({ membership_id: membership.data.id, org_id: orgId },
+            { onConflict: "membership_id", ignoreDuplicates: true });
+  if (inserted.error) throw inserted.error;
+
   const { data, error } = await supabase
     .from("telegram_links")
-    .upsert({ membership_id: membership.data.id, org_id: orgId }, { onConflict: "membership_id" })
     .select("membership_id, link_token, chat_id")
+    .eq("membership_id", membership.data.id)
     .single();
   if (error) throw error;
   return {
@@ -213,10 +222,12 @@ export function shortCodeProblem(code: string): string | null {
 /**
  * The code that appears in the bank memo when this person pays a bill.
  *
- * Per-org like the display name, and writable by its owner alone:
- * memberships_update_self plus the column grant on `short_code` mean the same
- * statement aimed at a colleague's row matches nothing rather than erroring, so
- * the zero-row case is checked rather than assumed.
+ * Per-org like the display name. A member changes their own once after
+ * joining, and `enforce_short_code` counts it; an admin may change it any
+ * number of times. The database also refuses a code that contains, or sits
+ * inside, a colleague's, and says whose, so that sentence is shown as it is.
+ * The same statement aimed at a row RLS hides matches nothing rather than
+ * erroring, so the zero-row case is checked rather than assumed.
  *
  * Returns the code as stored, uppercased, so the caller can settle "nothing to
  * save" without waiting for a refetch.
@@ -240,7 +251,7 @@ export async function setShortCode(args: {
     // by hand, and RLS can hide the colleague already holding the code, so the
     // clash only ever arrives from the server. humanError would flatten it to
     // "that change conflicts with something else", which does not say what to do.
-    if (error.code === "23505" || /memberships_code_uk/i.test(error.message)) {
+    if (/memberships_code_uk/i.test(error.message)) {
       throw new Error(`Somebody in this office already uses ${code}. Pick a different one.`);
     }
     throw error;

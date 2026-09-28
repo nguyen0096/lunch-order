@@ -3,8 +3,10 @@ import {
   CalendarDaysIcon,
   CheckIcon,
   BanknoteIcon,
+  BugIcon,
   ChefHatIcon,
   ChevronsUpDownIcon,
+  InboxIcon,
   LogOutIcon,
   MegaphoneIcon,
   PlusIcon,
@@ -20,6 +22,7 @@ import {
   ThemeChoice,
   cn,
 } from "@/ui";
+import { BugReportDialog } from "./BugReportDialog.js";
 import { CreateOfficeDialog } from "./CreateOfficeDialog.js";
 import { JoinOfficeDialog } from "./JoinOfficeDialog.js";
 import { isAdmin, type Org, type Role } from "../../shared/types.js";
@@ -32,6 +35,7 @@ export type Page =
   | "payments"
   | "messages"
   | "corrections"
+  | "bug-reports"
   | "settings";
 
 /** One membership as the chrome needs it: which office, and what you are in it. */
@@ -94,13 +98,16 @@ export function AppShell({
   children: ReactNode;
 }) {
   const admin = isAdmin(role);
-  const href = (p: Page | "settings") => `#/o/${org.slug}/${p}`;
+  const href = (p: Page) => `#/o/${org.slug}/${p}`;
   const [creating, setCreating] = useState(false);
   // Undefined rather than a no-op, so every menu below simply has one fewer
   // item instead of one that does nothing.
   const create = mayFoundOffice ? () => setCreating(true) : undefined;
   const [joining, setJoining] = useState(false);
   const join = () => setJoining(true);
+  const [reporting, setReporting] = useState(false);
+  const report = () => setReporting(true);
+  const bugReportsHref = role === "owner" ? href("bug-reports") : undefined;
 
   // Belonging to two offices is what makes the name a control. Belonging to one
   // is the ordinary case, and a menu holding a single entry is a promise the
@@ -154,6 +161,8 @@ export function AppShell({
           displayName={displayName}
           email={email}
           settingsHref={href("settings")}
+          bugReportsHref={bugReportsHref}
+          onReportBug={report}
           onSignOut={onSignOut}
           onCreateOffice={switchable ? undefined : create}
           onJoinOffice={switchable ? undefined : join}
@@ -181,6 +190,8 @@ export function AppShell({
             displayName={displayName}
             email={email}
             settingsHref={href("settings")}
+            bugReportsHref={bugReportsHref}
+            onReportBug={report}
             onSignOut={onSignOut}
             onCreateOffice={switchable ? undefined : create}
           onJoinOffice={switchable ? undefined : join}
@@ -214,6 +225,12 @@ export function AppShell({
         </nav>
       </div>
 
+      <BugReportDialog
+        open={reporting}
+        onOpenChange={setReporting}
+        orgId={org.id}
+        orgName={org.name}
+      />
       <CreateOfficeDialog open={creating} onOpenChange={setCreating} onCreated={onCreated} />
       <JoinOfficeDialog
         open={joining}
@@ -235,6 +252,7 @@ export function AppShell({
  */
 export function switchTarget(page: string, role: Role): Page {
   if (page === "bill" || page === "settings") return page;
+  if (page === "bug-reports" && role === "owner") return page;
   if (
     (page === "menu" ||
       page === "people" ||
@@ -403,6 +421,8 @@ function AvatarMenu({
   displayName,
   email,
   settingsHref,
+  bugReportsHref,
+  onReportBug,
   onSignOut,
   onCreateOffice,
   onJoinOffice,
@@ -411,6 +431,9 @@ function AvatarMenu({
   displayName: string;
   email: string;
   settingsHref: string;
+  /** An owner's only. The table refuses everybody else, so nobody else is offered it. */
+  bugReportsHref?: string;
+  onReportBug: () => void;
   onSignOut: () => void;
   /** Absent when the switcher already carries it, so it has one home at a time. */
   onCreateOffice?: () => void;
@@ -452,6 +475,14 @@ function AvatarMenu({
             Settings
           </a>
         </Button>
+        {bugReportsHref && (
+          <Button asChild variant="ghost" className="w-full justify-start">
+            <a href={bugReportsHref} onClick={() => setOpen(false)}>
+              <InboxIcon />
+              Bug reports
+            </a>
+          </Button>
+        )}
         {onJoinOffice && (
           <Button
             variant="ghost"
@@ -481,7 +512,18 @@ function AvatarMenu({
         {/* Not a `useAction`: there is no write to report, and a toast on
             every tap of a three-state control is noise. */}
         <ThemeChoice />
-        <Button variant="ghost" className="mt-1 w-full justify-start" onClick={onSignOut}>
+        <Button
+          variant="ghost"
+          className="mt-1 w-full justify-start"
+          onClick={() => {
+            setOpen(false);
+            onReportBug();
+          }}
+        >
+          <BugIcon />
+          Report a bug
+        </Button>
+        <Button variant="ghost" className="w-full justify-start" onClick={onSignOut}>
           <LogOutIcon />
           Sign out
         </Button>

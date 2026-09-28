@@ -42,7 +42,56 @@ if a function in `public` is reachable without being on an allowlist.
 **Only an owner may appoint or remove an owner.** `enforce_membership_role`
 guarded only your own row, so two admins could promote each other in two
 statements, or either could delete the owner. All three reproduced live. DELETE
-needed its own trigger; the old one was BEFORE UPDATE only.
+needed its own trigger; the old one was BEFORE UPDATE only. INSERT was missed
+as well: an admin could insert a membership with role `owner`, or delete a
+member and insert them back as one. The guard now fires on INSERT, and a
+browser holds no INSERT on `memberships` at all, because joining goes through
+`join_with_code`, `accept_invitation` and `create_organization`.
+
+**An owner holds every right an admin does.** `my_admin_org_ids()` counts
+`role in ('admin','owner')`, and every admin policy and RPC goes through it, so
+there is no door an admin passes and an owner does not. The rights that are
+the owner's alone (appointing owners, the payment account, deleting the office,
+reading bug reports) are additions on top, never subtractions.
+
+**Your own membership is not switched on or off directly.** The column grant on
+`status` let a member PATCH their own row to `inactive`, walking out without
+`leave_office`'s checks, or back to `active` after an admin removed them.
+Leaving is `leave_office`; coming back is a join code.
+
+**An office is founded one way.** `organizations_insert` was `with check
+(true)`, so any JWT, an anonymous one included, could insert an office past
+the `office_creation` switch and without an owner. There is no INSERT policy or
+grant on `organizations` now; `create_organization` is the door.
+
+**A short code is picked on the way in and changed once after that.** It is
+the payment reference, and `payer_from_memo` credits the longest reference
+found inside a memo, so a member who set theirs to extend a colleague's
+(`DINHC` over `DINH`) took any transfer whose memo ran on past the reference.
+The rules, decided by the product owner and enforced by
+`enforce_short_code`: no code may contain, or sit inside, another active
+member's reference or another person's old weekly reference in the same
+office; a member picks theirs when joining or founding and may change it once
+more, counted in `memberships.short_code_changes`; an admin or owner may change
+anybody's, their own included, at any time, uncounted. Suggestions step around
+an overlap (`QT01` beside `QTN`) instead of extending it (`QTN1`).
+
+**Money moves through three RPCs, on the record.** Admins held UPDATE and
+DELETE on `payments`, `billing_statements`, `billing_lines` and
+`billing_periods`, so a balance could be edited with no trace and no
+reallocation, and an admin could insert a `sepay` row with a transaction id
+the bank would later send, which `on conflict do nothing` then swallowed as a
+redelivery. Now an admin inserts manual payments only, and everything else is
+`move_payment`, `void_payment` (manual payments only) and `waive_statement`,
+each writing `payment_corrections`. Not `order_corrections`: that table is
+about a meal on a day, and a payment has neither.
+
+**A Telegram link belongs to its membership's office, and only the bot
+connects a chat.** A member could PATCH their link's `org_id` to another
+office and read its `payment_config` through `/bill`. A composite foreign key
+to `memberships (id, org_id)` makes the office the membership's; column grants
+leave a browser only `chat_id` and `linked_at`; a trigger lets a browser clear
+`chat_id` and never set it.
 
 **A join code grants membership and nothing else, on every path.** It hardcoded
 `'member'` on insert but the reactivation branch touched `status` alone, so a
@@ -88,6 +137,19 @@ named "today" was about tomorrow for most of the day. `/cancel` separately
 matched `service_date = today` while `/order` resolved the next open day, so
 after the cutoff a member could place an order the bot then said did not exist.
 One function now answers "which day" for both.
+
+**A bug report goes to the office's owner, through the outbox.** "Owner" is
+`memberships.role = 'owner'` in the office the report was sent from: there is
+no app-wide owner in the schema, and every privilege is scoped to an office. An
+`AFTER INSERT` trigger on `bug_reports` enqueues one `bug_report` row per owner
+with a linked chat, the same shape as `trg_transfer_notifies`, so an owner who
+never finished `/start` produces no row and reads the report on the Bug reports
+screen instead. It is the one database-rendered message in `HTML` rather than
+`none`, and every user-supplied field goes through `private.telegram_html`
+(`&`, `<`, `>`, per the Bot API). `outbox_admin` now hides `bug_report` rows
+from admins who are not owners, because the queued body carries the report
+verbatim and the table's own policy would otherwise be one join away from
+meaningless.
 
 ## The shape of a day
 
@@ -180,8 +242,8 @@ person's first and falls back to it, longest match winning.
 **What a person is shown is that core with their office in front of it.**
 `TEST LUNCH DINH`, composed by `composePaymentRef` in
 `src/shared/paymentRef.ts` and stored nowhere. The prefix is for the human
-reading a bank statement: a SePay account is often also somebody's own, or
-serves two offices, and `LUNCHDINH` alone does not say which. Separated by
+reading a bank statement: a SePay account is often also somebody's own, and
+`LUNCHDINH` alone does not say which lunch office it was for. Separated by
 spaces, because a Vietnamese transfer note carries letters, digits and spaces
 intact while `_`, `-` and `/` are dropped or refused. Matching is untouched:
 `payer_from_memo` folds a memo to letters and digits before looking for the
@@ -193,6 +255,16 @@ An ISO week was tried on the end of that and removed within the day. Somebody
 three weeks behind has no single true week to name, which is precisely the
 person the suffix was for, and a reference that changes weekly cannot be saved
 as a repeating transfer -- which is this entry's own rule, restated.
+
+**One bank account serves one office.** The SePay webhook finds the office
+by the account number in the delivery, so two offices on one account made
+every delivery `ambiguous_account` and dropped it, and a stranger could cause
+that by inserting an office naming somebody else's account. The product owner
+chose one office per account over routing by the office code in the memo.
+`organizations_account_number_uk` is unique on the account with every
+whitespace character removed (`private.account_number`), among offices not
+deleted, so deleting an office gives its account up. The webhook matches on
+the same expression.
 
 **A member can read their own payments.** `v_account_balance` is
 `security_invoker`, so it sums `public.payments` with the reader's own

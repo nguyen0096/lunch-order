@@ -4,14 +4,18 @@ import { Action, Badge, Button, EmptyState, Skeleton, useAction } from "@/ui";
 import {
   creditMinor,
   fetchPayments,
+  fetchPersonPayments,
   humanError,
+  movePayment,
   owedMinor,
   recordPayment,
+  voidPayment,
   waiveStatement,
   type PaymentsData,
   type PaymentsPeriod,
   type PaymentsPerson,
   type PaymentsStatement,
+  type PersonPayment,
   type RecordedPayment,
   type UnmatchedPayment,
 } from "../api.js";
@@ -48,17 +52,21 @@ import { formatMoney, type Currency } from "../../shared/money.js";
  * `payments_apply_on_insert` finds the person, decides what their weeks look
  * like and leaves the rest on the account, whether the money came from the
  * bank webhook or from an admin who was handed cash. One arithmetic path, one
- * audit trail, one set of rules -- and the price of that is that a payment
- * cannot be undone, which every confirmation on this screen says out loud
- * rather than leaving somebody to discover.
+ * audit trail, one set of rules. A payment row is never edited: one on the
+ * wrong person is moved, one recorded by mistake is voided, and both go
+ * through an RPC that writes `payment_corrections`.
  */
 export function PaymentsScreen({ me, org }: ScreenProps) {
   const [data, setData] = useState<PaymentsData | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [periodId, setPeriodId] = useState<number | null>(null);
   const [recordingId, setRecordingId] = useState<string | null>(null);
-  const [applyingId, setApplyingId] = useState<number | null>(null);
+  const [moving, setMoving] = useState<{
+    payment: UnmatchedPayment;
+    from: PaymentsPerson | null;
+  } | null>(null);
   const [toppingUp, setToppingUp] = useState(false);
+  const [personPayments, setPersonPayments] = useState<PersonPayment[] | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +82,22 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  // What is on the open person's account, so a mistake can be moved or voided
+  // from the same dialog it would have been recorded in.
+  const loadPersonPayments = useCallback(async (profileId: string | null) => {
+    setPersonPayments(null);
+    if (profileId === null) return;
+    try {
+      setPersonPayments(await fetchPersonPayments({ orgId: org.id, profileId }));
+    } catch {
+      setPersonPayments([]);
+    }
+  }, [org.id]);
+
+  useEffect(() => {
+    void loadPersonPayments(recordingId);
+  }, [recordingId, loadPersonPayments]);
 
   /* ------------------------------------------------------------- mutations */
 
@@ -105,25 +129,32 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   );
 
   const apply = useAction(
-    async (a: { payment: UnmatchedPayment; person: PaymentsPerson }) => {
-      const recorded = await recordPayment({
-        orgId: org.id,
-        profileId: a.person.profileId,
-        amountMinor: a.payment.amountMinor,
-        memo: a.person.paymentRef,
-        recordedBy: me.profileId,
-        // The money arrived when the bank says it did, not when an admin
-        // worked out whose it was.
-        receivedAt: a.payment.receivedAt,
-        resolvesPaymentId: a.payment.id,
-      });
-      return { recorded, person: a.person };
+    async (a: { payment: UnmatchedPayment; person: PaymentsPerson; from: PaymentsPerson | null }) => {
+      await movePayment({ paymentId: a.payment.id, toProfileId: a.person.profileId });
+      return a;
     },
     {
-      success: (r) => recordedLine(r.recorded, r.person, org.currency),
+      success: (r) =>
+        r.from === null
+          ? `Applied ${formatMoney(r.payment.amountMinor, org.currency)} to ${r.person.name}`
+          : `Moved ${formatMoney(r.payment.amountMinor, org.currency)} from ${r.from.name} to ${r.person.name}`,
       onSuccess: () => {
-        setApplyingId(null);
+        setMoving(null);
         void load();
+      },
+    },
+  );
+
+  const voidOne = useAction(
+    async (a: { payment: PersonPayment; reason: string }) => {
+      await voidPayment({ paymentId: a.payment.id, reason: a.reason });
+      return a;
+    },
+    {
+      success: (a) => `Voided ${formatMoney(a.payment.amountMinor, org.currency)}`,
+      onSuccess: () => {
+        void load();
+        void loadPersonPayments(recordingId);
       },
     },
   );
@@ -131,11 +162,7 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   const waive = useAction(
     async (row: PersonRow) => {
       if (row.statement === null) throw new Error("There is no statement for that week.");
-      await waiveStatement({
-        orgId: org.id,
-        statementId: row.statement.id,
-        waivedBy: me.profileId,
-      });
+      await waiveStatement({ statementId: row.statement.id });
       return row;
     },
     {
@@ -175,8 +202,7 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   const week = period === null ? [] : statements.filter((s) => s.periodId === period.periodId);
   const rows = personRows(everybody, week);
   const recording = rows.find((r) => r.person.profileId === recordingId) ?? null;
-  const applying = unmatched.find((p) => p.id === applyingId) ?? null;
-  const busy = record.pending || waive.pending;
+  const busy = record.pending || waive.pending || voidOne.pending;
 
   return (
     <div className="flex flex-col gap-8">
@@ -186,7 +212,8 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
           <p className="max-w-prose text-sm text-muted">
             Money only ever goes in as a payment, the same way the bank's own arrive, so one rule
             decides where it lands. What somebody owes is their account: every week they have
-            eaten, less everything they have paid. Nothing here can be taken back.
+            eaten, less everything they have paid. A payment is never edited: one on the wrong
+            person is moved, one recorded by mistake is voided, and both stay on the record.
           </p>
         </div>
         {/* Outside the week on purpose. Somebody can pay ahead before the
@@ -208,7 +235,7 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
         currency={org.currency}
         timeZone={org.timezone}
         busy={apply.pending}
-        onApply={(payment) => setApplyingId(payment.id)}
+        onApply={(payment) => setMoving({ payment, from: null })}
       />
 
       {period === null ? (
@@ -292,6 +319,14 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
         onWaive={() => {
           if (recording !== null) void waive.run(recording);
         }}
+        payments={personPayments}
+        timeZone={org.timezone}
+        onMove={(payment) => {
+          if (recording === null) return;
+          setMoving({ payment, from: recording.person });
+          setRecordingId(null);
+        }}
+        onVoid={(payment, reason) => void voidOne.run({ payment, reason })}
       />
 
       <TopUpDialog
@@ -304,16 +339,17 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
       />
 
       <ApplyDialog
-        payment={applying}
+        payment={moving?.payment ?? null}
+        from={moving?.from ?? null}
         people={everybody}
         currency={org.currency}
         timeZone={org.timezone}
         pending={apply.pending}
         onOpenChange={(open) => {
-          if (!open) setApplyingId(null);
+          if (!open) setMoving(null);
         }}
         onApply={(person) => {
-          if (applying !== null) void apply.run({ payment: applying, person });
+          if (moving !== null) void apply.run({ ...moving, person });
         }}
       />
     </div>

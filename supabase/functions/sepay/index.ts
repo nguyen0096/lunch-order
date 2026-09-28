@@ -31,13 +31,13 @@
  * connection asSystem holds is the only thing in this system that can read it.
  *
  * IT DOES NO BILLING ARITHMETIC. `trg_payment_apply` fires AFTER INSERT on
- * payments, finds the statement whose payment_ref the memo contains, credits it
- * and recomputes the status. This function inserts a row and reads back what
- * the trigger decided. The database is the authority on what matched what, here
+ * payments, finds the person whose payment_ref the memo contains, and redraws
+ * their weeks. This function inserts a row and reads back what the trigger
+ * decided. The database is the authority on what matched what, here
  * exactly as it is for a payment an admin records by hand.
  *
  * EVERY DELIVERY IT UNDERSTOOD GETS A 200, including the ones it deliberately
- * threw away, because SePay retries up to seven times over about 33 minutes
+ * threw away, because SePay retries up to seven times, over at most five hours,
  * until it sees one. A non-200 is a request for those retries and nothing else.
  *
  * The decisions all live in src/shared/sepay.ts, imported by path rather than
@@ -109,13 +109,16 @@ async function handle(
   return await asSystem(async (tx) => {
     // The office's account lives in the same jsonb the bill's QR is built from,
     // so the account a payer scanned is the account that routes their transfer.
-    // btrim on both sides because payment_config has no database-side shape and
-    // a pasted account number carries whatever the clipboard had.
+    // private.account_number strips every whitespace character, as routeTo did
+    // to the payload, and organizations_account_number_uk is on that same
+    // expression among live offices: a deleted office routes nothing, and no
+    // two live ones can share an account.
     const orgs = await tx<Array<{ id: number; secret: string | null }>>`
       select o.id, s.secret
         from public.organizations o
         left join public.org_webhook_secrets s on s.org_id = o.id
-       where btrim(o.payment_config -> 'vietqr' ->> 'accountNumber') = ${accountNumber}
+       where private.account_number(o.payment_config) = ${accountNumber}
+         and o.deleted_at is null
        order by o.id
        limit 2`;
 
@@ -179,16 +182,16 @@ async function insert(tx: Tx, orgId: number, transfer: IncomingTransfer): Promis
   const first = inserted[0];
   if (first === undefined) return outcomeForInsert(row.provider_txn_id, null);
 
-  // Read back rather than RETURNING matched_statement_id: RETURNING is
-  // evaluated before AFTER triggers run, so it would say null however the
-  // trigger went. Same reason as recordPayment() in src/web/api/billing.ts.
-  const applied = await tx<Array<{ matched_statement_id: number | null }>>`
-    select p.matched_statement_id from public.payments p where p.id = ${first.id}`;
+  // Read back rather than RETURNING profile_id: RETURNING is evaluated before
+  // AFTER triggers run, so it would say null however the trigger went. Same
+  // reason as recordPayment() in src/web/api/billing.ts.
+  const applied = await tx<Array<{ profile_id: string | null }>>`
+    select p.profile_id from public.payments p where p.id = ${first.id}`;
 
   // Ids and the amount only. The memo is somebody's transfer.
   console.log("sepay recorded", first.id, "org", orgId, "amount", row.amount_minor);
   return outcomeForInsert(row.provider_txn_id, {
     id: first.id,
-    matchedStatementId: applied[0]?.matched_statement_id ?? null,
+    profileId: applied[0]?.profile_id ?? null,
   });
 }

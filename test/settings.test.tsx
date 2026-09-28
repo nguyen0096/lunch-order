@@ -88,8 +88,8 @@ function card(title: string): HTMLElement {
 /** Called in place of the reload, so a test can see where the person lands. */
 let gone: ReturnType<typeof vi.fn>;
 
-async function renderSettings(role: Role = "member") {
-  render(<SettingsScreen me={ME} org={ORG} role={role} onGone={gone} />);
+async function renderSettings(role: Role = "member", me: Me = ME) {
+  render(<SettingsScreen me={me} org={ORG} role={role} onGone={gone} />);
   await screen.findByRole("heading", { name: "Standing days" });
   // The leaving section loads its own facts, so waiting for the control it
   // gates keeps a later state update from landing after the test has finished.
@@ -720,8 +720,57 @@ describe("the short code", () => {
       }),
     );
     expect(success).toHaveBeenCalledWith("Saved");
-    // The card now agrees with the database without waiting for a refetch.
-    await waitFor(() => expect(save()).toHaveAccessibleDescription("Nothing to save"));
+    // That was the member's one change, and the card knows it without a refetch.
+    await waitFor(() =>
+      expect(save()).toHaveAccessibleDescription(
+        "You have used your one change. An admin can change it for you.",
+      ),
+    );
+    expect(field).toBeDisabled();
+  });
+
+  it("says a member has one change, before they spend it", async () => {
+    await renderSettings("member");
+    expect(within(codeCard()).getByText(/You can change it once/)).toBeInTheDocument();
+  });
+
+  it("offers nothing to a member who has used their change, and says who can", async () => {
+    await renderSettings("member", {
+      ...ME,
+      orgs: ME.orgs.map((o) => ({ ...o, shortCodeChangesLeft: 0 })),
+    });
+    expect(screen.getByLabelText("Short code")).toBeDisabled();
+    expect(save()).toHaveAccessibleDescription(
+      "You have used your one change. An admin can change it for you.",
+    );
+  });
+
+  it("lets an admin change their own code as often as they need to", async () => {
+    await renderSettings("admin", {
+      ...ME,
+      orgs: ME.orgs.map((o) => ({ ...o, role: "admin" as const, shortCodeChangesLeft: 0 })),
+    });
+    const field = screen.getByLabelText("Short code");
+    expect(field).toBeEnabled();
+    for (const next of ["NEY", "NEYU"]) {
+      await userEvent.clear(field);
+      await userEvent.type(field, next);
+      await userEvent.click(save());
+      await waitFor(() => expect(save()).toHaveAccessibleDescription("Nothing to save"));
+    }
+    expect(setShortCode).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows the database's refusal of a code too close to a colleague's as it is", async () => {
+    const sentence =
+      "TEOX is too close to TEO in this office: one would match a transfer meant for the other. Pick a code that neither contains nor sits inside another person's.";
+    setShortCode.mockRejectedValue(Object.assign(new Error(sentence), { code: "23505" }));
+    await renderSettings("member");
+    const field = screen.getByLabelText("Short code");
+    await userEvent.clear(field);
+    await userEvent.type(field, "TEOX");
+    await userEvent.click(save());
+    await waitFor(() => expect(failure).toHaveBeenCalledWith(sentence));
   });
 
   it("names the rule the format broke rather than sending it to the CHECK", async () => {
@@ -745,14 +794,13 @@ describe("the short code", () => {
 
   it("lets the clash come back from the server, with a sentence that says what to do", async () => {
     // RLS can hide the colleague already holding the code, so a duplicate is
-    // only ever a server answer -- and humanError would flatten the raw
-    // constraint violation into a line nobody can act on, which is why
-    // setShortCode translates it instead.
+    // only ever a server answer. setShortCode names the code; humanError, for
+    // any other path that meets the same constraint, says what to do.
     expect(
       api.humanError(
         new Error('duplicate key value violates unique constraint "memberships_code_uk"'),
       ),
-    ).toBe("That change conflicts with something else. Reload and try again.");
+    ).toBe("Somebody in this office already uses that short code. Pick a different one.");
 
     setShortCode.mockRejectedValue(
       new Error("Somebody in this office already uses QUYT. Pick a different one."),

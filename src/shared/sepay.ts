@@ -8,8 +8,8 @@
  * on this side of the line: supabase/functions/sepay/index.ts is the adapter
  * that supplies a request, a clock and a transaction, and nothing else.
  *
- * SePay retries a delivery up to seven times over about 33 minutes until it
- * gets a 200, which is why so much of this file is about answering 200 to
+ * SePay retries a delivery up to seven times, over at most five hours, until
+ * it gets a 200, which is why so much of this file is about answering 200 to
  * things it has deliberately thrown away.
  *
  * Reading a delivery is two steps rather than one on purpose. routeTo() reads
@@ -201,9 +201,7 @@ export function routeTo(raw: unknown): Route {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return { kind: "unreadable", detail: "body is not a JSON object" };
   }
-  const accountNumber = typeof (raw as SePayPayload).accountNumber === "string"
-    ? ((raw as SePayPayload).accountNumber as string).trim()
-    : "";
+  const accountNumber = normalizeAccountNumber((raw as SePayPayload).accountNumber);
   if (accountNumber === "") {
     return {
       kind: "ignored",
@@ -212,6 +210,17 @@ export function routeTo(raw: unknown): Route {
     };
   }
   return { kind: "account", accountNumber };
+}
+
+/**
+ * Every whitespace character out, not just the ends: "0123 456 789" is the
+ * account the bank means by "0123456789", and it is the form
+ * `private.account_number` stores and indexes. The twin of
+ * normalizeAccountNumber in banks.ts, restated because this file imports
+ * nothing.
+ */
+export function normalizeAccountNumber(value: unknown): string {
+  return typeof value === "string" ? value.replace(/\s+/g, "") : "";
 }
 
 function asNumber(value: unknown): number | null {
@@ -287,9 +296,7 @@ export function classify(raw: unknown, arrivedAt: Date): Verdict {
     };
   }
 
-  const accountNumber = typeof payload.accountNumber === "string"
-    ? payload.accountNumber.trim()
-    : "";
+  const accountNumber = normalizeAccountNumber(payload.accountNumber);
   if (accountNumber === "") {
     return {
       kind: "ignored",
@@ -399,8 +406,8 @@ export function responseBody(outcome: Outcome): Record<string, unknown> {
         paymentId: outcome.paymentId,
         matched: outcome.matched,
         detail: outcome.matched
-          ? "recorded and applied to the statement its reference names"
-          : "recorded, matching no statement: an admin reconciles it by hand",
+          ? "recorded and credited to the person its reference names"
+          : "recorded, matching nobody: an admin reconciles it by hand",
       };
     case "duplicate":
       return {
@@ -424,6 +431,10 @@ export function responseBody(outcome: Outcome): Record<string, unknown> {
 /**
  * What an insert that may have hit `payments_provider_txn_uk` means.
  *
+ * Matched means the money found a person. `matched_statement_id` is not the
+ * question: a top-up reaches a person and no week, and is exactly as matched
+ * as a payment that settled three.
+ *
  * No row back means `on conflict do nothing` swallowed a redelivery: the row
  * was already there, the AFTER INSERT trigger never fired a second time, and
  * nothing was credited twice. From SePay's side that is a delivery that landed,
@@ -431,14 +442,14 @@ export function responseBody(outcome: Outcome): Record<string, unknown> {
  */
 export function outcomeForInsert(
   providerTxnId: string,
-  inserted: { id: number; matchedStatementId: number | null } | null,
+  inserted: { id: number; profileId: string | null } | null,
 ): Outcome {
   return inserted === null
     ? { result: "duplicate", providerTxnId }
     : {
       result: "recorded",
       paymentId: inserted.id,
-      matched: inserted.matchedStatementId !== null,
+      matched: inserted.profileId !== null,
     };
 }
 

@@ -57,9 +57,11 @@ values
  ('00000000-0000-0000-0000-000000000000','bbbbbbbb-0000-0000-0000-000000000002','authenticated','authenticated','b2@corrb.test','x',now(),now(),now(),'{"provider":"google"}','{"full_name":"Bê Hai"}')
 on conflict (id) do nothing;
 
-insert into public.organizations (slug, name, timezone, default_cutoff_local_time)
-values ('corr-a','Corrections A','Asia/Ho_Chi_Minh','16:00'),
-       ('corr-b','Corrections B','Asia/Ho_Chi_Minh','16:00');
+-- Short codes named, because both slugs fold to CORR and
+-- organizations_short_code_uk refuses the second one.
+insert into public.organizations (slug, name, timezone, default_cutoff_local_time, short_code)
+values ('corr-a','Corrections A','Asia/Ho_Chi_Minh','16:00','CORA'),
+       ('corr-b','Corrections B','Asia/Ho_Chi_Minh','16:00','CORB');
 
 insert into public.memberships (org_id, profile_id, role, short_code)
 select o.id, u.pid, u.role, u.code from public.organizations o

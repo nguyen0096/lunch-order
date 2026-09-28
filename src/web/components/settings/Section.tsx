@@ -95,6 +95,7 @@ export function TextField({
   maxLength,
   inputMode,
   className,
+  disabled,
 }: {
   id: string;
   label: string;
@@ -106,6 +107,7 @@ export function TextField({
   maxLength?: number;
   inputMode?: "text" | "numeric" | "tel";
   className?: string;
+  disabled?: boolean;
 }) {
   const hintId = hint ? `${id}-hint` : undefined;
   return (
@@ -120,6 +122,7 @@ export function TextField({
         placeholder={placeholder}
         maxLength={maxLength}
         inputMode={inputMode}
+        disabled={disabled}
         aria-describedby={hintId}
         className={INPUT}
       />

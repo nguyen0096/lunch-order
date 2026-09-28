@@ -111,6 +111,9 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     settlePeriod: vi.fn(),
     recordPayment: vi.fn(),
     waiveStatement: vi.fn(),
+    movePayment: vi.fn(),
+    voidPayment: vi.fn(),
+    fetchPersonPayments: vi.fn(),
   };
 });
 
@@ -121,6 +124,9 @@ const applyCatererPrices = vi.mocked(api.applyCatererPrices);
 const settlePeriod = vi.mocked(api.settlePeriod);
 const recordPayment = vi.mocked(api.recordPayment);
 const waiveStatement = vi.mocked(api.waiveStatement);
+const movePayment = vi.mocked(api.movePayment);
+const voidPayment = vi.mocked(api.voidPayment);
+const fetchPersonPayments = vi.mocked(api.fetchPersonPayments);
 const success = vi.mocked(toast.success);
 
 /** The real module, running against the stubbed client above. */
@@ -389,6 +395,9 @@ beforeEach(() => {
     matchedStatementId: 1,
   });
   waiveStatement.mockResolvedValue(undefined);
+  movePayment.mockResolvedValue({ matchedStatementId: 1 });
+  voidPayment.mockResolvedValue(undefined);
+  fetchPersonPayments.mockResolvedValue([]);
   fetchSettlementWeek.mockResolvedValue(settlementWeek());
   applyCatererPrices.mockResolvedValue({ dishes: 0, menuItems: 0, orderItems: 0 });
   settlePeriod.mockResolvedValue({ lines: 0, statements: 0, totalMinor: 0 });
@@ -520,11 +529,10 @@ describe("Recording a payment, the row that reaches the database", () => {
     expect(recorded.profileId).toBe("dinh");
   });
 
-  it("points a resolved payment at the week its money turned out to belong to", async () => {
+  it("writes the new row and nothing else: no payment is ever updated from here", async () => {
     db.results.push(
       { data: { id: 92, amount_minor: 100_000 }, error: null },
       { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
-      { data: null, error: null },
     );
     const { recordPayment: record } = await realApi();
 
@@ -535,67 +543,60 @@ describe("Recording a payment, the row that reaches the database", () => {
       memo: "LUNCHTEO",
       recordedBy: "admin",
       receivedAt: "2026-09-22T03:30:00.000Z",
-      resolvesPaymentId: 91,
-    });
-
-    const update = db.calls.find((c) => c.op === "update");
-    expect(update?.table).toBe("payments");
-    expect(update?.payload).toEqual({ matched_statement_id: 5 });
-    expect(update?.filters).toEqual([
-      ["id", 91],
-      ["org_id", 7],
-    ]);
-    // The new row carries the link the other way, so the pair is legible.
-    const insert = db.calls.find((c) => c.op === "insert");
-    expect(insert?.payload?.["raw"]).toEqual({
-      source: "admin",
-      recorded_by: "admin",
-      resolves_payment_id: 91,
-    });
-  });
-
-  it("never gives the original an owner, because one arrival must count once", async () => {
-    db.results.push(
-      { data: { id: 92, amount_minor: 100_000 }, error: null },
-      { data: { profile_id: "teo", matched_statement_id: 5 }, error: null },
-      { data: null, error: null },
-    );
-    const { recordPayment: record } = await realApi();
-
-    await record({
-      orgId: 7,
-      profileId: "teo",
-      amountMinor: 100_000,
-      memo: "LUNCHTEO",
-      recordedBy: "admin",
-      receivedAt: "2026-09-22T03:30:00.000Z",
-      resolvesPaymentId: 91,
-    });
-
-    // `v_account_balance` sums payments by profile, so naming Tèo on the stray
-    // as well as on the row that took the money would show him 100.000 better
-    // off than he is.
-    expect(db.calls.find((c) => c.op === "update")?.payload).not.toHaveProperty("profile_id");
-  });
-
-  it("leaves the original unpointed when there was no week for the money to reach", async () => {
-    db.results.push(
-      { data: { id: 92, amount_minor: 100_000 }, error: null },
-      { data: { profile_id: "quyt", matched_statement_id: null }, error: null },
-    );
-    const { recordPayment: record } = await realApi();
-
-    await record({
-      orgId: 7,
-      profileId: "quyt",
-      amountMinor: 100_000,
-      memo: "LUNCHQUYT",
-      recordedBy: "admin",
-      receivedAt: "2026-09-22T03:30:00.000Z",
-      resolvesPaymentId: 91,
     });
 
     expect(db.calls.find((c) => c.op === "update")).toBeUndefined();
+    expect(db.calls.find((c) => c.op === "insert")?.payload?.["raw"]).toEqual({
+      source: "admin",
+      recorded_by: "admin",
+    });
+  });
+});
+
+describe("Moving and voiding, the call that reaches the database", () => {
+  it("moves the payment itself, through move_payment, and writes no row", async () => {
+    db.results.push({ data: [{ payment_id: 91, profile_id: "teo", matched_statement_id: 5 }], error: null });
+    const { movePayment: move } = await realApi();
+
+    const moved = await move({ paymentId: 91, toProfileId: "teo" });
+
+    expect(db.rpcCalls).toEqual([
+      { fn: "move_payment", args: { p_payment_id: 91, p_to_profile_id: "teo", p_reason: null } },
+    ]);
+    expect(db.calls).toEqual([]);
+    expect(moved.matchedStatementId).toBe(5);
+  });
+
+  it("voids through void_payment, with the reason trimmed", async () => {
+    const { voidPayment: voidIt } = await realApi();
+    await voidIt({ paymentId: 92, reason: "  typed twice " });
+    expect(db.rpcCalls).toEqual([
+      { fn: "void_payment", args: { p_payment_id: 92, p_reason: "typed twice" } },
+    ]);
+    expect(db.calls).toEqual([]);
+  });
+
+  it("surfaces the database's refusal rather than a silent success", async () => {
+    db.results.push({ data: null, error: { code: "42501", message: "only an admin of this office can move a payment" } });
+    const { movePayment: move } = await realApi();
+    await expect(move({ paymentId: 91, toProfileId: "teo" })).rejects.toMatchObject({ code: "42501" });
+  });
+
+  it("lists a person's live payments only, and offers a void on manual ones alone", async () => {
+    db.results.push({
+      data: [
+        { id: 1, amount_minor: 50_000, memo: "x", received_at: "2026-09-22T03:30:00Z", provider: "manual" },
+        { id: 2, amount_minor: 60_000, memo: "y", received_at: "2026-09-21T03:30:00Z", provider: "sepay" },
+      ],
+      error: null,
+    });
+    const { fetchPersonPayments: list } = await realApi();
+    const rows = await list({ orgId: 7, profileId: "teo" });
+    expect(db.calls[0]?.filters).toContainEqual(["voided_at", null]);
+    expect(rows.map((r) => [r.id, r.voidable])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
   });
 });
 
@@ -634,7 +635,23 @@ describe("Money that matched nobody, the query behind the list", () => {
     expect(strayQuery?.filters).not.toContainEqual(["matched_statement_id", null]);
   });
 
-  it("retires a stray somebody has already applied", async () => {
+  it("never lists a voided payment, and ignores a voided copy's pointer", async () => {
+    serveFetch([STRAY_ROW]);
+    const { fetchPayments: fetch } = await realApi();
+
+    await fetch({ orgId: 7 });
+
+    const strayQuery = db.calls.find(
+      (c) => c.table === "payments" && c.filters.some(([column]) => column === "profile_id"),
+    );
+    expect(strayQuery?.filters).toContainEqual(["voided_at", null]);
+    const resolverQuery = db.calls.find(
+      (c) => c.table === "payments" && c.filters.some(([column]) => column === "provider"),
+    );
+    expect(resolverQuery?.filters).toContainEqual(["voided_at", null]);
+  });
+
+  it("retires a stray somebody applied the old way, by recording a copy", async () => {
     serveFetch(
       [STRAY_ROW],
       [{ raw: { source: "admin", recorded_by: "admin", resolves_payment_id: 91 } }],
@@ -666,39 +683,22 @@ describe("Money that matched nobody, the query behind the list", () => {
   });
 });
 
-describe("Waiving, the row that reaches the database", () => {
-  it("clears paid_at, because the check constraint ties it to paid alone", async () => {
-    db.results.push({ data: { id: 3 }, error: null });
+describe("Waiving, the call that reaches the database", () => {
+  it("goes through waive_statement and touches no table", async () => {
     const { waiveStatement: waive } = await realApi();
 
-    await waive({ orgId: 7, statementId: 3, waivedBy: "admin" });
+    await waive({ statementId: 3 });
 
-    const update = db.calls.find((c) => c.op === "update");
-    expect(update?.table).toBe("billing_statements");
-    expect(update?.payload).toEqual({
-      status: "waived",
-      paid_at: null,
-      marked_paid_by: "admin",
-    });
-    expect(update?.filters).toEqual([
-      ["id", 3],
-      ["org_id", 7],
+    expect(db.rpcCalls).toEqual([
+      { fn: "waive_statement", args: { p_statement_id: 3, p_reason: null } },
     ]);
+    expect(db.calls).toEqual([]);
   });
 
-  it("credits nothing: paid_minor is never in the patch", async () => {
-    db.results.push({ data: { id: 3 }, error: null });
+  it("surfaces the database's refusal", async () => {
+    db.results.push({ data: null, error: { code: "42501", message: "only an admin of this office can waive a week" } });
     const { waiveStatement: waive } = await realApi();
-    await waive({ orgId: 7, statementId: 3, waivedBy: "admin" });
-    expect(db.calls.find((c) => c.op === "update")?.payload).not.toHaveProperty("paid_minor");
-  });
-
-  it("says so when RLS refuses by matching no rows rather than by raising", async () => {
-    db.results.push({ data: null, error: null });
-    const { waiveStatement: waive } = await realApi();
-    await expect(waive({ orgId: 7, statementId: 3, waivedBy: "admin" })).rejects.toThrow(
-      /no longer be an admin/i,
-    );
+    await expect(waive({ statementId: 3 })).rejects.toMatchObject({ code: "42501" });
   });
 });
 
@@ -1054,14 +1054,8 @@ describe("Payments, money that matched nobody", () => {
     ).toBeInTheDocument();
   });
 
-  it("applies a stray payment to a person, against their stable reference", async () => {
+  it("applies a stray payment to a person by moving that payment", async () => {
     serve({ unmatched: [STRAY] });
-    recordPayment.mockResolvedValue({
-      id: 500,
-      amountMinor: 100_000,
-      profileId: "teo",
-      matchedStatementId: 1,
-    });
     renderPayments();
 
     await userEvent.click(await screen.findByRole("button", { name: "Apply to a person" }));
@@ -1076,30 +1070,21 @@ describe("Payments, money that matched nobody", () => {
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
 
-    // The confirm step names the money, the person and the memo, in one
-    // sentence, and then says where the account lands.
     expect(
-      within(dialog).getByText(`Credit ${money(100_000)} to Tèo, with the memo LUNCHTEO.`),
+      within(dialog).getByText(`Put ${money(100_000)} on Tèo's account.`),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByText(`Tèo would still owe ${money(30_000)}.`),
     ).toBeInTheDocument();
-    expect(recordPayment).not.toHaveBeenCalled();
+    expect(movePayment).not.toHaveBeenCalled();
 
-    await userEvent.click(within(dialog).getByRole("button", { name: "Record" }));
-    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
-      orgId: 7,
-      profileId: "teo",
-      amountMinor: 100_000,
-      memo: "LUNCHTEO",
-      recordedBy: "admin",
-      // The money arrived when the bank says it did, not when it was worked out.
-      receivedAt: STRAY.receivedAt,
-      resolvesPaymentId: 91,
-    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(movePayment).toHaveBeenCalledTimes(1));
+    // The stray itself moves: no second payment is recorded for it.
+    expect(movePayment.mock.calls[0]?.[0]).toEqual({ paymentId: 91, toProfileId: "teo" });
+    expect(recordPayment).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(success).toHaveBeenCalledWith(`Recorded ${rawMoney(100_000)} from Tèo`),
+      expect(success).toHaveBeenCalledWith(`Applied ${rawMoney(100_000)} to Tèo`),
     );
   });
 
@@ -1114,12 +1099,7 @@ describe("Payments, money that matched nobody", () => {
       account: { chargedMinor: 0, creditedMinor: 0, balanceMinor: 0 },
     });
     serve({ unmatched: [STRAY], statements: [], people: [quyt] });
-    recordPayment.mockResolvedValue({
-      id: 500,
-      amountMinor: 100_000,
-      profileId: "quyt",
-      matchedStatementId: null,
-    });
+    movePayment.mockResolvedValue({ matchedStatementId: null });
     renderPayments();
 
     await userEvent.click(await screen.findByRole("button", { name: "Apply to a person" }));
@@ -1134,15 +1114,11 @@ describe("Payments, money that matched nobody", () => {
       ),
     ).toBeInTheDocument();
 
-    await userEvent.click(within(dialog).getByRole("button", { name: "Record" }));
-    await waitFor(() => expect(recordPayment).toHaveBeenCalledTimes(1));
-    expect(recordPayment.mock.calls[0]?.[0]).toMatchObject({
-      profileId: "quyt",
-      memo: "LUNCHQUYT",
-      resolvesPaymentId: 91,
-    });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Apply" }));
+    await waitFor(() => expect(movePayment).toHaveBeenCalledTimes(1));
+    expect(movePayment.mock.calls[0]?.[0]).toEqual({ paymentId: 91, toProfileId: "quyt" });
     await waitFor(() =>
-      expect(success).toHaveBeenCalledWith(`Recorded ${rawMoney(100_000)} from Quýt`),
+      expect(success).toHaveBeenCalledWith(`Applied ${rawMoney(100_000)} to Quýt`),
     );
   });
 
@@ -1216,8 +1192,6 @@ describe("Payments, a top-up", () => {
       memo: "LUNCHQUYT",
       recordedBy: "admin",
     });
-    // No statement to resolve: a top-up stands in for nothing.
-    expect(recordPayment.mock.calls[0]?.[0]).not.toHaveProperty("resolvesPaymentId");
     await waitFor(() =>
       expect(success).toHaveBeenCalledWith(
         `Recorded a top-up of ${rawMoney(500_000)} from Quýt`,
@@ -1501,21 +1475,88 @@ describe("Payments, waiving", () => {
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Waive" }));
     await waitFor(() => expect(waiveStatement).toHaveBeenCalledTimes(1));
-    expect(waiveStatement.mock.calls[0]?.[0]).toEqual({
-      orgId: 7,
-      statementId: 1,
-      waivedBy: "admin",
-    });
+    expect(waiveStatement.mock.calls[0]?.[0]).toEqual({ statementId: 1 });
     await waitFor(() => expect(success).toHaveBeenCalledWith("Waived Tèo's week"));
     // Waiving is not a payment, and must never go in as one.
     expect(recordPayment).not.toHaveBeenCalled();
   });
 });
 
+describe("Payments, putting a mistake right", () => {
+  const CASH = {
+    id: 700,
+    amountMinor: 50_000,
+    memo: "cash",
+    receivedAt: "2026-09-22T03:30:00Z",
+    provider: "manual",
+    voidable: true,
+  };
+  const BANK = { ...CASH, id: 701, provider: "sepay", voidable: false };
+
+  it("lists what is on the person's account, and offers a void on money recorded by hand only", async () => {
+    serve();
+    fetchPersonPayments.mockResolvedValue([CASH, BANK]);
+    renderPayments();
+    const dialog = await openSettle("Tèo");
+
+    const list = await within(dialog).findByRole("list", { name: "Payments on Tèo's account" });
+    const items = within(list).getAllByRole("listitem");
+    expect(within(items[0] as HTMLElement).getByRole("button", { name: "Void" })).toBeInTheDocument();
+    expect(within(items[1] as HTMLElement).queryByRole("button", { name: "Void" })).toBeNull();
+    expect(within(items[1] as HTMLElement).getByRole("button", { name: "Move" })).toBeInTheDocument();
+  });
+
+  it("voids only once a reason is given, and says it stays on the record", async () => {
+    serve();
+    fetchPersonPayments.mockResolvedValue([CASH]);
+    renderPayments();
+    const dialog = await openSettle("Tèo");
+
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Void" }));
+    expect(within(dialog).getByText(/stays on the record, marked void/)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: "Void" });
+    expect(confirm).toHaveAccessibleDescription("Say why it is being voided.");
+
+    await userEvent.type(within(dialog).getByLabelText("Why"), "Recorded twice");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Void" }));
+    await waitFor(() =>
+      expect(voidPayment).toHaveBeenCalledWith({ paymentId: 700, reason: "Recorded twice" }),
+    );
+    await waitFor(() => expect(success).toHaveBeenCalledWith(`Voided ${rawMoney(50_000)}`));
+  });
+
+  it("moves a payment to somebody else, never offering the person it is on", async () => {
+    serve();
+    fetchPersonPayments.mockResolvedValue([BANK]);
+    renderPayments();
+    const settle = await openSettle("Tèo");
+
+    await userEvent.click(await within(settle).findByRole("button", { name: "Move" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      within(dialog).getByRole("heading", { name: `Move ${rawMoney(50_000)} off Tèo` }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    expect(screen.queryByRole("option", { name: /^Tèo/ })).toBeNull();
+    await userEvent.click(await screen.findByRole("option", { name: /^Dinh/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    expect(within(dialog).getByText(`Move ${money(50_000)} from Tèo to Dinh.`)).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+    await waitFor(() =>
+      expect(movePayment).toHaveBeenCalledWith({ paymentId: 701, toProfileId: "dinh" }),
+    );
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(`Moved ${rawMoney(50_000)} from Tèo to Dinh`),
+    );
+  });
+});
+
 describe("Payments, nothing offers an undo", () => {
   const UNDO = /undo|reverse|refund|delete|remove|unrecord|take it back/i;
 
-  it("says a payment cannot be taken back, and offers no way to", async () => {
+  it("says a payment cannot be edited, and offers no way to erase one", async () => {
     serve({ unmatched: [STRAY] });
     renderPayments();
     await screen.findByText("Still to collect");
@@ -1525,13 +1566,13 @@ describe("Payments, nothing offers an undo", () => {
     }
 
     const dialog = await openSettle("Tèo");
-    expect(within(dialog).getByText(/cannot be taken back from this screen/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/cannot be edited/)).toBeInTheDocument();
     for (const button of within(dialog).getAllByRole("button")) {
       expect(button).not.toHaveAccessibleName(UNDO);
     }
 
     await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
-    expect(within(dialog).getByText(/cannot be taken back from this screen/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/cannot be edited/)).toBeInTheDocument();
     for (const button of within(dialog).getAllByRole("button")) {
       expect(button).not.toHaveAccessibleName(UNDO);
     }

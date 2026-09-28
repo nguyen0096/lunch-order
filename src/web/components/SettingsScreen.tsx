@@ -178,6 +178,8 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
           orgId={org.id}
           profileId={me.profileId}
           initial={me.orgs.find((o) => o.org.id === org.id)?.shortCode ?? ""}
+          admin={admin}
+          changesLeft={me.orgs.find((o) => o.org.id === org.id)?.shortCodeChangesLeft ?? 1}
         />
       </section>
 
@@ -487,31 +489,51 @@ function DisplayName({
  * field that fixes it.
  *
  * Uppercased as it is typed, because the CHECK is `^[A-Z0-9]{2,8}$` and a
- * lowercase code is refused for a reason the person cannot see. Uniqueness is
- * left to memberships_code_uk: RLS can hide the colleague already holding a
- * code, so the clash is only ever a server answer.
+ * lowercase code is refused for a reason the person cannot see. Whether it is
+ * too close to a colleague's is only ever a server answer, and the server's
+ * sentence names the colleague's code, so it is shown as it comes.
+ *
+ * A member changes their own once after joining; the database counts it, and
+ * this only says so before they try. An admin is never out of changes.
  */
 function ShortCode({
   orgId,
   profileId,
   initial,
+  admin,
+  changesLeft,
 }: {
   orgId: number;
   profileId: string;
   initial: string;
+  admin: boolean;
+  changesLeft: number;
 }) {
   const [saved, setSaved] = useState(initial);
   const [code, setCode] = useState(initial);
+  const [left, setLeft] = useState(changesLeft);
 
   const save = useAction(
     async (next: string) => setShortCode({ orgId, profileId, shortCode: next }),
     {
       success: "Saved",
-      onSuccess: (stored) => setSaved(stored),
+      onSuccess: (stored) => {
+        setSaved(stored);
+        if (!admin) setLeft((n) => Math.max(n - 1, 0));
+      },
     },
   );
 
-  const reason = shortCodeProblem(code) ?? (code === saved ? "Nothing to save" : null);
+  const reason =
+    !admin && left === 0
+      ? "You have used your one change. An admin can change it for you."
+      : (shortCodeProblem(code) ?? (code === saved ? "Nothing to save" : null));
+
+  const allowance = admin
+    ? "As an admin you can change it whenever you need to."
+    : left > 0
+      ? "You can change it once. After that, an admin can change it for you."
+      : "You have used your one change. An admin can change it for you.";
 
   return (
     <Section
@@ -521,7 +543,7 @@ function ShortCode({
       <TextField
         id="short-code"
         label="Short code"
-        hint={`Two to ${SHORT_CODE_MAX} letters or digits. It is made from your name when you join, so change it if it landed somewhere awkward.`}
+        hint={`Two to ${SHORT_CODE_MAX} letters or digits, and not one that contains a colleague's or sits inside it. ${allowance}`}
         value={code}
         // Uppercased here rather than on save, so the field shows what will be
         // stored instead of correcting it after the fact.
@@ -529,6 +551,7 @@ function ShortCode({
         placeholder="QUYT"
         maxLength={SHORT_CODE_MAX}
         className="max-w-44"
+        disabled={!admin && left === 0}
       />
       <p className="max-w-prose text-sm text-muted">
         Changing it does not rewrite a bill you already have. The reference on each week&apos;s

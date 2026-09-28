@@ -35,6 +35,13 @@ something that looks broken.
 | signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one |
 | signed in, no office, founding switched off | the join code alone. `app_settings.office_creation` is a row the database holds and `create_organization` refuses on, so the second door is not hidden, it is shut: every place that offered it (this screen, the account menu, the office switcher) reads the same switch |
 
+Joining by code and founding an office both offer an optional **short code**
+field. Blank means one is made from the person's initials. It is the moment to
+pick it: afterwards a member may change their own once, and then only an admin
+can. A code that contains, or sits inside, a colleague's reference is refused
+by the database with a sentence naming the colleague's code, shown inline and
+in the toast.
+
 ## Switching office
 
 **Job.** Cross between two offices without leaving the page you were reading.
@@ -289,14 +296,26 @@ because a re-bill changed what a different week costs, with nobody touching it.
 "Which weeks are settled" still has an answer; it is derived rather than
 recorded.
 
-**The money is what cannot be undone.** `payments` is append-only: the trigger
-is AFTER INSERT only, `amount_minor > 0` forbids a corrective row, and there is
-no delete. So recording confirms in two steps, names the amount and the person,
-and says plainly that nothing takes it back. That, not `paid_minor`, is the
-invariant -- the older wording confused the record of a payment with the story
-told about it. Waiving is not money: `status = 'waived'`, `paid_at` null, and
-the week is skipped by the allocation entirely, so it consumes none of the
-person's credit.
+**A payment is never edited, and a mistake is put right on the record.** An
+admin can insert a manual payment and nothing else: no UPDATE or DELETE on
+`payments`, statements, lines or periods. Recording confirms in two steps and
+names the amount and the person. What was wrong is fixed through three RPCs,
+each writing `payment_corrections` with who did it and why:
+
+- **Apply** (money that matched nobody) and **Move** (money on the wrong
+  person) are one call, `move_payment`: the payment itself moves, both
+  people's weeks are redrawn, and no second row is written. Applying used to
+  record a copy that pointed at the stray in `raw`; those older pairs still
+  retire the stray from the list.
+- **Void** is offered on manual payments only, in the person's dialog, and
+  asks why. The row stays, marked void, and counts towards nobody. Money the
+  bank reported did arrive, so it is moved, never voided.
+- **Waive** stops asking for one person's week: `status = 'waived'`, `paid_at`
+  null, skipped by the allocation entirely, so it consumes none of their
+  credit. There is still no un-waive on this screen.
+
+The person's dialog lists the payments on their account, newest first, with
+Move on each and Void on the manual ones.
 
 **Two totals, deliberately different.** What people owe is the sum of their
 account balances, each of which counts every unpaid week exactly once. What the
@@ -313,6 +332,8 @@ looking inconsistent.
 | nothing unmatched | "Every payment found its person": the reassurance, not an absence |
 | settled row | the control stays; recording more leaves that person in credit rather than destroying the excess |
 | memo lost its reference | warned at the confirm step, before the write |
+| void without a reason | the Void control carries "Say why it is being voided." |
+| move or void refused | the database's own sentence in the toast: not an admin, already voided, a bank payment, or already on that person |
 
 On a phone the table keeps person, still to pay, status and the control; meals,
 billed and received drop out rather than scroll sideways.
@@ -519,8 +540,14 @@ places to change one setting disagree the first time somebody uses the other.
 **Job.** Things set once and forgotten.
 
 Standing days as a row of weekday toggles, the Telegram connection with its deep
-link or its connected state, display name, sign out. Not a tab: it would compete
-with the two things people do weekly, and lose.
+link or its connected state, display name, short code, sign out. Not a tab: it
+would compete with the two things people do weekly, and lose.
+
+The **short code** says how many changes are left. A member has one after
+joining; once it is used the field is disabled and Save carries "You have used
+your one change. An admin can change it for you." An admin or owner is told
+they can change it whenever they need to, and is never counted. A refusal for
+being too close to a colleague's code is the database's sentence, as it comes.
 
 The **theme** lives in the account menu itself rather than on the settings page,
 beside sign out, because it is the one preference somebody changes on a whim and
@@ -528,6 +555,52 @@ wants to see take effect in the same breath. Three states, `System / Light /
 Dark`: a two-state switch cannot say "follow the machine", so the first thing it
 does is quietly stop following it. The choice is kept in `localStorage` and
 applied to the document element before first paint.
+
+## Report a bug (behind the avatar)
+
+**Job.** Tell the owner something is broken without having to describe where.
+
+Every signed-in person has **Report a bug** in the account menu, directly above
+Sign out. It opens a dialog with one field, what went wrong, up to 2000
+characters. The rest is attached rather than asked for: the page (the hash
+route, query included), the app version (`package.json` version plus the build's
+commit), the browser's user agent, the window size, and, from the database, the
+time, the reporter and the office.
+
+It goes to the owner of the office you are in, never to its admins. An owner
+with Telegram connected gets it as a message at once; every owner can also read
+it on [Bug reports](#bug-reports-owner).
+
+| State | |
+| --- | --- |
+| empty | Send report carries "Say what went wrong first" |
+| sending | the button reads Sending and refuses a second press |
+| sent | toast "Report sent", and the dialog closes |
+| refused | the database's own sentence, inline and in the toast, and the text is kept. Ten reports an hour per person is the limit |
+
+## Bug reports (owner)
+
+**Job.** Read what people reported, and keep track of what is dealt with.
+
+In the account menu under Settings, for an **owner only**, whether or not their
+Telegram is connected: Telegram is where a report arrives, this is where it is
+kept and marked resolved. Route `#/o/<slug>/bug-reports`. Anybody else who
+follows the link is told the page is for the owner; RLS returns them nothing
+either way, so the explanation is what stops an empty list reading as "nobody
+has reported anything".
+
+Newest first. Each report shows who sent it, when in the office's zone, the
+description as plain text, and its four context fields, with "Not recorded"
+for any the browser did not supply. **Resolve** and **Reopen** are one column,
+`resolved_at`, and the only thing an owner may change: the words are the
+reporter's.
+
+| State | |
+| --- | --- |
+| loading | skeleton shaped like the cards |
+| nothing reported | "Nothing reported yet", and where reports come from |
+| did not load | the reason, and Try again |
+| resolved | a Resolved badge, the description muted, and Reopen |
 
 ## Join (invitation link)
 

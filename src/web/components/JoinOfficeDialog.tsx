@@ -19,6 +19,7 @@ import {
   useAction,
 } from "@/ui";
 import { acceptInvitation, invitationToken, joinCodeProblem, joinWithCode } from "../api.js";
+import { ShortCodeField, onboardingCodeProblem } from "./ShortCodeField.js";
 
 /* One spelling of a text input, matching the other dialogs so two cannot be
    two heights. 16px minimum, or iOS Safari zooms the page on focus. */
@@ -41,6 +42,7 @@ export function JoinOfficeDialog({
   const nameId = useId();
   const [code, setCode] = useState("");
   const [name, setName] = useState(suggestedName);
+  const [shortCode, setShortCode] = useState("");
 
   // Reopening should not show the last attempt's typing, and the suggested
   // name only arrives once `me` has loaded, which can be after first render.
@@ -48,6 +50,7 @@ export function JoinOfficeDialog({
     if (open) {
       setCode("");
       setName(suggestedName);
+      setShortCode("");
     }
   }, [open, suggestedName]);
 
@@ -72,7 +75,8 @@ export function JoinOfficeDialog({
   // does not take a name, so it is not asked for.
   const problem = token
     ? null
-    : (joinCodeProblem(code) ?? (name.trim() === "" ? "Tell them what to call you" : null));
+    : (joinCodeProblem(code) ??
+      (name.trim() === "" ? "Tell them what to call you" : onboardingCodeProblem(shortCode)));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -120,6 +124,7 @@ export function JoinOfficeDialog({
             </p>
           </div>
           )}
+          {token === null && <ShortCodeField value={shortCode} onChange={setShortCode} />}
           {token !== null && (
             <p className="text-sm text-muted">
               That is an invitation. It carries the role you were invited as, and it only
@@ -138,7 +143,7 @@ export function JoinOfficeDialog({
             onClick={() =>
               token
                 ? void accept.run(token)
-                : void join.run({ code, displayName: name })
+                : void join.run({ code, displayName: name, shortCode })
             }
           >
             Join
