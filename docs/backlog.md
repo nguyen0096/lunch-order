@@ -196,8 +196,8 @@ SePay account and points a webhook at us. It works, and it is exactly the
 | `transferType` (`in`/`out`) | only `in` is money owed to us |
 | `referenceCode`, `code`, `subAccount`, `accumulated` | `raw` |
 
-Two things fall out of that, both good. SePay retries up to seven times over
-about 33 minutes until it gets a 200 — and `payments_provider_txn_uk`, unique on
+Two things fall out of that, both good. SePay retries up to seven times, over
+at most five hours, until it gets a 200, and `payments_provider_txn_uk`, unique on
 `(org_id, provider, provider_txn_id)`, makes a retry a no-op rather than a
 double credit. And `accountNumber` is how a webhook finds its office, which
 makes `payment_config.vietqr.accountNumber` the routing key: it has to be right
