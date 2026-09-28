@@ -39,7 +39,8 @@ something that looks broken.
 | config missing | the `configError` from `supabase.ts`, verbatim, naming the missing variable |
 | sign-in refused | Google or Supabase sent back `#error=...`: the sentence above the button, the fragment gone from the address, and the route the person started from put back, so pressing the button again lands them there |
 | the account did not load | "Lunch did not load", the reason, and Try again. A dropped connection is not a sign-out, so it never shows this page |
-| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one. The words cover somebody an admin removed as well as somebody new: their inactive membership is invisible to them, so the screen does not claim they never joined |
+| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one. The words come from `my_removed_offices`: somebody new is told they are not in an office yet; somebody removed is told "You were removed from Acme. Ask an admin to add you back.", naming every live office they were removed from |
+| signed in, no office, the question failed | the words cover both cases, new and removed, rather than guess which this is, and the page still works: a failed `my_removed_offices` never keeps anybody out |
 | signed in, no office, founding switched off | the join code alone. `app_settings.office_creation` is a row the database holds and `create_organization` refuses on, so the second door is not hidden, it is shut: every place that offered it (this screen, the account menu, the office switcher) reads the same switch |
 
 Joining by code and founding an office both offer an optional **short code**
@@ -638,11 +639,20 @@ reporter's.
 
 **Job.** One decision, taken immediately.
 
-Reached from an emailed invitation. One button, and after it the office's
-name and a link to that office's board, not to whichever office the person
-happened to belong to first. Naming the office and the role before Accept needs
-a function that reads an invitation by its token for somebody not yet a member,
-which the database does not have: RLS keeps invitations to admins.
+Reached from an emailed invitation, after sign-in. It says where the link leads
+before it offers anything: `invitation_preview` reads the invitation by its
+token for somebody not yet a member, since RLS keeps invitations to admins.
 
-Errors come from `accept_invitation` verbatim: expired, already used, addressed to
-a different account, or an account with no email address at all.
+| State | |
+| --- | --- |
+| loading | two skeleton lines and no Accept |
+| valid | "Join Acme", the role ("as a member" or "as an admin"), the date it is valid until, and Accept |
+| not valid | "Invitation not found": the token matches nothing, is malformed, or its office was deleted. No Accept |
+| expired | "Invitation expired", naming the office and the date, and asking an admin there for a new one. No Accept |
+| used | "Invitation already used", naming the office, and a link to the person's offices. No Accept |
+| the preview did not load | the reason and Try again |
+| accepted | the office's name and a link to that office's board, not to whichever office the person happened to belong to first |
+
+Errors on Accept come from `accept_invitation` verbatim: expired or used since
+the page loaded, addressed to a different account, or an account with no email
+address at all.

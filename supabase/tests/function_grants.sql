@@ -44,7 +44,13 @@ insert into expected (name, anon_may) values
   -- owner of the office and writes payment_corrections.
   ('move_payment',    false),
   ('void_payment',    false),
-  ('waive_statement', false);
+  ('waive_statement', false),
+  -- Each answers for the caller's own membership or the token they hold, and
+  -- for nothing else.
+  ('my_telegram_link',        false),
+  ('create_my_telegram_link', false),
+  ('invitation_preview',      false),
+  ('my_removed_offices',      false);
 
 create temp table found as
 select p.proname::text as name,

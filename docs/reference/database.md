@@ -23,6 +23,7 @@ and whether it rolls back. The ones to know first:
 | `invitations.sql` | the invitation path, the only way a non-member gets in | no, rolls back |
 | `materialize_on_publish.sql` | publishing a menu creates an order for everyone whose weekday rule covers it | no, rolls back |
 | `hardening.sql` | the rules under [Invariants](#invariants) on offices, owners, short codes, money and Telegram links | no, rolls back |
+| `hardening_follow_up.sql` | link tokens closed to admins, an outbox no browser writes, the invitation preview and the removed-member answer | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -71,6 +72,21 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   except a `manual` payment.
 - **A Telegram link stays in its membership's office**, by composite foreign
   key, and a browser can clear `chat_id` but never set it.
+- **A link token is its owner's alone.** No browser role holds SELECT on
+  `telegram_links.link_token`; an admin reads the other columns (who is
+  connected, since when) and nothing more. A member gets their own token from
+  `my_telegram_link` or `create_my_telegram_link`, which answer for the
+  caller's active membership only. The bot reads it as the connection's own
+  role.
+- **The outbox is written by the database alone.** No browser role holds
+  INSERT, UPDATE or DELETE on `notification_outbox`; rows come from SECURITY
+  DEFINER functions and triggers (`send_announcement` and
+  `send_test_notification` for an admin or owner, taking every chat from the
+  office's own links) and from the Edge Functions as the service role. Admins
+  and owners read it; an admin who is not an owner reads no `bug_report` row.
+- **An invitee sees one invitation, by its token, and only where it leads.**
+  `invitation_preview` returns the office's name, the role, the expiry and
+  whether it is still valid; never the address, the sender or an id.
 - **Order prices are snapshotted** by trigger on write, and again into
   `billing_lines` at period close, so editing a menu can never rewrite a past bill.
 - **`VITE_`-prefixed variables are inlined into the browser bundle.** A secret
