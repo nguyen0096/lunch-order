@@ -6,6 +6,7 @@ import { useHashRoute } from "./useHashRoute.js";
 import { AppShell } from "./components/AppShell.js";
 import { BillScreen } from "./components/BillScreen.js";
 import { BoardScreen } from "./components/BoardScreen.js";
+import { BugReportsScreen } from "./components/BugReportsScreen.js";
 import { ComingSoon } from "./components/ComingSoon.js";
 import { CorrectionsScreen } from "./components/CorrectionsScreen.js";
 import { MenuScreen } from "./components/MenuScreen.js";
@@ -138,6 +139,19 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
   if (page === "board") return <BoardScreen {...props} />;
   if (page === "bill") return <BillScreen {...props} />;
   if (page === "settings") return <SettingsScreen {...props} />;
+
+  if (page === "bug-reports") {
+    // RLS gives anybody but an owner an empty list, which would read as
+    // "nobody has reported anything".
+    if (active.role !== "owner") {
+      return (
+        <ComingSoon heading="That page is for the owner">
+          {`Bug reports from ${active.org.name} go to its owner. You can still send one from your account menu.`}
+        </ComingSoon>
+      );
+    }
+    return <BugReportsScreen {...props} />;
+  }
 
   if (
     page === "menu" ||

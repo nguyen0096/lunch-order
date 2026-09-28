@@ -89,6 +89,19 @@ matched `service_date = today` while `/order` resolved the next open day, so
 after the cutoff a member could place an order the bot then said did not exist.
 One function now answers "which day" for both.
 
+**A bug report goes to the office's owner, through the outbox.** "Owner" is
+`memberships.role = 'owner'` in the office the report was sent from: there is
+no app-wide owner in the schema, and every privilege is scoped to an office. An
+`AFTER INSERT` trigger on `bug_reports` enqueues one `bug_report` row per owner
+with a linked chat, the same shape as `trg_transfer_notifies`, so an owner who
+never finished `/start` produces no row and reads the report on the Bug reports
+screen instead. It is the one database-rendered message in `HTML` rather than
+`none`, and every user-supplied field goes through `private.telegram_html`
+(`&`, `<`, `>`, per the Bot API). `outbox_admin` now hides `bug_report` rows
+from admins who are not owners, because the queued body carries the report
+verbatim and the table's own policy would otherwise be one join away from
+meaningless.
+
 ## The shape of a day
 
 **A day has five stages, and only two of them are stored.** `no menu -> open ->

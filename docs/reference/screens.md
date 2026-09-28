@@ -529,6 +529,52 @@ Dark`: a two-state switch cannot say "follow the machine", so the first thing it
 does is quietly stop following it. The choice is kept in `localStorage` and
 applied to the document element before first paint.
 
+## Report a bug (behind the avatar)
+
+**Job.** Tell the owner something is broken without having to describe where.
+
+Every signed-in person has **Report a bug** in the account menu, directly above
+Sign out. It opens a dialog with one field, what went wrong, up to 2000
+characters. The rest is attached rather than asked for: the page (the hash
+route, query included), the app version (`package.json` version plus the build's
+commit), the browser's user agent, the window size, and, from the database, the
+time, the reporter and the office.
+
+It goes to the owner of the office you are in, never to its admins. An owner
+with Telegram connected gets it as a message at once; every owner can also read
+it on [Bug reports](#bug-reports-owner).
+
+| State | |
+| --- | --- |
+| empty | Send report carries "Say what went wrong first" |
+| sending | the button reads Sending and refuses a second press |
+| sent | toast "Report sent", and the dialog closes |
+| refused | the database's own sentence, inline and in the toast, and the text is kept. Ten reports an hour per person is the limit |
+
+## Bug reports (owner)
+
+**Job.** Read what people reported, and keep track of what is dealt with.
+
+In the account menu under Settings, for an **owner only**, whether or not their
+Telegram is connected: Telegram is where a report arrives, this is where it is
+kept and marked resolved. Route `#/o/<slug>/bug-reports`. Anybody else who
+follows the link is told the page is for the owner; RLS returns them nothing
+either way, so the explanation is what stops an empty list reading as "nobody
+has reported anything".
+
+Newest first. Each report shows who sent it, when in the office's zone, the
+description as plain text, and its four context fields, with "Not recorded"
+for any the browser did not supply. **Resolve** and **Reopen** are one column,
+`resolved_at`, and the only thing an owner may change: the words are the
+reporter's.
+
+| State | |
+| --- | --- |
+| loading | skeleton shaped like the cards |
+| nothing reported | "Nothing reported yet", and where reports come from |
+| did not load | the reason, and Try again |
+| resolved | a Resolved badge, the description muted, and Reopen |
+
 ## Join (invitation link)
 
 **Job.** One decision, taken immediately.
