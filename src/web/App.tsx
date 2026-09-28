@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { Button, Skeleton } from "@/ui";
-import { fetchMe } from "./api.js";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Button, EmptyState, Skeleton } from "@/ui";
+import { fetchMe, humanError } from "./api.js";
 import { signIn, signOut, supabase } from "./supabase.js";
-import { useHashRoute } from "./useHashRoute.js";
+import { takeReturnRoute } from "./authRedirect.js";
+import { replaceHash, useHashRoute } from "./useHashRoute.js";
 import { AppShell } from "./components/AppShell.js";
 import { BillScreen } from "./components/BillScreen.js";
 import { BoardScreen } from "./components/BoardScreen.js";
@@ -32,25 +33,62 @@ const RENAMED: Record<string, string> = {
   "admin/people": "people",
 };
 
-export function App() {
+export function App({ oauthError = null }: { oauthError?: string | null }) {
   const [me, setMe] = useState<Me | null | undefined>(undefined);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [route, go] = useHashRoute();
 
   // Awaited by the callers that need `me` to be current before they navigate,
   // which is why it returns rather than fires and forgets.
   const reload = useCallback(async () => {
     try {
-      setMe(await fetchMe());
-    } catch {
-      setMe(null);
+      const next = await fetchMe();
+      // Restored before `me` lands, so the first signed-in render is already
+      // the invitation or the deep link the person signed in from.
+      if (next !== null) {
+        const back = takeReturnRoute();
+        if (back !== null) replaceHash(back);
+      }
+      setMe(next);
+      setLoadError(null);
+    } catch (e) {
+      // `me` stays as it was. A failed first read is an error with a retry,
+      // never the sign-in page, and a failed refresh keeps the app on screen.
+      setLoadError(humanError(e));
     }
   }, []);
 
+  /**
+   * `me` follows the signed-in user, not the auth event stream. supabase-js
+   * emits SIGNED_IN whenever the tab regains focus and TOKEN_REFRESHED every
+   * hour, and refetching on each would rebuild every screen's props under
+   * whatever somebody is halfway through typing.
+   */
+  const userId = useRef<string | null | undefined>(undefined);
   useEffect(() => {
     void reload();
-    const { data } = supabase.auth.onAuthStateChange(() => void reload());
+    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+      const id = session?.user.id ?? null;
+      const known = userId.current;
+      userId.current = id;
+      // INITIAL_SESSION is the session the load above is already reading.
+      if (event === "INITIAL_SESSION" || id === known) return;
+      // Deferred: supabase-js holds its auth lock while this callback runs,
+      // and `fetchMe` calls back into the client.
+      setTimeout(() => void reload(), 0);
+    });
     return () => data.subscription.unsubscribe();
   }, [reload]);
+
+  const joinToken = route.page.startsWith("join/") ? route.page.slice(5) : null;
+  const active = me ? (me.orgs.find((o) => o.org.slug === route.slug) ?? me.orgs[0]) : undefined;
+  const redirectTo =
+    active && joinToken === null && route.slug !== active.org.slug ? active.org.slug : null;
+
+  // Replaced, not pushed: a pushed entry is one that Back lands on and bounces off.
+  useEffect(() => {
+    if (redirectTo !== null) go({ slug: redirectTo, page: "board" }, { replace: true });
+  }, [redirectTo, go]);
 
   /**
    * A new office exists in the database and nowhere in this tab. Refetching
@@ -71,6 +109,28 @@ export function App() {
   }
 
   if (me === undefined) {
+    if (loadError !== null) {
+      return (
+        <main className="mx-auto flex min-h-dvh max-w-prose flex-col justify-center px-6">
+          <EmptyState
+            heading="Lunch did not load"
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setLoadError(null);
+                  void reload();
+                }}
+              >
+                Try again
+              </Button>
+            }
+          >
+            {loadError}
+          </EmptyState>
+        </main>
+      );
+    }
     return (
       <main className="mx-auto flex min-h-dvh max-w-prose flex-col justify-center gap-3 px-6">
         <Skeleton className="h-8 w-40" />
@@ -80,9 +140,7 @@ export function App() {
     );
   }
 
-  const joinToken = route.page.startsWith("join/") ? route.page.slice(5) : null;
-
-  if (me === null) return <SignInScreen onSignIn={() => void signIn()} />;
+  if (me === null) return <SignInScreen notice={oauthError} onSignIn={() => void signIn()} />;
   if (joinToken) return <JoinScreen token={joinToken} onJoined={reload} />;
 
   // Signing in is not the same as belonging anywhere. Say so plainly rather
@@ -100,12 +158,7 @@ export function App() {
     );
   }
 
-  const active = me.orgs.find((o) => o.org.slug === route.slug) ?? me.orgs[0];
-  if (!active) return null;
-  if (route.slug !== active.org.slug) {
-    go({ slug: active.org.slug, page: "board" });
-    return null;
-  }
+  if (!active || redirectTo !== null) return null;
 
   const page = RENAMED[route.page] ?? route.page;
 
@@ -122,7 +175,10 @@ export function App() {
       onCreated={(org) => void enter(org)}
       onJoined={(slug) => void enterSlug(slug)}
     >
-      {renderPage(page, me, active)}
+      {/* Keyed by office: each screen holds its office's week, filters and
+          half-typed drafts in its own state, and none of that belongs to the
+          next office. */}
+      <Fragment key={active.org.id}>{renderPage(page, me, active)}</Fragment>
     </AppShell>
   );
 }

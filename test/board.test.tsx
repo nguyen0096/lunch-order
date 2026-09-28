@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { BoardScreen } from "../src/web/components/BoardScreen.js";
@@ -765,6 +765,147 @@ describe("Board, handing a meal over", () => {
     );
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByRole("button", { name: "Give Dinh my Cơm gà" })).toBeInTheDocument();
+  });
+});
+
+describe("Board, once lunch is over", () => {
+  const teoOffer: TransferRow = {
+    id: 3,
+    orderId: 8,
+    serviceDate: WED,
+    status: "pending",
+    fromProfileId: "teo",
+    fromName: "Tèo",
+    toProfileId: "me",
+    toName: "Neyu",
+    dishName: "Phở bò",
+    amountMinor: 40_000,
+    reason: null,
+    createdAt: "2026-09-22T09:00:00Z",
+  };
+
+  function teoEating() {
+    const cells = myCell();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: null,
+    });
+    return cells;
+  }
+
+  // After the office's end of day, which is where `enforce_transfer_rules`
+  // stops a member offering or answering.
+  beforeEach(() => {
+    vi.setSystemTime(zonedTimeToInstant(WED, "18:00", TZ));
+  });
+
+  it("does not offer my meal once the day is over, and says why", async () => {
+    serve(makeBoard({ cells: teoEating() }));
+    renderBoard();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: `Tèo, ${formatDay(WED)}: eating Phở bò. Hand a meal over` }),
+    );
+    const give = within(await screen.findByRole("dialog")).getByRole("button", {
+      name: "Give Tèo my Cơm gà",
+    });
+    expect(give).toHaveAttribute("aria-disabled", "true");
+    expect(give).toHaveAccessibleDescription(
+      `Lunch on ${formatDay(WED)} is over, so it can no longer be passed on`,
+    );
+    await userEvent.click(give);
+    expect(createTransfer).not.toHaveBeenCalled();
+  });
+
+  it("keeps an unanswered offer legible, and no longer answerable", async () => {
+    serve(makeBoard({ cells: teoEating() }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      incoming: [teoOffer],
+      live: new Map([[8, teoOffer]]),
+    }));
+    renderBoard();
+
+    expect(await screen.findByText("Tèo offers you Phở bò")).toBeInTheDocument();
+    const accept = screen.getByRole("button", { name: "Accept" });
+    expect(accept).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("button", { name: "Decline" })).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(accept);
+    expect(decideTransfer).not.toHaveBeenCalled();
+  });
+});
+
+describe("Board, a meal somebody gave me", () => {
+  it("shows the meal on my own row and offers no second lunch", async () => {
+    const accepted: TransferRow = {
+      id: 4,
+      orderId: 8,
+      serviceDate: WED,
+      status: "accepted",
+      fromProfileId: "teo",
+      fromName: "Tèo",
+      toProfileId: "me",
+      toName: "Neyu",
+      dishName: "Phở bò",
+      amountMinor: 40_000,
+      reason: null,
+      createdAt: "2026-09-22T09:00:00Z",
+    };
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: "Neyu",
+    });
+    serve(makeBoard({ cells }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      live: new Map([[8, accepted]]),
+    }));
+    renderBoard();
+
+    const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: Phở bò, from Tèo` });
+    expect(mine).toHaveAttribute("aria-disabled", "true");
+    expect(screen.queryByRole("button", { name: CHOOSE_LABEL })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: DICE_LABEL })).not.toBeInTheDocument();
+
+    await userEvent.click(mine);
+    expect(setOrder).not.toHaveBeenCalled();
+  });
+});
+
+describe("Board, answers that arrive out of order", () => {
+  it("draws the week now shown when the week left behind answers last", async () => {
+    let answerFirst: (b: Board) => void = () => {};
+    fetchTransfers.mockImplementation(async () => noTransfers());
+    fetchBoard.mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)));
+    const next = makeBoard();
+    fetchBoard.mockResolvedValue({
+      ...next,
+      days: next.days.map((d) => ({ ...d, serviceDate: addDays(d.serviceDate, 7) })),
+    });
+    renderBoard();
+
+    await userEvent.click(screen.getByRole("button", { name: "Next week" }));
+    const nextWed = addDays(WED, 7);
+    await waitFor(() =>
+      expect(document.querySelector(`th[data-service-date="${nextWed}"]`)).not.toBeNull(),
+    );
+
+    await act(async () => answerFirst(makeBoard()));
+    expect(document.querySelector(`th[data-service-date="${nextWed}"]`)).not.toBeNull();
+    expect(document.querySelector(`th[data-service-date="${WED}"]`)).toBeNull();
   });
 });
 

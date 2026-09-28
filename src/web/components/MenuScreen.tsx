@@ -92,6 +92,12 @@ const CALENDAR_DAYS = 28;
 export function MenuScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
 
+  // Keyed on its three fields: `org.currency` is a new object on every
+  // refetch of `me`, and a load keyed on the object would replace the dish
+  // rows with the stored ones while somebody is still editing them.
+  const { code, minorUnits, locale } = org.currency;
+  const currency = useMemo(() => ({ code, minorUnits, locale }), [code, minorUnits, locale]);
+
   const [serviceDate, setServiceDate] = useState(() => nextServiceDay(today));
 
   // The week on screen. It follows the service date rather than being chosen
@@ -148,7 +154,11 @@ export function MenuScreen({ me, org }: ScreenProps) {
   // that is the one thing here a click cannot recreate.
   const loadedText = useRef("");
 
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    // Only the newest load may write, so a slow answer for the day just left
+    // cannot land on the day now shown.
+    const mine = ++latest.current;
     setLoading(true);
     try {
       const [editable, cal] = await Promise.all([
@@ -164,7 +174,9 @@ export function MenuScreen({ me, org }: ScreenProps) {
         serviceDate,
         menuId: editable?.id ?? null,
       });
-      setTakers(editable === null ? new Map() : await fetchDishTakers(editable.id));
+      const nextTakers = editable === null ? new Map<number, string[]>() : await fetchDishTakers(editable.id);
+      if (mine !== latest.current) return;
+      setTakers(nextTakers);
 
       const incoming = editable?.sourceText ?? "";
       setText((current) => (current === loadedText.current ? incoming : current));
@@ -191,18 +203,19 @@ export function MenuScreen({ me, org }: ScreenProps) {
       setMenu(editable);
       setCalendar(cal);
       setImpact(next);
-      setRows((editable?.items ?? []).map((i) => rowFromMenu(i, org.currency)));
+      setRows((editable?.items ?? []).map((i) => rowFromMenu(i, currency)));
       setParsed(null);
       setNotes([]);
       setLoadError(null);
     } catch (e) {
+      if (mine !== latest.current) return;
       // A read has no toast to fire and nothing to revert, so its failure is a
       // state the screen renders. `useAction` covers every write instead.
       setLoadError(humanError(e));
     } finally {
-      setLoading(false);
+      if (mine === latest.current) setLoading(false);
     }
-  }, [org.id, org.currency, org.timezone, serviceDate, today]);
+  }, [org.id, currency, org.timezone, serviceDate, today]);
 
   useEffect(() => {
     void load();
@@ -304,7 +317,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
         : `Read ${dishCount(r.items.length)}`,
     onSuccess: (r) => {
       setRows((previous) =>
-        adoptIds(r.items.map((i) => rowFromAssist(i, org.currency)), previous),
+        adoptIds(r.items.map((i) => rowFromAssist(i, currency)), previous),
       );
       setParsed(null);
       setNotes(r.notes);
@@ -322,11 +335,11 @@ export function MenuScreen({ me, org }: ScreenProps) {
     setParsed(result);
     setNotes(result.notes);
     setRows((previous) =>
-      adoptIds(result.items.map((i) => rowFromParsed(i, org.currency)), previous),
+      adoptIds(result.items.map((i) => rowFromParsed(i, currency)), previous),
     );
     setReadBy("offline");
     setModel(null);
-  }, [text, today, org.currency]);
+  }, [text, today, currency]);
 
   const patchRow = useCallback((key: string, patch: Partial<DishRow>) => {
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));

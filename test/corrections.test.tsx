@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { CorrectionsScreen } from "../src/web/components/CorrectionsScreen.js";
@@ -10,7 +10,7 @@ import {
   type RecordedMeal,
 } from "../src/web/api.js";
 import { formatMoney } from "../src/shared/money.js";
-import { zonedTimeToInstant } from "../src/shared/dates.js";
+import { addDays, zonedTimeToInstant } from "../src/shared/dates.js";
 import type { BoardDay } from "../src/web/api.js";
 import type { Me, Org } from "../src/shared/types.js";
 
@@ -729,5 +729,38 @@ describe("What has already been corrected", () => {
     const row = screen.getByText("ít cơm").closest("tr");
     expect(within(row as HTMLElement).getByText("Corrected")).toBeInTheDocument();
     expect(screen.getAllByText("Corrected")).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------ answers out of order */
+
+describe("Corrections, answers that arrive out of order", () => {
+  it("draws the week now shown when the week left behind answers last", async () => {
+    const user = userEvent.setup();
+    const LAST_WED = "2026-09-16";
+    const lastWeek = week({
+      days: days().map((d) => ({ ...d, serviceDate: addDays(d.serviceDate, -7) })),
+      meals: new Map([
+        [
+          cellKey("quy", LAST_WED),
+          meal({ orderId: 802, profileId: "quy", serviceDate: LAST_WED, quantity: 2 }),
+        ],
+      ]),
+    });
+
+    let answerFirst: (w: CorrectionsWeek) => void = () => {};
+    fetchCorrectionsWeek.mockImplementationOnce(
+      () => new Promise((resolve) => (answerFirst = resolve)),
+    );
+    fetchCorrectionsWeek.mockResolvedValue(lastWeek);
+    renderScreen();
+
+    await user.click(screen.getByRole("button", { name: "Previous week" }));
+    await screen.findByRole("heading", { name: "Wednesday 16 September" });
+    expect(await screen.findByText("Cơm gà × 2")).toBeInTheDocument();
+
+    await act(async () => answerFirst(week()));
+    expect(screen.getByText("Cơm gà × 2")).toBeInTheDocument();
+    expect(screen.queryByText("ít cơm")).not.toBeInTheDocument();
   });
 });

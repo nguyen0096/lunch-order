@@ -3,6 +3,7 @@
  * shares. Nothing here belongs to a single screen.
  */
 
+import { isAuthRetryableFetchError } from "@supabase/supabase-js";
 import { supabase } from "../supabase.js";
 import type { Me, Org, Role } from "../../shared/types.js";
 
@@ -39,7 +40,10 @@ function toOrg(r: OrgRow): Org {
  * would imply the security lives in the query, which it does not.
  */
 export async function fetchMe(): Promise<Me | null> {
-  const { data: auth } = await supabase.auth.getUser();
+  const { data: auth, error: authError } = await supabase.auth.getUser();
+  // A dropped connection also comes back with no user. It is not a sign-out,
+  // and must not put somebody with a good session on the sign-in page.
+  if (authError && isAuthRetryableFetchError(authError)) throw authError;
   if (!auth.user) return null;
 
   // profile_id must be filtered explicitly. memberships is readable org-wide

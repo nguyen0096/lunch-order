@@ -41,6 +41,7 @@ import {
   columnLabel,
   cutoffLabel,
   longDayLabel,
+  lunchIsOver,
   nextOrderableDay,
   passOnReason,
   pickDish,
@@ -103,7 +104,11 @@ export function BoardScreen({ me, org }: ScreenProps) {
     return () => clearInterval(t);
   }, []);
 
+  // Only the newest load may write, so paging weeks faster than the network
+  // answers cannot draw last week's orders under this week's dates.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++latest.current;
     try {
       const [nextBoard, nextTransfers] = await Promise.all([
         fetchBoard({ orgId: org.id, from, to, meProfileId: me.profileId, today }),
@@ -112,10 +117,12 @@ export function BoardScreen({ me, org }: ScreenProps) {
         // people actually remember to do.
         fetchTransfers({ orgId: org.id, meProfileId: me.profileId, openPeriodStart: thisWeek }),
       ]);
+      if (mine !== latest.current) return;
       setBoard(nextBoard);
       setTransfers(nextTransfers);
       setLoadError(null);
     } catch (e) {
+      if (mine !== latest.current) return;
       // useAction covers every write. A read has no toast to fire and nothing
       // to revert, so its failure is a state the screen renders instead.
       setLoadError(humanError(e));
@@ -366,6 +373,17 @@ export function BoardScreen({ me, org }: ScreenProps) {
     return out;
   }, [transfers]);
 
+  // Meals handed to me and accepted, by day. The order row stays on the
+  // giver's line, so my own cell would otherwise look empty and offer me a
+  // second lunch.
+  const receivedByDate = useMemo(() => {
+    const out = new Map<string, TransferRow>();
+    for (const t of transfers?.live.values() ?? []) {
+      if (t.status === "accepted" && t.toProfileId === me.profileId) out.set(t.serviceDate, t);
+    }
+    return out;
+  }, [transfers, me.profileId]);
+
   // On a narrow screen the board opens on Monday and the only day you can act
   // on is usually off the right edge, so it looks like a week of nothing until
   // you discover a horizontal scroll. Bring that column into view instead, the
@@ -573,12 +591,18 @@ export function BoardScreen({ me, org }: ScreenProps) {
                   now,
                   timeZone: org.timezone,
                 });
+                const over = lunchIsOver({ day, org, now });
 
                 return (
                   <TableCell key={day.serviceDate} className="p-1 text-center">
                     {incoming !== null ? (
                       <IncomingOffer
                         offer={incoming}
+                        reason={
+                          over
+                            ? `Lunch on ${formatDay(day.serviceDate)} is over, so this offer can no longer be answered`
+                            : null
+                        }
                         pending={busy}
                         onDecide={(status) => void enqueue(() => decide.run({ id: incoming.id, status }))}
                       />
@@ -586,6 +610,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
                       <MyCell
                         day={day}
                         cell={live}
+                        received={receivedByDate.get(day.serviceDate) ?? null}
                         projected={board.projected.has(day.serviceDate)}
                         offeredTo={offer?.toName ?? null}
                         // A meal is always worth opening, to read the note or
@@ -715,6 +740,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
                   serviceDate: focused.day.serviceDate,
                   openWeekStart: thisWeek,
                   offeredTo: transfers?.live.get(focusedMine.orderId)?.toName ?? null,
+                  over: lunchIsOver({ day: focused.day, org, now }),
                 })
           }
           offer={
@@ -845,6 +871,7 @@ const OPEN_CELL = "border border-border-strong text-muted hover:bg-accent-subtle
 function MyCell({
   day,
   cell,
+  received,
   projected,
   offeredTo,
   reason,
@@ -854,6 +881,8 @@ function MyCell({
 }: {
   day: BoardDay;
   cell: BoardCell | null;
+  /** A colleague's meal I accepted for this day. */
+  received: TransferRow | null;
   projected: boolean;
   offeredTo: string | null;
   reason: string | null;
@@ -875,6 +904,23 @@ function MyCell({
       : "not eating";
   const described =
     `${formatDay(day.serviceDate)}: ${state}` + (offeredTo !== null ? `. Offered to ${offeredTo}` : "");
+
+  if (cell === null && received !== null) {
+    return (
+      <Action
+        reason={`${received.fromName} gave you this lunch, so there is nothing to order`}
+        variant="ghost"
+        aria-label={`${formatDay(day.serviceDate)}: ${received.dishName ?? "eating"}, from ${received.fromName}`}
+        className="h-auto w-full min-w-24 cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg"
+      >
+        <span className="block max-w-full truncate">{received.dishName ?? "Lunch"}</span>
+        <span className="block max-w-full truncate text-xs font-normal">
+          from {received.fromName}
+        </span>
+      </Action>
+    );
+  }
+
   // An empty cell inside the window: tapping it orders rather than opens.
   const orders = cell === null && reason === null;
 
@@ -1070,10 +1116,13 @@ const MARK_FILL: Record<Mark, string> = {
  */
 function IncomingOffer({
   offer,
+  reason,
   pending,
   onDecide,
 }: {
   offer: TransferRow;
+  /** Why neither answer can be given any more, once the day is over. */
+  reason: string | null;
   pending: boolean;
   onDecide: (status: "accepted" | "declined") => void;
 }) {
@@ -1084,7 +1133,7 @@ function IncomingOffer({
       </span>
       <div className="flex gap-1">
         <Action
-          reason={null}
+          reason={reason}
           pending={pending}
           size="sm"
           className="flex-1"
@@ -1093,7 +1142,7 @@ function IncomingOffer({
           Accept
         </Action>
         <Action
-          reason={null}
+          reason={reason}
           pending={pending}
           size="sm"
           variant="outline"

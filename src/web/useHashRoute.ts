@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * Routes are `#/o/<slug>/<page>`, with an optional `?query` inside the hash.
@@ -27,17 +27,38 @@ function read(): Route {
   return { slug: null, page: parts.join("/") || "home", query };
 }
 
-export function useHashRoute(): [Route, (r: { slug: string | null; page: string }) => void] {
+export type Go = (
+  r: { slug: string | null; page: string },
+  options?: { replace?: boolean },
+) => void;
+
+export function useHashRoute(): [Route, Go] {
   const [route, setRoute] = useState<Route>(read);
   useEffect(() => {
     const on = () => setRoute(read());
     window.addEventListener("hashchange", on);
     return () => window.removeEventListener("hashchange", on);
   }, []);
-  const go = (r: { slug: string | null; page: string }) => {
-    window.location.hash = r.slug ? `#/o/${r.slug}/${r.page}` : `#/${r.page}`;
-  };
+  const go = useCallback<Go>((r, options) => {
+    const hash = r.slug ? `#/o/${r.slug}/${r.page}` : `#/${r.page}`;
+    if (options?.replace) replaceHash(hash);
+    else window.location.hash = hash;
+  }, []);
   return [route, go];
+}
+
+/**
+ * Moves to `hash` without adding a history entry. A redirect that pushes one
+ * traps Back: the entry it lands on redirects again at once.
+ *
+ * `replaceState` fires no `hashchange`, so one is dispatched by hand for every
+ * `useHashRoute` listening.
+ */
+export function replaceHash(hash: string): void {
+  if (window.location.hash === hash) return;
+  const oldURL = window.location.href;
+  window.history.replaceState(window.history.state, "", hash);
+  window.dispatchEvent(new HashChangeEvent("hashchange", { oldURL, newURL: window.location.href }));
 }
 
 /**

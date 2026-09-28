@@ -27,7 +27,14 @@ const DISHES = ["Cơm gà", "Phở bò", "Bún bò Huế", "Bánh mì", "Cơm t�
  * land the wash near 1.9:1 and the column near 2.5:1 in both schemes: clearly
  * texture, clearly not a rendering fault.
  */
-export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
+export function SignInScreen({
+  onSignIn,
+  notice = null,
+}: {
+  onSignIn: () => void;
+  /** Why the last attempt came back without a session, when it did. */
+  notice?: string | null;
+}) {
   return (
     <main className="relative min-h-dvh overflow-hidden bg-accent text-accent-fg">
       <div className="mx-auto grid min-h-dvh max-w-[96rem] grid-rows-[auto_minmax(0,1fr)] lg:grid-cols-[minmax(0,1fr)_minmax(0,24rem)] lg:grid-rows-1 xl:grid-cols-[minmax(0,1fr)_minmax(0,32rem)]">
@@ -36,6 +43,11 @@ export function SignInScreen({ onSignIn }: { onSignIn: () => void }) {
 
           <div className="flex max-w-prose flex-col items-start gap-6 lg:flex-1 lg:justify-center">
             <p className="text-2xl font-semibold lg:text-3xl">Order lunch with your office.</p>
+            {notice !== null && (
+              <p role="alert" className="rounded-md bg-surface-raised px-3 py-2 text-sm text-text">
+                {notice}
+              </p>
+            )}
             {/* Dark text on the ochre fill, per the contrast rule: ochre is
                 never small type on paper, and here it is the page. */}
             <Button variant="outline" size="lg" onClick={onSignIn}>
@@ -99,14 +111,19 @@ export function NoOfficeScreen({
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
-      <h1 className="text-xl font-semibold">No office yet</h1>
+      <h1 className="text-xl font-semibold">No office</h1>
       <p className="text-muted">
         {/* Somebody who joined from Telegram has no email address at all, and
             naming them "signed in as ," is the worst possible greeting for the
             person this app was most careful to support. */}
-        {email === ""
-          ? "You're signed in, but you're not a member of an office yet. Ask a colleague for their office's join code and enter it here."
-          : `You're signed in as ${email}, but you're not a member of an office yet. Ask a colleague for their office's join code and enter it here.`}
+        {`${email === "" ? "You're signed in" : `You're signed in as ${email}`}, but you're not a member of any office. Ask a colleague for their office's join code and enter it here.`}
+      </p>
+      {/* Somebody an admin deactivated lands here too. Their inactive row is
+          invisible to them under RLS, so the words cover both cases rather
+          than guessing which one this is. */}
+      <p className="text-sm text-muted">
+        Were you in an office before? An admin may have removed you from it. Ask them to add you
+        back, or join again with the office's code.
       </p>
       <Button onClick={() => setJoining(true)}>Join with a code</Button>
 

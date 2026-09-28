@@ -25,8 +25,8 @@ type ActionProps = Omit<React.ComponentProps<"button">, "disabled"> &
  * the tab order and stops emitting pointer events, so neither a keyboard user
  * nor a hovering mouse can ever reach the explanation. This one stays
  * focusable and hoverable, refuses the click itself, and carries the sentence
- * twice over: a tooltip for the pointer, and a description that assistive tech
- * reads out with the label whether or not the tooltip ever opens.
+ * twice over: a tooltip for the pointer and for a tap, and a description that
+ * assistive tech reads out with the label whether or not the tooltip opens.
  */
 export function Action({
   reason,
@@ -41,6 +41,10 @@ export function Action({
   const describedBy = React.useId();
   const unavailable = reason !== null;
   const blocked = unavailable || pending;
+  const [showReason, setShowReason] = React.useState(false);
+  React.useEffect(() => {
+    if (!unavailable) setShowReason(false);
+  }, [unavailable]);
 
   const button = (
     <Button
@@ -57,6 +61,10 @@ export function Action({
         if (blocked) {
           e.preventDefault();
           e.stopPropagation();
+          // A touch screen never hovers, and Radix opens a tooltip on hover
+          // and focus only, so a tap is the one way a phone asks "why not".
+          // `preventDefault` is also what stops the trigger closing it again.
+          if (unavailable) setShowReason(true);
           return;
         }
         onClick?.(e);
@@ -88,7 +96,7 @@ export function Action({
 
   return (
     <>
-      <Tooltip>
+      <Tooltip open={showReason} onOpenChange={setShowReason}>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent>{reason}</TooltipContent>
       </Tooltip>

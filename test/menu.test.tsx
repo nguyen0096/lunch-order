@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { MenuScreen } from "../src/web/components/MenuScreen.js";
@@ -1396,5 +1396,49 @@ describe("Leaving a price to the caterer", () => {
     expect(screen.getByText("Cơm gà")).toBeInTheDocument();
     expect(screen.getByText("Price to come")).toBeInTheDocument();
     expect(screen.queryByText("0 ₫")).not.toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------ what is on screen stays */
+
+describe("Menu, keeping what is on screen", () => {
+  it("keeps an edited dish when the office is refetched with the same currency", async () => {
+    const user = userEvent.setup();
+    serve({ menu: menu() });
+    const view = renderMenu();
+    await ready();
+
+    const name = screen.getByLabelText("Dish 1 name");
+    await user.clear(name);
+    await user.type(name, "Cơm gà xối mỡ");
+    const loads = fetchMenuEditor.mock.calls.length;
+
+    // What a refetch of `me` hands down: an equal office in new objects.
+    view.rerender(
+      <MenuScreen me={{ ...ME }} org={{ ...ORG, currency: { ...ORG.currency } }} role="admin" />,
+    );
+    await act(async () => {});
+
+    expect(fetchMenuEditor.mock.calls.length).toBe(loads);
+    expect(screen.getByLabelText("Dish 1 name")).toHaveValue("Cơm gà xối mỡ");
+  });
+
+  it("draws the day now selected when the day left behind answers last", async () => {
+    let answerFirst: (m: EditableMenu | null) => void = () => {};
+    serve();
+    fetchMenuEditor.mockImplementationOnce(
+      () => new Promise((resolve) => (answerFirst = resolve)),
+    );
+    fetchMenuEditor.mockResolvedValue(
+      menu({ items: [{ id: 201, name: "Bánh mì", priceMinor: 25_000, position: 0 }] }),
+    );
+    renderMenu();
+
+    set(screen.getByLabelText("Service date"), workingDayAfter(DATE));
+    await waitFor(() => expect(screen.getByLabelText("Dish 1 name")).toHaveValue("Bánh mì"));
+
+    await act(async () => answerFirst(menu()));
+    expect(screen.getByLabelText("Dish 1 name")).toHaveValue("Bánh mì");
+    expect(screen.queryByDisplayValue("Cơm gà")).not.toBeInTheDocument();
   });
 });
