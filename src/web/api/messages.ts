@@ -1,6 +1,7 @@
 /**
- * What the office sends through Telegram: the three messages the hourly tick
- * sends by itself, and the two an admin sends by hand.
+ * What the office sends through Telegram: the messages it sends by itself (the
+ * hourly tick's three and the two a payment triggers), and the two an admin
+ * sends by hand.
  *
  * The timings used to be written into `private.run_hourly_tick` and nowhere
  * else, so `NOTIFICATION_DEFAULTS` below is that function's behaviour written
@@ -17,7 +18,13 @@
 import { supabase } from "../supabase.js";
 import { fetchOrgMembers } from "./people.js";
 
-export const NOTIFICATION_KINDS = ["menu_published", "cutoff_warning", "weekly_bill"] as const;
+export const NOTIFICATION_KINDS = [
+  "menu_published",
+  "cutoff_warning",
+  "weekly_bill",
+  "payment_ack",
+  "payment_unmatched",
+] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -42,6 +49,8 @@ export const NOTIFICATION_DEFAULTS: Record<NotificationKind, Timings> = {
   menu_published: { enabled: true, minutesBefore: null, atLocalHour: null },
   cutoff_warning: { enabled: true, minutesBefore: 70, atLocalHour: null },
   weekly_bill: { enabled: true, minutesBefore: null, atLocalHour: 9 },
+  payment_ack: { enabled: true, minutesBefore: null, atLocalHour: null },
+  payment_unmatched: { enabled: true, minutesBefore: null, atLocalHour: null },
 };
 
 type SettingRow = {
@@ -52,7 +61,7 @@ type SettingRow = {
 };
 
 /**
- * All three kinds, always, in the order the screen lists them.
+ * Every kind, always, in the order the screen lists them.
  *
  * A kind is given back the number it means and nothing else: a stored
  * `minutes_before` on the weekly bill is a column that means nothing there, and

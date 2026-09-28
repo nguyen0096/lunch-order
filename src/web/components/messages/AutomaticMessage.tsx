@@ -37,11 +37,11 @@ function minutesProblem(raw: string): string | null {
 }
 
 /**
- * One of the three messages the office sends by itself.
+ * One of the messages the office sends by itself.
  *
- * Each one is its own card and its own save, because they are three unrelated
+ * Each one is its own card and its own save, because they are unrelated
  * decisions: an office that wants no last call still wants the bill, and a
- * single Save across all three would make turning one off look like a change
+ * single Save across all of them would make turning one off look like a change
  * to everything. Turning one off is also the only thing on this screen that
  * quietly stops something the office already relies on, so the card says in a
  * sentence what it does now and what saving would change it to.

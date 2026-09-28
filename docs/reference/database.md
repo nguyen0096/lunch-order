@@ -24,6 +24,7 @@ and whether it rolls back. The ones to know first:
 | `materialize_on_publish.sql` | publishing a menu creates an order for everyone whose weekday rule covers it | no, rolls back |
 | `hardening.sql` | the rules under [Invariants](#invariants) on offices, owners, short codes, money and Telegram links | no, rolls back |
 | `hardening_follow_up.sql` | link tokens closed to admins, an outbox no browser writes, the invitation preview and the removed-member answer | no, rolls back |
+| `payment_notifications.sql` | money arriving tells the payer, an unmatched transfer tells that office's admins and owners, once, behind a switch, and nobody else | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -84,6 +85,12 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   `send_test_notification` for an admin or owner, taking every chat from the
   office's own links) and from the Edge Functions as the service role. Admins
   and owners read it; an admin who is not an owner reads no `bug_report` row.
+- **A payment is announced once, from its own insert.** `trg_payment_apply`
+  queues `payment_ack` to the payer or `payment_unmatched` to the office's
+  admins and owners in the same transaction, keyed on the payment id, so a
+  SePay redelivery (which inserts nothing) queues nothing. Applying an
+  unmatched payment to somebody tells them; any other move, and a void, tells
+  nobody.
 - **An invitee sees one invitation, by its token, and only where it leads.**
   `invitation_preview` returns the office's name, the role, the expiry and
   whether it is still valid; never the address, the sender or an id.
