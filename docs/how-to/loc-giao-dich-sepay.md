@@ -33,8 +33,8 @@ này nằm trong nội dung chuyển khoản, và app hiển thị nó rất rõ
 Bill để người trả sao chép. Mỗi người một mã, không đổi theo tuần, nên lưu được
 mẫu chuyển khoản trong app ngân hàng.
 
-Trước đây mã có dạng `L39NGUY`. Từ khóa `L` thì lọc được gì — gần như mọi nội
-dung chuyển khoản đều có chữ L. Đó là lý do mã được đổi.
+Trước đây mã có dạng `L39NGUY`. Từ khóa `L` thì chẳng lọc được gì, vì gần như mọi
+nội dung chuyển khoản đều có chữ L. Đó là lý do mã được đổi.
 
 ## Lọc ở đây khác với lọc ở webhook
 
@@ -56,13 +56,13 @@ khác, mã thanh toán trên màn hình Bill từ "nên có" trở thành "bắt
 Đây là cái giá của việc lọc ngay từ đầu, và vẫn đáng, nhưng nên nói trước với
 mọi người.
 
-## Những điều tài liệu SePay không nói — kiểm tra trên giao diện
+## Những điều tài liệu SePay không nói: kiểm tra trên giao diện
 
 Tài liệu chỉ mô tả tính năng, không nói rõ ba điểm sau. Xem trực tiếp khi cấu
 hình:
 
 - Nhập được **nhiều từ khóa** hay chỉ một.
-- Có **phân biệt chữ hoa/thường** không. Nếu có, nhập đúng `LUNCH` viết hoa —
+- Có **phân biệt chữ hoa/thường** không. Nếu có, nhập đúng `LUNCH` viết hoa, vì
   mã do app sinh ra luôn viết hoa.
 - Áp dụng cho **giao dịch cũ** hay chỉ giao dịch mới. Nhiều khả năng chỉ áp dụng
   cho giao dịch mới, nên số giao dịch đã tính trong tháng này vẫn giữ nguyên.
@@ -71,4 +71,4 @@ hình:
 
 Ghi số tài khoản vào app: **Settings → Your office → Where the money goes**.
 Webhook dùng số tài khoản để biết giao dịch thuộc văn phòng nào, nên nó phải
-đúng — không chỉ để sinh mã QR.
+đúng, chứ không chỉ để sinh mã QR.

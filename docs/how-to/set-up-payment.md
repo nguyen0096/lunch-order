@@ -14,7 +14,7 @@ Avatar → **Settings** → *Your office* → **Where the money goes**.
 
 1. Pick the bank. It is a searchable list of 36 Vietnamese banks; type the short
    name or the old one, since banks that have rebranded carry their former names
-   as keywords. Do not type a number here — the six-digit NAPAS BIN behind each
+   as keywords. Do not type a number here: the six-digit NAPAS BIN behind each
    entry is what the QR encodes, and a wrong one produces a code that scans
    cleanly and pays somebody else.
 2. Enter the account number and the account holder's name. The name is shown to
@@ -40,7 +40,7 @@ update public.organizations
 ```
 
 The shape is defined in `src/shared/payment.ts` and nowhere else. The column is
-`jsonb` with no database-side check, so a typo here is not rejected — it just
+`jsonb` with no database-side check, so a typo here is not rejected. It just
 produces a bill with no QR on it.
 
 ## Telling the bot where to post

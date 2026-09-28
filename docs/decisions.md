@@ -27,7 +27,9 @@ once executed.
 **No RBAC library.** The browser talks directly to Postgres through PostgREST.
 There is no server tier for Casbin or CASL to sit in, so a policy engine in the
 bundle would be advisory: anyone can open devtools and skip it. Rules live where
-the data is. Enforcement is 41 RLS policies, 143 column grants, and triggers;
+the data is. Enforcement is 50 RLS policies, column grants that leave
+`authenticated` able to update 85 columns and insert into 99 (counted on a local
+database built from the migrations, 2026-09-28), and triggers;
 `isAdmin()` in the client is three lines and governs affordances only.
 
 **Function grants are enforced by a test, not by a default.** The grants
