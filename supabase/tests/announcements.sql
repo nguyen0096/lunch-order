@@ -300,7 +300,7 @@ begin
   exception when others then v_state := sqlstate || ' ' || sqlerrm;
   end;
   insert into probe values ('R11 test of an unknown kind: refused', v_state,
-    '23514 a test can be sent for menu_published, cutoff_warning or weekly_bill');
+    '23514 a test can be sent for menu_published, cutoff_warning, weekly_bill, payment_ack or payment_unmatched');
 
   reset role;
 

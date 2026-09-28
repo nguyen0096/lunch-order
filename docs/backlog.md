@@ -109,8 +109,9 @@ as credit, and the Bill screen and `/me` both say "in credit" and offer nothing
 to transfer. The SePay webhook is the way in, and `private.payer_from_memo`
 finds the person from their own stable reference without a statement existing.
 
-Two things remain, and the first is a product decision that has never been
-taken:
+A top-up is acknowledged like any payment: the Telegram receipt says "You are
+5.000 ₫ in credit." Two things remain, and the first is a product decision that
+has never been taken:
 
 - **Whether a credit is refundable.** "Roll it forward forever" and "give it
   back when somebody leaves" are different products, and the second needs a
@@ -160,7 +161,9 @@ rather than typing. Verified against an independent implementation of the spec;
 `supabase/functions/sepay` records a delivery as a payment, routed by the
 account number and authenticated against that office's own webhook secret.
 `private.payer_from_memo` finds whose money it is and the account takes it from
-there. What remains is which of the two ways an office is connected to it,
+there, and the payer is told on Telegram what arrived and where their account
+stands; a transfer that matches nobody is raised with the office's admins and
+owners. What remains is which of the two ways an office is connected to it,
 below, and a delivery from the real SePay rather than from a test.
 
 ### What the docs say (read 2026-09-23)

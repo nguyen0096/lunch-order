@@ -46,6 +46,20 @@ export const KIND_COPY: Record<NotificationKind, KindCopy> = {
     toggle: "Send the weekly bill",
     timing: "hour",
   },
+  payment_ack: {
+    title: "Money arrives",
+    what: "Tells whoever paid how much arrived and where their account now stands.",
+    noun: "the payment receipt",
+    toggle: "Tell people their money arrived",
+    timing: "none",
+  },
+  payment_unmatched: {
+    title: "A transfer matches nobody",
+    what: "Tells the office's admins and owners about a bank transfer whose message names nobody, so one of them assigns it under Payments.",
+    noun: "the unmatched transfer alert",
+    toggle: "Tell admins about unmatched transfers",
+    timing: "none",
+  },
 };
 
 /** `09:00`. The column holds an hour, so the minutes are always zero. */
@@ -76,6 +90,14 @@ export function savedSentence(setting: {
       return setting.enabled
         ? `The weekly bill goes out at ${hourLabel(setting.atLocalHour ?? 0)}.`
         : "The weekly bill is not sent.";
+    case "payment_ack":
+      return setting.enabled
+        ? "Whoever pays is told as soon as their money arrives."
+        : "Nobody is told when their money arrives.";
+    case "payment_unmatched":
+      return setting.enabled
+        ? "Admins and owners are told when a transfer matches nobody."
+        : "Nobody is told when a transfer matches nobody.";
   }
 }
 
@@ -84,7 +106,7 @@ export function savedSentence(setting: {
  *
  * A row shows what the office does now; the moment somebody moves the switch or
  * the number it shows what saving would do instead, and says which it is. The
- * six sentences above all open on a word that lowercases cleanly.
+ * sentences above all open on a word that lowercases cleanly.
  */
 export function pendingSentence(setting: {
   kind: NotificationKind;

@@ -130,12 +130,16 @@ const LAST_CALL = "Ordering closes";
 const BILL = "The weekly bill";
 const MENU = "A new menu is published";
 const ANNOUNCEMENT = "Send an announcement";
+const RECEIPT = "Money arrives";
+const UNMATCHED = "A transfer matches nobody";
 
 /** Each card and the control that turns that message on, which names it. */
 const TOGGLES: ReadonlyArray<[string, string]> = [
   [MENU, "Announce a new menu"],
   [LAST_CALL, "Send a last call"],
   [BILL, "Send the weekly bill"],
+  [RECEIPT, "Tell people their money arrived"],
+  [UNMATCHED, "Tell admins about unmatched transfers"],
 ];
 
 /** Types an announcement and gets as far as the confirmation. */
@@ -198,6 +202,77 @@ describe("Messages, what the office sends by itself", () => {
     expect(
       within(panel).getByText("A new menu is announced as soon as you publish it."),
     ).toBeInTheDocument();
+  });
+
+  it("offers the two payment messages no time to set, since they go out when money arrives", async () => {
+    renderScreen();
+    await ready();
+
+    for (const title of [RECEIPT, UNMATCHED]) {
+      const panel = card(title);
+      expect(within(panel).queryByRole("textbox")).not.toBeInTheDocument();
+      expect(within(panel).queryByRole("combobox")).not.toBeInTheDocument();
+      expect(within(panel).getByText("This one has no time to set.")).toBeInTheDocument();
+    }
+    expect(
+      within(card(RECEIPT)).getByText("Whoever pays is told as soon as their money arrives."),
+    ).toBeInTheDocument();
+    expect(
+      within(card(UNMATCHED)).getByText(
+        "Admins and owners are told when a transfer matches nobody.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("turns the payment receipt off and saves that kind alone, with no timing", async () => {
+    const user = userEvent.setup();
+    renderScreen();
+    await ready();
+
+    const panel = card(RECEIPT);
+    await user.click(
+      within(panel).getByRole("button", { name: "Tell people their money arrived" }),
+    );
+    expect(
+      within(panel).getByText("Once saved: nobody is told when their money arrives."),
+    ).toBeInTheDocument();
+    await user.click(within(panel).getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(saveNotificationSetting).toHaveBeenCalledWith({
+        orgId: 7,
+        kind: "payment_ack",
+        enabled: false,
+        minutesBefore: null,
+        atLocalHour: null,
+      }),
+    );
+    expect(saveNotificationSetting).toHaveBeenCalledTimes(1);
+    expect(success).toHaveBeenCalledWith("Nobody is told when their money arrives.");
+  });
+
+  it("sends a test of the unmatched transfer alert, and shows the database's refusal as written", async () => {
+    const user = userEvent.setup();
+    sendTestNotification.mockRejectedValueOnce(
+      new Error("no bank transfer here has matched nobody yet, so there is nothing to preview"),
+    );
+    renderScreen();
+    await ready();
+
+    await user.click(
+      within(card(UNMATCHED)).getByRole("button", {
+        name: "Send me a test of the unmatched transfer alert",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(sendTestNotification).toHaveBeenCalledWith({ orgId: 7, kind: "payment_unmatched" }),
+    );
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "no bank transfer here has matched nobody yet, so there is nothing to preview",
+      ),
+    );
   });
 
   it("has nothing to save until something changes", async () => {
@@ -332,7 +407,7 @@ describe("Messages, what the office sends by itself", () => {
     expect(within(card(LAST_CALL)).getByLabelText("Minutes before the cutoff")).toHaveValue("180");
     expect(within(card(BILL)).getByLabelText("Hour of the day")).toHaveValue("14");
     expect(
-      screen.getByText("Each one is saved on its own. Turning one off leaves the other two alone."),
+      screen.getByText("Each one is saved on its own. Turning one off leaves the others alone."),
     ).toBeInTheDocument();
   });
 

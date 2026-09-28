@@ -228,6 +228,26 @@ from admins who are not owners, because the queued body carries the report
 verbatim and the table's own policy would otherwise be one join away from
 meaningless.
 
+**Money arriving is announced, from the payment's own insert.** Somebody who
+transfers wants to know it landed, and an admin wants to know about the one
+that landed on nobody. `trg_payment_apply` already decides whose money it is,
+so it queues the message once it has: `payment_ack` to the payer's own chat
+("Received 40.000 ₫ for lunch at Acme. You owe 60.000 ₫."), or, for a bank
+transfer that names nobody, `payment_unmatched` to every admin and owner of that
+office with a linked chat, carrying the amount, the time and the transfer
+message. Same transaction as the insert, keyed on the payment id, so a SePay
+redelivery, which inserts nothing, queues nothing. Both are switches in
+`org_notifications`, on when no row exists, and both have a test message. Cash
+an admin records on nobody raises nothing: the admin already knows.
+
+Moves are mostly silent. Applying an unmatched payment to somebody tells them,
+because nobody did when it arrived; it is one trigger on the
+`payment_corrections` row `move_payment` already writes. Moving money from one
+person to another, and voiding cash, are an admin correcting the record, and a
+second automatic message saying the first was wrong explains less than the
+admin doing it can. Plain text (`none`) like every other automatic message, so
+the memo goes out verbatim with nothing to escape.
+
 ## The shape of a day
 
 **A day has five stages, and only two of them are stored.** `no menu -> open ->

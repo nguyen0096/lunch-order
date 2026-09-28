@@ -523,7 +523,7 @@ errand, and the reason nothing works yet.
 ### Sent by itself
 
 One card per kind, each with its own switch and its own Save, because they are
-three unrelated decisions and a single Save would make turning one off look like
+unrelated decisions and a single Save would make turning one off look like
 a change to everything.
 
 | Message | Timing |
@@ -531,6 +531,8 @@ a change to everything.
 | A new menu is published | none. It goes out when you publish a day, and the card says so rather than showing an empty box |
 | Ordering closes | minutes before that day's cutoff, 70 by default |
 | The weekly bill | an hour of the day in the office's own zone, 09:00 by default |
+| Money arrives | none. It goes out when a payment is credited to somebody, to them |
+| A transfer matches nobody | none. It goes out when a bank transfer names nobody, to the office's admins and owners |
 
 The floor on the minutes is 60 and it is not taste. The bot wakes once an hour
 and tests a window of exactly this length, so a window shorter than the gap
@@ -546,7 +548,9 @@ messages it has been sending for months.
 Each card carries **Send me a test**, which queues the real message, to the
 admin who asked and nobody else. No confirmation: it reaches one person, and
 reading it is the only way to know what the office reads. It is refused, in the
-database's words, when there is no published menu or no billed week to render.
+database's words, when there is no published menu or no billed week to render,
+when the admin has no payment of their own for the receipt, or when no bank
+transfer has matched nobody yet for the alert.
 
 ### An announcement
 

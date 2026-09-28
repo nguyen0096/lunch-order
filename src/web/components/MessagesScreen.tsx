@@ -121,7 +121,7 @@ export function MessagesScreen({ me, org }: ScreenProps) {
           <p className="max-w-prose text-sm text-muted">
             {untouched
               ? "Nothing here has ever been changed, so these are the timings this office has run on all along."
-              : "Each one is saved on its own. Turning one off leaves the other two alone."}
+              : "Each one is saved on its own. Turning one off leaves the others alone."}
           </p>
         </div>
 
@@ -150,7 +150,7 @@ export function MessagesScreen({ me, org }: ScreenProps) {
 function MessagesSkeleton() {
   return (
     <div className="flex flex-col gap-4">
-      {[0, 1, 2, 3, 4].map((i) => (
+      {[0, 1, 2, 3, 4, 5, 6].map((i) => (
         <div key={i} className="rounded-lg border border-border bg-surface-raised p-4 md:p-6">
           <Skeleton className="h-5 w-40" />
           <Skeleton className="mt-2 h-4 w-full max-w-prose" />
