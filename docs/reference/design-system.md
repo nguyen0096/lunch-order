@@ -22,7 +22,9 @@ which is why the old one looked like a phone app stretched across a monitor.
    no screen invents its own. An action that silently succeeds is a defect.
 3. **Every disabled control carries its reason**, and the reason is visible, not
    just implied by the grey. A row of controls disabled with no explanation is
-   what made the old People screen look broken when it was working.
+   what made the old People screen look broken when it was working. The reason
+   opens on hover, on focus and on a tap: a phone never hovers, and a reason only
+   a mouse can reach is no reason at all on the device most people order from.
 4. **Every list has an empty state that says what to do next.** Not "No data".
 5. **The verb does not change.** A button that says Publish produces "Published".
    Same word through the whole flow, so the interface teaches its own vocabulary.

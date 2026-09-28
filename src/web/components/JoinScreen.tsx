@@ -8,7 +8,7 @@ import { acceptInvitation } from "../api.js";
  * should not silently enrol you.
  */
 export function JoinScreen({ token, onJoined }: { token: string; onJoined: () => void }) {
-  const [joined, setJoined] = useState<string | null>(null);
+  const [joined, setJoined] = useState<{ slug: string; name: string } | null>(null);
 
   const accept = useAction(acceptInvitation, {
     // `accept_invitation` writes its refusals for people -- "This invitation
@@ -16,7 +16,7 @@ export function JoinScreen({ token, onJoined }: { token: string; onJoined: () =>
     // unedited, which is the whole reason they are worded that way.
     success: (org) => `Joined ${org.name}`,
     onSuccess: (org) => {
-      setJoined(org.name);
+      setJoined(org);
       onJoined();
     },
   });
@@ -26,9 +26,11 @@ export function JoinScreen({ token, onJoined }: { token: string; onJoined: () =>
   if (joined !== null) {
     return (
       <Prose heading="You're in">
-        <p className="text-muted">Joined {joined}.</p>
+        <p className="text-muted">Joined {joined.name}.</p>
+        {/* By slug, not `#/`, which resolves to whichever office is first in
+            the list and is the wrong board for anybody already in one. */}
         <Button asChild>
-          <a href="#/">Go to the board</a>
+          <a href={`#/o/${joined.slug}/board`}>Go to the board</a>
         </Button>
       </Prose>
     );

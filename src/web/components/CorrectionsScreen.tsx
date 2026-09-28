@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronLeftIcon } from "lucide-react";
 import {
   Action,
@@ -81,19 +81,24 @@ export function CorrectionsScreen({ me, org }: ScreenProps) {
   const [editing, setEditing] = useState<string | null>(null);
   const [repricingId, setRepricingId] = useState<number | null>(null);
 
+  // Only the newest load may write, so a slow answer for the week just left
+  // cannot land under the week now shown.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const mine = ++latest.current;
     try {
-      setWeek(
-        await fetchCorrectionsWeek({
-          orgId: org.id,
-          from: weekOf,
-          to: addDays(weekOf, 6),
-          meProfileId: me.profileId,
-          today,
-        }),
-      );
+      const next = await fetchCorrectionsWeek({
+        orgId: org.id,
+        from: weekOf,
+        to: addDays(weekOf, 6),
+        meProfileId: me.profileId,
+        today,
+      });
+      if (mine !== latest.current) return;
+      setWeek(next);
       setLoadError(null);
     } catch (e) {
+      if (mine !== latest.current) return;
       // `useAction` owns every write. A read has no toast to fire and nothing
       // to put back, so its failure is a state the screen renders instead.
       setLoadError(humanError(e));

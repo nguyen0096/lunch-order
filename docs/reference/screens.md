@@ -16,6 +16,11 @@ The one screen with nothing to do, so it carries the identity: full-bleed ochre,
 the dish names set large, a single button. Everything after it stays quiet and
 functional. Spend the boldness here and nowhere else.
 
+**The route survives the trip.** Google sends everybody back to the bare origin,
+so an invitation link or a deep link out of a chat would otherwise arrive here
+and leave for the board. The hash is parked in `sessionStorage` on the way out
+and put back, once, when the account loads. Sign out is for this device only.
+
 Two compositions, not one stretched, which is the rule the shell follows too. On
 a monitor the names become the second column, ruled like a menu card and running
 off the bottom edge, while the wordmark, the sentence and the button hold the
@@ -32,7 +37,9 @@ something that looks broken.
 | --- | --- |
 | default | one button, "Continue with Google" |
 | config missing | the `configError` from `supabase.ts`, verbatim, naming the missing variable |
-| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one |
+| sign-in refused | Google or Supabase sent back `#error=...`: the sentence above the button, the fragment gone from the address, and the route the person started from put back, so pressing the button again lands them there |
+| the account did not load | "Lunch did not load", the reason, and Try again. A dropped connection is not a sign-out, so it never shows this page |
+| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one. The words cover somebody an admin removed as well as somebody new: their inactive membership is invisible to them, so the screen does not claim they never joined |
 | signed in, no office, founding switched off | the join code alone. `app_settings.office_creation` is a row the database holds and `create_organization` refuses on, so the second door is not hidden, it is shut: every place that offered it (this screen, the account menu, the office switcher) reads the same switch |
 
 ## Switching office
@@ -48,6 +55,14 @@ a detour back to the board. The two admin chores do not, because a role does not
 follow you: a member switching from an office they administer lands on the
 board, not on a page explaining that the page is not for them.
 
+The page carries over, its state does not. The week you had paged to, a filter,
+a half-typed menu: all of it was about the office you left, and the screen
+starts afresh in the next one.
+
+A redirect replaces the address rather than adding to history, here and
+wherever the app sends you somewhere you did not ask for, so Back goes to the
+page before rather than to one that redirects again.
+
 Creating an office lives here for somebody who already has one, and on the
 sign-in screen for somebody who belongs nowhere. It has one home at a time, not
 both.
@@ -57,27 +72,37 @@ both.
 **Job.** Answer "what am I eating this week" and "how many people am I ordering
 for" on one screen. This is the hero and it uses the full width it is given.
 
-**Asymmetric rows.** Your own row shows dish names, and the note under them.
-Everyone else's shows a fill. You care *what* you are eating; you only need to
-know *whether* colleagues are, because that is the headcount the admin defends to
-the caterer.
+**Your row is an action, theirs is a record.** Your own row shows your dish on
+the accent fill, with the note under it, and every empty day on it is a control.
+Everyone else's cell names their dish in an outline, because on the day the food
+arrives somebody has to hand the right box to the right person. On a day with
+one dish the name would repeat down the column and say nothing, so a check mark
+carries it instead. Colour is spent on your own ordered cells and nowhere else.
 
 ```
+Thursday 25 September                     Closes 21:00 24/09
+Cơm gà  45.000 ₫    Bún bò  50.000 ₫     Phở bò  40.000 ₫
+
           Mon 22    Tue 23    Wed 24     Thu 25   Fri 26
-          ▒▒▒▒▒▒    ▒▒▒▒▒▒    Today
-                              ══════
+          Served    Served    Today ·
+                              Cooking
+                                         ══════
 You       ▓Cơm gà▓  ▓Phở bò▓  ▓Bún bò▓   [ + ]   [ + ][⚄]
           ▓ít cơm▓
-Tèo       ▓▓▓▓▓▓▓▓  ▓▓▓▓▓▓▓▓  ▒to Dinh▒  ┌────┐  ┌────┐
-Dinh      ▓▓▓▓▓▓▓▓  ┌──────┐  ▓▓▓▓▓▓▓▓   └────┘  └────┘
+Tèo       │Phở bò│  │Cơm gà│  to Dinh    ┌────┐  ┌────┐
+Dinh      │Cơm gà│  ┌──────┐  │Bún bò│   └────┘  └────┘
           ───────────────────────────────────────────────
 Total     3         2         3           0       0
-
-Wednesday 24 September                    Closes 21:00 23/09
-Cơm gà  45.000 ₫    Bún bò  50.000 ₫     Phở bò  40.000 ₫
 ```
 
-`▓` ordered · `░` eating, no dish yet · `▒` recessive · `┌┐` empty, still a target
+`▓` my order, on the accent fill · `│ │` a colleague's dish, outlined · dashed
+outline, eating with no dish yet · `┌┐` empty, still a target · `═` the day the
+menu panel shows
+
+A meal somebody gave you, once you accept it, sits on your own row as the dish
+and `from Tèo`. The order stays on the giver's line, where it reads `to Neyu`,
+so without it your row looked empty and offered you a second lunch for a day
+you already had one. Tapping it says why there is nothing to order.
 
 **Which days you can act on** is the first question the grid answers, and the
 column head answers it in words. A day carries its stage under the date --
@@ -88,15 +113,15 @@ nothing, because there is nothing to say.
 This used to be a tint: the whole column receded into `surface-sunken`. One
 grey covered a day with no menu, a day past its cutoff and a day lunch was
 called off on, so the commonest reading of it -- these are the days with a menu
--- was not one of the three things it meant. Colour here means one thing now,
-and that is *ordered*.
+-- was not one of the three things it meant. No column recedes now, and colour
+here means one thing, which is *ordered*.
 
 Every word is the same for everybody. This board is where an admin orders
 their own lunch, so the clock binds them exactly as it binds a member, and
 there is nothing here an admin sees that a member does not. See
 [the five stages](#the-five-stages-of-a-day).
 
-**The menu panel** under the grid names one day's dishes with prices and when it
+**The menu panel** above the grid names one day's dishes with prices and when it
 closes, so nobody has to tap a cell to find out what is on offer. It opens on the
 next day you can still order for, and a tap on any column head moves it.
 
@@ -154,9 +179,10 @@ correction of what was written down rather than an arrangement between two
 people, and it has no screen yet: see
 [the backlog](../backlog.md#a-board-for-adjusting-what-was-recorded).
 
-An incoming offer appears on your own cell, with Accept and Decline inline. A
-pending offer is legible on the board as the recipient's name on the cell, so
-nobody offers a meal that is already spoken for.
+An offer made to you appears on the cell of the meal it concerns, which is the
+giver's cell on their row, with Accept and Decline inline. A pending offer is
+legible on the board as the recipient's name on the cell, so nobody offers a
+meal that is already spoken for.
 
 Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would
@@ -165,14 +191,20 @@ need a legend, and a board that needs a legend has already lost.
 The window for a member ends when the day does, at the office's end of day.
 People remember on Thursday that Tuesday's lunch went to somebody else, but by
 Thursday Tuesday's lunch has been eaten, and recording it then is bookkeeping
-rather than an arrangement. The database keeps an admin's window open for the
-whole billing week, and nothing on this screen spends it.
+rather than an arrangement. Once a day is `Served`, `Give Tèo my Bún bò` carries
+`Lunch on 24/09 is over, so it can no longer be passed on`, and an offer still
+waiting on that day stays legible with Accept and Decline unavailable, since
+the database would refuse either. The database keeps an admin's window open for
+the whole billing week, and nothing on this screen spends it: the board holds
+an admin to the same end of day.
 
 | State | |
 | --- | --- |
 | loading | skeleton shaped like the grid |
 | no menu that day | the cell is inert and says so on tap; the panel says it too |
-| cutoff passed | the column recedes, the cell carries the database's sentence |
+| cutoff passed | the column head says `Closed`, and the cell carries the database's sentence on hover, focus or tap. Nothing recedes |
+| lunch is over | the column head says `Served`; handing a meal over and answering an offer are unavailable, with the reason |
+| a load answers late | only the newest load is drawn, so paging weeks quickly never shows last week's orders under this week's dates |
 | no members but you | the board still renders; an office of one is not an error |
 
 ## The five stages of a day
@@ -579,6 +611,11 @@ reporter's.
 
 **Job.** One decision, taken immediately.
 
-Reached from an emailed invitation. Names the org, states the role, one button.
+Reached from an emailed invitation. One button, and after it the office's
+name and a link to that office's board, not to whichever office the person
+happened to belong to first. Naming the office and the role before Accept needs
+a function that reads an invitation by its token for somebody not yet a member,
+which the database does not have: RLS keeps invitations to admins.
+
 Errors come from `accept_invitation` verbatim: expired, already used, addressed to
 a different account, or an account with no email address at all.

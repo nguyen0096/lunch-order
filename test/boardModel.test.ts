@@ -5,6 +5,8 @@ import {
   columnLabel,
   cutoffLabel,
   longDayLabel,
+  lunchIsOver,
+  lunchOverReason,
   nextOrderableDay,
   passOnReason,
   pickDish,
@@ -251,6 +253,34 @@ describe("passOnReason", () => {
   it("has no flag for who is asking, so nothing here refuses a non-admin", () => {
     const stale: object = { mayAct: false };
     expect(ask({ ...stale })).toBeNull();
+  });
+
+  it("refuses a meal whose day is over, in the trigger's terms", () => {
+    expect(ask({ over: true })).toBe(lunchOverReason("2026-09-23"));
+    expect(lunchOverReason("2026-09-23")).toMatch(/is over, so it can no longer be passed on$/);
+  });
+});
+
+describe("lunchIsOver", () => {
+  const ORG = { timezone: TZ, businessDayStartsAt: "08:30", businessDayEndsAt: "17:30" };
+
+  // 17:30 in Ho Chi Minh on the 23rd is 10:30 UTC.
+  it("is false through the afternoon, while a member can still pass a meal", () => {
+    expect(lunchIsOver({ day: day(), org: ORG, now: new Date("2026-09-23T10:29:00Z") })).toBe(false);
+  });
+
+  it("is true from the office's end of day", () => {
+    expect(lunchIsOver({ day: day(), org: ORG, now: new Date("2026-09-23T10:30:00Z") })).toBe(true);
+  });
+
+  it("is false for a day with no menu, which has nothing to pass on anyway", () => {
+    expect(
+      lunchIsOver({
+        day: day({ menuId: null, status: null }),
+        org: ORG,
+        now: new Date("2026-09-24T00:00:00Z"),
+      }),
+    ).toBe(false);
   });
 });
 

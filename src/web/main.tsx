@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { App } from "./App.js";
 import { initClock } from "../shared/clock.js";
 import { allParams } from "./useHashRoute.js";
+import { takeOAuthError } from "./authRedirect.js";
 import { configError } from "./supabase.js";
 import { Button, Toaster, TooltipProvider, applyTheme, readTheme } from "@/ui";
 import "./styles.css";
@@ -55,6 +56,10 @@ applyTheme(readTheme());
 // Accepts ?now= before or inside the hash, since both get typed.
 const fakeNow = initClock(allParams().toString());
 
+// Once, before anything renders: it rewrites the address, and the router would
+// otherwise read `error=access_denied` as a page name.
+const oauthError = takeOAuthError();
+
 const el = document.getElementById("root");
 if (!el) throw new Error("#root missing");
 
@@ -77,7 +82,7 @@ createRoot(el).render(
               Pretending it is {fakeNow}. The database still enforces the real cutoff.
             </div>
           )}
-          <App />
+          <App oauthError={oauthError} />
         </ErrorBoundary>
         <Toaster />
       </TooltipProvider>

@@ -188,15 +188,45 @@ export function passOnReason(args: {
   openWeekStart: string;
   /** A live offer already sitting on this meal. */
   offeredTo: string | null;
+  /** The day has reached `done`: see `lunchIsOver`. */
+  over?: boolean;
 }): string | null {
-  const { cell, serviceDate, openWeekStart, offeredTo } = args;
+  const { cell, serviceDate, openWeekStart, offeredTo, over = false } = args;
   if (cell === null || cell.status !== "placed") return "There is no meal here to pass on";
   // An optimistic cell has no server id yet, so there is nothing to offer.
   if (cell.orderId <= 0) return "Still saving this order";
   if (cell.transferredToName !== null) return `Already passed to ${cell.transferredToName}`;
   if (offeredTo !== null) return `Already offered to ${offeredTo}`;
   if (serviceDate < openWeekStart) return "That week's bill is closed";
+  if (over) return lunchOverReason(serviceDate);
   return null;
+}
+
+/**
+ * True once the office's day has ended, which is when `enforce_transfer_rules`
+ * stops a member offering, accepting or declining a meal on it. The board is
+ * the same for everybody, so an admin is held to it here too.
+ */
+export function lunchIsOver(args: {
+  day: BoardDay;
+  org: Pick<Org, "timezone" | "businessDayStartsAt" | "businessDayEndsAt">;
+  now: Date;
+}): boolean {
+  const { day, org, now } = args;
+  return (
+    dayStage({
+      serviceDate: day.serviceDate,
+      status: day.status,
+      orderCutoffAt: day.orderCutoffAt,
+      org,
+      now,
+    }) === "done"
+  );
+}
+
+/** The trigger's refusal, said before anybody taps. */
+export function lunchOverReason(serviceDate: string): string {
+  return `Lunch on ${formatDay(serviceDate)} is over, so it can no longer be passed on`;
 }
 
 export type Mark = "ordered" | "eating" | "passed" | "projected" | "none";

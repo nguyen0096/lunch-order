@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { rememberRoute } from "./authRedirect.js";
 
 const url = import.meta.env.VITE_SUPABASE_URL;
 const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -21,12 +22,17 @@ export const configError: string | null =
 export const supabase = createClient(url ?? "http://invalid.local", key ?? "invalid");
 
 export function signIn(): Promise<unknown> {
+  rememberRoute();
   return supabase.auth.signInWithOAuth({
     provider: "google",
     options: { redirectTo: window.location.origin },
   });
 }
 
+/**
+ * This device only. The default scope is global, which signs the person out of
+ * every phone and laptop they have, and the button says nothing of the sort.
+ */
 export function signOut(): Promise<unknown> {
-  return supabase.auth.signOut();
+  return supabase.auth.signOut({ scope: "local" });
 }
