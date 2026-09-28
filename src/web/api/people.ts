@@ -133,6 +133,24 @@ export async function fetchOrgMembers(args: {
   );
 }
 
+/**
+ * When each member linked Telegram, keyed by membership id. Somebody absent
+ * from the map has not linked: no row, or a row whose /start never finished.
+ *
+ * Linked means `chat_id` is set, and the filter runs in the database so the
+ * chat id itself never reaches the browser. `link_token` is not selectable by
+ * any browser role, and naming it here would fail the whole read.
+ */
+export async function fetchTelegramLinks(orgId: number): Promise<Map<number, string | null>> {
+  const { data, error } = await supabase
+    .from("telegram_links")
+    .select("membership_id, linked_at")
+    .eq("org_id", orgId)
+    .not("chat_id", "is", null);
+  if (error) throw error;
+  return new Map((data ?? []).map((r) => [r.membership_id, r.linked_at ?? null]));
+}
+
 /* ------------------------------------------------------------------ join code */
 
 export type JoinCode = {

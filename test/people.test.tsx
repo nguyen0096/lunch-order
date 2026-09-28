@@ -20,6 +20,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
   return {
     ...actual,
     fetchOrgMembers: vi.fn(),
+    fetchTelegramLinks: vi.fn(),
     fetchJoinCode: vi.fn(),
     setJoinCode: vi.fn(),
     fetchInvitations: vi.fn(),
@@ -30,6 +31,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
 });
 
 const fetchOrgMembers = vi.mocked(api.fetchOrgMembers);
+const fetchTelegramLinks = vi.mocked(api.fetchTelegramLinks);
 const fetchJoinCode = vi.mocked(api.fetchJoinCode);
 const setJoinCode = vi.mocked(api.setJoinCode);
 const fetchInvitations = vi.mocked(api.fetchInvitations);
@@ -104,9 +106,15 @@ const INVITATION: Invitation = {
 };
 
 function serve(
-  over: { members?: OrgMember[]; code?: JoinCode; invitations?: Invitation[] } = {},
+  over: {
+    members?: OrgMember[];
+    code?: JoinCode;
+    invitations?: Invitation[];
+    links?: Map<number, string | null>;
+  } = {},
 ) {
   fetchOrgMembers.mockResolvedValue(over.members ?? makeMembers());
+  fetchTelegramLinks.mockResolvedValue(over.links ?? new Map());
   fetchJoinCode.mockResolvedValue(over.code ?? { code: CODE, setAt: ago(3 * DAY) });
   fetchInvitations.mockResolvedValue(over.invitations ?? []);
   // The database echoes back what it stored, so the screen shows the real row.
@@ -180,6 +188,7 @@ describe("People, loading and error", () => {
     fetchOrgMembers.mockReturnValue(new Promise(() => {}));
     fetchJoinCode.mockReturnValue(new Promise(() => {}));
     fetchInvitations.mockReturnValue(new Promise(() => {}));
+    fetchTelegramLinks.mockReturnValue(new Promise(() => {}));
     renderPeople();
 
     expect(await screen.findAllByRole("status")).not.toHaveLength(0);
@@ -190,6 +199,7 @@ describe("People, loading and error", () => {
     fetchOrgMembers.mockRejectedValue({ message: "JWT expired" });
     fetchJoinCode.mockResolvedValue({ code: CODE, setAt: null });
     fetchInvitations.mockResolvedValue([]);
+    fetchTelegramLinks.mockResolvedValue(new Map());
     renderPeople();
 
     expect(await screen.findByText("JWT expired")).toBeInTheDocument();
@@ -579,6 +589,66 @@ describe("People, members without an email address", () => {
 });
 
 /* -------------------------------------------------------------- invitations */
+
+describe("People, who is on Telegram", () => {
+  // Neyu linked on a known date, Sếp linked before the date was recorded, Tèo
+  // never did, and Dinh (removed) had linked while still in the office.
+  const LINKS = new Map<number, string | null>([
+    [1, "2026-09-03T02:00:00Z"],
+    [2, null],
+    [4, "2026-08-01T02:00:00Z"],
+  ]);
+
+  it("asks for this office's links", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    expect(fetchTelegramLinks).toHaveBeenCalledWith(7);
+  });
+
+  it("counts the active members who linked, out of the active members", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    // Dinh linked but is removed, so is in neither number.
+    expect(screen.getByText(/^2 of 3 on Telegram\./)).toBeInTheDocument();
+  });
+
+  it("marks each person linked, with the date, or not linked", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    const neyu = within(memberRow("Neyu"));
+    expect(neyu.getByText("Telegram: linked")).toBeInTheDocument();
+    expect(neyu.getByText("since 3 Sept 2026")).toBeInTheDocument();
+
+    const teo = within(memberRow("Tèo"));
+    expect(teo.getByText("Telegram: not linked")).toBeInTheDocument();
+    expect(teo.queryByText("Telegram: linked")).not.toBeInTheDocument();
+  });
+
+  it("does not invent a date for a link older than the record of it", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    const sep = within(memberRow("Sếp"));
+    expect(sep.getByText("Telegram: linked")).toBeInTheDocument();
+    expect(sep.queryByText(/^since /)).not.toBeInTheDocument();
+  });
+
+  it("says nobody is on Telegram when nobody linked", async () => {
+    serve();
+    renderPeople();
+    await settled();
+
+    expect(screen.getByText(/^0 of 3 on Telegram\./)).toBeInTheDocument();
+    expect(screen.getAllByText("Telegram: not linked")).toHaveLength(4);
+  });
+});
 
 describe("People, email invitations", () => {
   it("says what the empty list means instead of showing nothing", async () => {

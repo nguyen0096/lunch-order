@@ -20,6 +20,7 @@ import {
   fetchInvitations,
   fetchJoinCode,
   fetchOrgMembers,
+  fetchTelegramLinks,
   generateJoinCode,
   humanError,
   revokeInvitation,
@@ -59,6 +60,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
   const [members, setMembers] = useState<OrgMember[] | null>(null);
   const [code, setCode] = useState<JoinCode | null>(null);
   const [invitations, setInvitations] = useState<Invitation[] | null>(null);
+  const [links, setLinks] = useState<Map<number, string | null> | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Captured with the data rather than read during render, so "3 minutes ago"
   // is measured from one instant and every row on the screen agrees.
@@ -67,14 +69,16 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
 
   const load = useCallback(async () => {
     try {
-      const [nextMembers, nextCode, nextInvitations] = await Promise.all([
+      const [nextMembers, nextCode, nextInvitations, nextLinks] = await Promise.all([
         fetchOrgMembers({ orgId: org.id, meProfileId: me.profileId }),
         fetchJoinCode(org.id),
         fetchInvitations(org.id),
+        fetchTelegramLinks(org.id),
       ]);
       setMembers(nextMembers);
       setCode(nextCode);
       setInvitations(nextInvitations);
+      setLinks(nextLinks);
       setNow(appNow());
       setLoadError(null);
     } catch (e) {
@@ -169,11 +173,14 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
     );
   }
 
-  if (members === null || code === null || invitations === null) return <PeopleSkeleton />;
+  if (members === null || code === null || invitations === null || links === null) {
+    return <PeopleSkeleton />;
+  }
 
   const recent = [...members].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
   const waiting = invitations.filter((i) => i.acceptedAt === null);
   const activeCount = members.filter((m) => m.status === "active").length;
+  const onTelegram = members.filter((m) => m.status === "active" && links.has(m.membershipId)).length;
 
   return (
     <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] lg:items-start">
@@ -214,6 +221,9 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
           Members
         </h2>
         <p className="mt-1 text-sm text-muted">
+          {`${onTelegram} of ${activeCount} on Telegram. Anybody not on it hears nothing the bot sends to people one by one, the weekly bill included.`}
+        </p>
+        <p className="mt-1 text-sm text-muted">
           {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one; their past orders stay on the bill, because they ate the food. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
         </p>
 
@@ -230,6 +240,12 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
               <MemberRow
                 key={member.membershipId}
                 member={member}
+                telegram={
+                  links.has(member.membershipId)
+                    ? { linkedAt: links.get(member.membershipId) ?? null }
+                    : null
+                }
+                timeZone={org.timezone}
                 iAmOwner={iAmOwner}
                 busy={busy}
                 onRole={(next) => void changeRole.run({ member, role: next })}
@@ -658,12 +674,17 @@ function InvitePanel({
  */
 function MemberRow({
   member,
+  telegram,
+  timeZone,
   iAmOwner,
   busy,
   onRole,
   onStatus,
 }: {
   member: OrgMember;
+  /** Null when they have not linked. `linkedAt` is null for a link older than its date. */
+  telegram: { linkedAt: string | null } | null;
+  timeZone: string;
   iAmOwner: boolean;
   busy: boolean;
   onRole: (role: Role) => void;
@@ -695,6 +716,20 @@ function MemberRow({
               the identifier that is always there. */}
           <span className="tabular">{member.shortCode}</span>
           {member.email !== "" && <span className="truncate">{member.email}</span>}
+        </p>
+        <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
+          {telegram === null ? (
+            <Badge variant="neutral">Telegram: not linked</Badge>
+          ) : (
+            <>
+              <Badge variant="success">Telegram: linked</Badge>
+              {telegram.linkedAt !== null && (
+                <span title={absoluteLabel(telegram.linkedAt, timeZone)}>
+                  {`since ${linkedDate(telegram.linkedAt, timeZone)}`}
+                </span>
+              )}
+            </>
+          )}
         </p>
       </div>
 
@@ -845,6 +880,11 @@ function untilLabel(iso: string, now: Date, timeZone: string): string {
   if (ms < DAY) return rtf.format(Math.floor(ms / HOUR), "hour");
   if (ms < 30 * DAY) return rtf.format(Math.floor(ms / DAY), "day");
   return `on ${dateLabel(then, timeZone)}`;
+}
+
+function linkedDate(iso: string, timeZone: string): string {
+  const at = Date.parse(iso);
+  return Number.isNaN(at) ? "an unknown date" : dateLabel(at, timeZone);
 }
 
 function dateLabel(at: number, timeZone: string): string {

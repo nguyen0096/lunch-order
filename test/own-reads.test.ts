@@ -1,5 +1,5 @@
 import { fetchMe, joinWithCode } from "../src/web/api/core.js";
-import { previewInvitation } from "../src/web/api/people.js";
+import { fetchTelegramLinks, previewInvitation } from "../src/web/api/people.js";
 import { createTelegramLink, fetchTelegramLink } from "../src/web/api/settings.js";
 
 // The reads that answer for the caller alone go through functions, because
@@ -64,6 +64,40 @@ describe("the Telegram link", () => {
     });
     expect(client.rpc).toHaveBeenCalledWith("create_my_telegram_link", { p_org_id: 7 });
     expect(client.from).not.toHaveBeenCalled();
+  });
+});
+
+describe("who in the office linked Telegram", () => {
+  it("reads only linked rows, and never the token or the chat id", async () => {
+    const steps: Array<[string, unknown[]]> = [];
+    const q: Record<string, unknown> = {};
+    for (const step of ["select", "eq", "not"]) {
+      q[step] = (...args: unknown[]) => {
+        steps.push([step, args]);
+        return q;
+      };
+    }
+    q.then = (resolve: (v: unknown) => unknown) =>
+      resolve({
+        data: [
+          { membership_id: 3, linked_at: "2026-09-03T02:00:00Z" },
+          { membership_id: 5, linked_at: null },
+        ],
+        error: null,
+      });
+    client.from.mockImplementation((table: string) => {
+      if (table !== "telegram_links") throw new Error(`no read of ${table} expected`);
+      return q;
+    });
+
+    const links = await fetchTelegramLinks(7);
+
+    expect([...links]).toEqual([[3, "2026-09-03T02:00:00Z"], [5, null]]);
+    expect(steps).toEqual([
+      ["select", ["membership_id, linked_at"]],
+      ["eq", ["org_id", 7]],
+      ["not", ["chat_id", "is", null]],
+    ]);
   });
 });
 
