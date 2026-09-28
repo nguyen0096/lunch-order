@@ -266,6 +266,35 @@ more thing to get wrong.
 | Account | always, with the account holder's name under it |
 | Bank | always |
 
+**Under the code, Share QR or Download QR.** The code as a PNG, black on
+white whatever the theme, with the amount, the reference and the payee printed
+under it, named `lunch-<reference>-<yyyy-mm-dd>.png`. Where the browser can
+share files (iOS Safari, Android Chrome) it opens the share sheet, whose text
+carries the amount and the reference, and "Save Image" is one of its rows;
+anywhere else, desktop included, it downloads. Banking apps scan from the photo
+library, so this is the shortest way from a phone's bill to a paid one. The
+image is drawn when the code is, not on the tap, because Safari refuses a share
+that starts too long after the tap that asked for it; until it is ready, or on
+a browser that cannot draw it, the button carries the reason.
+
+**On a phone, Open your bank app.** Only when all of these hold: the device is
+an Android phone, an iPhone or an iPad (from the user agent; an iPad reports a
+Mac with a touch screen), the office bills in VND, something is owed, and the
+office's account makes a valid code. Nobody settled or in credit sees it.
+
+| | |
+| --- | --- |
+| first time on this device | **Open your bank app** opens a picker of that platform's apps, text only, with a filter that ignores case and diacritics. Picking one remembers it (`localStorage`, `lunch.bankApp`) and opens it |
+| after that | **Open &lt;app&gt;**, one tap, and **Other bank app** to change it |
+
+The tap copies the reference, says so, and then leaves for
+`https://dl.vietqr.io/pay?app=<appId>&ba=<account>@<bin>&am=<owed>&tn=<reference>`.
+The app opens on its own home screen: VietQR's redirector drops the account,
+amount and memo for every app as of 2026-09-28, so the line under the button
+says the transfer will not be filled in. The app list is vendored and the link
+depends on `dl.vietqr.io`; see
+[Refresh the bank app list](../how-to/refresh-bank-app-list.md).
+
 The reference is the part that gets mistyped, and getting it wrong is not
 something anybody can put right afterwards: a transfer whose memo omits it
 never reaches this app at all, so it is not unmatched money waiting for an

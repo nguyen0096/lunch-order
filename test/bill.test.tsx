@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { BillScreen } from "../src/web/components/BillScreen.js";
 import * as api from "../src/web/api.js";
+import * as phone from "../src/web/phone.js";
 import type {
   Account,
   Bill,
@@ -34,6 +35,19 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchUnpricedMeals: vi.fn(),
   };
 });
+
+// Leaving the page is the one thing jsdom cannot do.
+vi.mock("../src/web/phone.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/web/phone.js")>()),
+  openUrl: vi.fn(),
+}));
+
+// jsdom has no canvas, so the drawn PNG is faked and everything around it,
+// the share-or-download choice included, stays real.
+vi.mock("../src/web/components/bill/shareQr.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/web/components/bill/shareQr.js")>()),
+  composeQrPng: vi.fn(async () => new Blob([new Uint8Array([137, 80, 78, 71])], { type: "image/png" })),
+}));
 
 const fetchBill = vi.mocked(api.fetchBill);
 const fetchBillLines = vi.mocked(api.fetchBillLines);
@@ -1018,5 +1032,130 @@ describe("A week still waiting on the caterer's price", () => {
     ).toBeInTheDocument();
     // The bill itself still loaded, so it is still shown.
     expect(headline("You owe")).toHaveTextContent(money(180_000));
+  });
+});
+
+describe("Bill, paying from the phone", () => {
+  const ANDROID =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36";
+  const IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Version/17.0 Mobile/15E148 Safari/604.1";
+  const realUserAgent = navigator.userAgent;
+  const openUrl = vi.mocked(phone.openUrl);
+
+  function onDevice(userAgent: string, share?: Pick<Navigator, "share" | "canShare">) {
+    Object.defineProperty(navigator, "userAgent", { value: userAgent, configurable: true });
+    Object.defineProperty(navigator, "share", { value: share?.share, configurable: true });
+    Object.defineProperty(navigator, "canShare", { value: share?.canShare, configurable: true });
+  }
+
+  afterEach(() => {
+    onDevice(realUserAgent);
+    localStorage.clear();
+  });
+
+  it("offers no bank app on a desktop, and a download rather than a share", async () => {
+    serve({ weeks: [week()] });
+    renderBill();
+
+    await screen.findByText("Amount");
+    expect(screen.queryByRole("button", { name: /bank app/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Open / })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Download QR" })).toBeInTheDocument();
+  });
+
+  it("asks which app on the first tap, remembers it, and opens it with the reference copied", async () => {
+    const user = userEvent.setup();
+    onDevice(ANDROID);
+    serve({ weeks: [week()] });
+    const { unmount } = renderBill();
+
+    await user.click(await screen.findByRole("button", { name: "Open your bank app" }));
+    const picker = await screen.findByRole("dialog", { name: "Which bank app do you pay with?" });
+    await user.type(within(picker).getByLabelText("Find your bank"), "a chau");
+    await user.click(within(picker).getByRole("button", { name: "ACB One, Ngân hàng TMCP Á Châu" }));
+
+    await waitFor(() =>
+      expect(openUrl).toHaveBeenCalledWith(
+        "https://dl.vietqr.io/pay?app=acb&ba=113366668888@970415&am=180000&tn=TEST%20LUNCH%20NEYU",
+      ),
+    );
+    expect(await navigator.clipboard.readText()).toBe(REF);
+    expect(success).toHaveBeenCalledWith("Reference copied. Paste it into the transfer message.");
+    expect(localStorage.getItem(phone.BANK_APP_KEY)).toBe("acb");
+    unmount();
+
+    // Next visit, one tap.
+    openUrl.mockClear();
+    renderBill();
+    await user.click(await screen.findByRole("button", { name: "Open ACB One" }));
+    await waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Other bank app" })).toBeInTheDocument();
+  });
+
+  it("does not promise a filled-in transfer", async () => {
+    onDevice(IPHONE);
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByText(/will not fill the transfer in/)).toBeInTheDocument();
+  });
+
+  it("forgets a remembered app this platform's list does not carry", async () => {
+    onDevice(IPHONE);
+    localStorage.setItem(phone.BANK_APP_KEY, "no-such-app");
+    serve({ weeks: [week()] });
+    renderBill();
+
+    expect(await screen.findByRole("button", { name: "Open your bank app" })).toBeInTheDocument();
+  });
+
+  it.each([
+    ["settled", statement({ paidMinor: 180_000, status: "paid" })],
+    ["in credit", statement({ paidMinor: 280_000, status: "paid" })],
+  ])("offers no bank app to somebody %s", async (_, s) => {
+    onDevice(ANDROID);
+    serve({ weeks: [week({ statement: s })] });
+    renderBill();
+
+    await screen.findByText(REF);
+    expect(screen.queryByRole("button", { name: /bank app/ })).not.toBeInTheDocument();
+  });
+
+  it("offers no bank app when the office bills in anything but dong", async () => {
+    onDevice(ANDROID);
+    serve({ weeks: [week()] });
+    render(
+      <BillScreen
+        me={ME}
+        org={{ ...ORG, currency: { code: "USD", minorUnits: 2, locale: "en-US" } }}
+        role="member"
+      />,
+    );
+
+    await screen.findByText("Amount");
+    expect(screen.queryByRole("button", { name: /bank app/ })).not.toBeInTheDocument();
+  });
+
+  it("shares the code as a PNG, with the amount and reference in the text", async () => {
+    const user = userEvent.setup();
+    const share = vi.fn(async (_data: ShareData) => {});
+    onDevice(IPHONE, { share, canShare: () => true });
+    serve({ weeks: [week()] });
+    renderBill();
+
+    // Re-queried: the button is a new element once the image is ready.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Share QR" })).not.toHaveAttribute("aria-disabled"),
+    );
+    await user.click(screen.getByRole("button", { name: "Share QR" }));
+
+    await waitFor(() => expect(share).toHaveBeenCalledTimes(1));
+    const data = share.mock.calls[0]![0];
+    expect(data.files?.[0]?.name).toMatch(/^lunch-TEST-LUNCH-NEYU-\d{4}-\d{2}-\d{2}\.png$/);
+    expect(data.files?.[0]?.type).toBe("image/png");
+    expect(data.text).toContain(REF);
+    expect(data.text).toContain(formatMoney(180_000, ORG.currency));
+    expect(success).toHaveBeenCalledWith("QR shared");
   });
 });

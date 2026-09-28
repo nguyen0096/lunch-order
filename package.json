@@ -14,6 +14,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "gen:bank-apps": "node scripts/refresh-bank-apps.mjs",
     "gen:types": "supabase gen types typescript --project-id wvtbstticnactealupph --schema public > src/shared/database.types.ts"
   },
   "dependencies": {
