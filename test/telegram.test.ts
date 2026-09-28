@@ -1214,7 +1214,7 @@ describe("joining from Telegram", () => {
 
   it("binds the chat through the system join, with the chat Telegram reported", () => {
     expect(bot.replace(/\s+/g, " ")).toContain(
-      "return await asSystem((tx) => tx<Array<{ org_name: string }>>` select j.org_name " +
+      "asSystem((tx) => tx<Array<{ org_name: string }>>` select j.org_name " +
       "from private.join_office_with_code( ${profileId}::uuid, ${code}, ${name}, null, ${chatId}::bigint) j`)",
     );
   });
@@ -1224,12 +1224,15 @@ describe("joining from Telegram", () => {
     expect(bot).not.toMatch(/\bp_chat_id\b/);
   });
 
-  it("calls the old public signature only when the new function is missing", () => {
-    const legacy = bot.indexOf("public.join_with_code(${code}, ${name}, ${chatId})");
-    expect(legacy).toBeGreaterThan(-1);
-    const guard = bot.lastIndexOf("e.code !== UNDEFINED_FUNCTION", legacy);
-    expect(guard).toBeGreaterThan(-1);
-    expect(legacy - guard).toBeLessThan(300);
+  it("never falls back to the public join, whose chat overload is dropped", () => {
+    expect(bot).not.toMatch(/from public\.join_with_code\(/);
+    expect(bot).not.toContain("42883");
+    const dropped = readFileSync(
+      join(import.meta.dirname, "..", "supabase", "migrations",
+        "20261014100000_the_old_join_is_gone.sql"),
+      "utf8",
+    );
+    expect(dropped).toContain("drop function if exists public.join_with_code(text, text, bigint, text);");
   });
 
   const REMOVED =
@@ -1421,10 +1424,52 @@ describe("the bot telling a group its chat id", () => {
     expect(bot.indexOf("groupEventOf(update)")).toBeGreaterThan(bot.indexOf("async function handle("));
   });
 
-  it("is registered in the docs with my_chat_member in allowed_updates", () => {
-    const howTo = readFileSync(
-      join(import.meta.dirname, "..", "docs", "how-to", "set-up-a-deployment.md"), "utf8",
-    );
-    expect(howTo).toMatch(/"allowed_updates":\[[^\]]*"my_chat_member"/);
+});
+
+/**
+ * allowed_updates.json is the one list of update types Telegram is asked for.
+ * deploy.yml registers it on every deploy, so an update the bot reads and the
+ * list leaves out is one that never arrives.
+ */
+describe("the webhook registration", () => {
+  const root = join(import.meta.dirname, "..");
+  const read = (...path: string[]) => readFileSync(join(root, ...path), "utf8");
+  const allowed: unknown = JSON.parse(read("supabase", "functions", "telegram", "allowed_updates.json"));
+  const deploy = read(".github", "workflows", "deploy.yml");
+
+  // handle() would also read edited_message, which is deliberately not
+  // requested, so an edited message is not acted on.
+  it("asks for message, callback_query and my_chat_member, each of which the bot reads", () => {
+    expect(allowed).toEqual(["message", "callback_query", "my_chat_member"]);
+    const bot = read("supabase", "functions", "telegram", "index.ts");
+    const shared = read("src", "shared", "telegram.ts");
+    expect(bot).toContain('update["message"]');
+    expect(bot).toContain('update["callback_query"]');
+    expect(shared).toContain('u["my_chat_member"]');
+    expect(receivesMyChatMember(allowed as string[])).toBe(true);
+  });
+
+  it("is registered by deploy.yml from that file, as form fields", () => {
+    expect(deploy).toContain("ALLOWED_UPDATES_FILE: supabase/functions/telegram/allowed_updates.json");
+    expect(deploy).toContain('--form-string "allowed_updates=$allowed"');
+    expect(deploy).toContain('--form-string "secret_token=$WEBHOOK_SECRET"');
+    expect(deploy).not.toMatch(/\s-F\s/);
+    expect(deploy).toMatch(/--slurpfile want "\$ALLOWED_UPDATES_FILE"/);
+  });
+
+  it("checks the function's secret before Telegram is told it", () => {
+    expect(deploy.indexOf("X-Telegram-Bot-Api-Secret-Token: $WEBHOOK_SECRET"))
+      .toBeLessThan(deploy.indexOf("/setWebhook"));
+  });
+
+  it("never drops the updates waiting for the bot", () => {
+    const docs = ["set-up-a-deployment.md", "deploy-edge-functions.md"].map((f) => read("docs", "how-to", f));
+    for (const text of [deploy, ...docs]) {
+      expect(text).not.toMatch(/drop_pending_updates["=:]\s*"?true/);
+    }
+  });
+
+  it("gates the release on the webhook", () => {
+    expect(deploy).toContain("needs: [deploy, deploy-functions, register-webhook]");
   });
 });

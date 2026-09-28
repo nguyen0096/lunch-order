@@ -498,9 +498,6 @@ function soleProfile(links: Link[]): { profileId: string; fullName: string } | n
   return distinct.size === 1 && only ? { profileId: only[0], fullName: only[1] } : null;
 }
 
-/** Postgres's undefined_function. */
-const UNDEFINED_FUNCTION = "42883";
-
 /**
  * Joining, and binding this chat to the membership in the same transaction.
  *
@@ -511,22 +508,12 @@ const UNDEFINED_FUNCTION = "42883";
 async function join(
   chatId: number, code: string, profileId: string, name: string,
 ): Promise<void> {
-  const outcome = await attempt(async () => {
-    try {
-      return await asSystem((tx) =>
-        tx<Array<{ org_name: string }>>`
-          select j.org_name
-            from private.join_office_with_code(
-              ${profileId}::uuid, ${code}, ${name}, null, ${chatId}::bigint) j`);
-    } catch (e) {
-      // A database still without 20261013100000, for the minutes a deploy
-      // runs ahead of the migration. Remove with the old join_with_code.
-      if (!isDatabaseError(e) || e.code !== UNDEFINED_FUNCTION) throw e;
-      return await asMember(profileId, (tx) =>
-        tx<Array<{ org_name: string }>>`
-          select j.org_name from public.join_with_code(${code}, ${name}, ${chatId}) j`);
-    }
-  });
+  const outcome = await attempt(() =>
+    asSystem((tx) =>
+      tx<Array<{ org_name: string }>>`
+        select j.org_name
+          from private.join_office_with_code(
+            ${profileId}::uuid, ${code}, ${name}, null, ${chatId}::bigint) j`));
   await sayJoined(chatId, outcome);
 }
 

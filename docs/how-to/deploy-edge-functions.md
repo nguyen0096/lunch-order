@@ -17,8 +17,9 @@ git push origin main
 
 `.github/workflows/ci.yml` runs typecheck and tests. When it passes on `main`,
 `.github/workflows/deploy.yml` deploys all four functions (`telegram`,
-`outbox-drain`, `parse-assist`, `sepay`) with `supabase functions deploy`.
-Nothing else is required, and this is the path that should be used.
+`outbox-drain`, `parse-assist`, `sepay`) with `supabase functions deploy`, then
+registers Telegram's webhook on `telegram`. Nothing else is required, and this
+is the path that should be used.
 
 ## Deploying by hand
 
@@ -54,6 +55,10 @@ working and silently dropping money: with the gate on, SePay's deliveries are
 refused before the function's per-office API key check runs, and after its
 retries give up nothing records the transfer.
 
+A hand deploy does not register the webhook. It does not need to unless
+`supabase/functions/telegram/allowed_updates.json` changed; if it did, use the
+emergency command in [Set up a deployment](set-up-a-deployment.md), step 7.
+
 ## Rolling back
 
 There is no version history for Edge Functions. Roll the code back and deploy
@@ -71,9 +76,9 @@ identical from the outside.
 
 | Symptom | Cause |
 | --- | --- |
-| Telegram silent, `getWebhookInfo` shows `401 Unauthorized` | `TELEGRAM_WEBHOOK_SECRET` differs between Supabase and the value given to `setWebhook` |
+| Telegram silent, `getWebhookInfo` shows `401 Unauthorized` | `TELEGRAM_WEBHOOK_SECRET` differs between Supabase and the value given to `setWebhook`. The deploy refuses to register a mismatched one, so look for a hand registration or a Supabase secret changed since |
 | Telegram silent, `getWebhookInfo` clean | `verify_jwt` is true for `telegram`; check `config.toml` deployed |
-| Bot added to a group but posts no chat ID | `getWebhookInfo` lists `allowed_updates` without `my_chat_member`; call `setWebhook` again as in [Set up a deployment](set-up-a-deployment.md), step 7 |
+| Bot added to a group but posts no chat ID | `getWebhookInfo` lists `allowed_updates` without `my_chat_member`. The deploy's `register-webhook` job was skipped (no Telegram GitHub secrets) or failed; fix that and rerun it, or see [Set up a deployment](set-up-a-deployment.md), step 7 |
 | Outbox never sends, cron says succeeded | `pg_net` is asynchronous, so the cron job never sees the response. Look in `net._http_response`, not `cron.job_run_details` |
 | `404 NOT_FOUND: Requested function was not found` in `net._http_response` | the function is not deployed |
 

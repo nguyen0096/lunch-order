@@ -82,7 +82,8 @@ select '00000000-0000-0000-0000-000000000000', u.id::uuid, 'authenticated', 'aut
     ('abababab-0000-0000-0000-000000000006', 'bao@pay.test',  'Bao Ngoc'),
     ('abababab-0000-0000-0000-000000000007', 'gone@pay.test', 'Da Di'),
     ('abababab-0000-0000-0000-000000000008', 'bown@pay.test', 'Be Owner'),
-    ('abababab-0000-0000-0000-000000000009', 'badm@pay.test', 'Be Admin')
+    ('abababab-0000-0000-0000-000000000009', 'badm@pay.test', 'Be Admin'),
+    ('abababab-0000-0000-0000-00000000000a', 'rmv@pay.test',  'Bi Moi')
   ) as u(id, email, name)
 on conflict (id) do nothing;
 
@@ -99,6 +100,7 @@ join (values
   ('pay-a', 'abababab-0000-0000-0000-000000000005', 'member', 'TEO',  'active'),
   ('pay-a', 'abababab-0000-0000-0000-000000000006', 'member', 'BAO',  'active'),
   ('pay-a', 'abababab-0000-0000-0000-000000000007', 'member', 'GONE', 'inactive'),
+  ('pay-a', 'abababab-0000-0000-0000-00000000000a', 'member', 'RMV',  'active'),
   ('pay-b', 'abababab-0000-0000-0000-000000000008', 'owner',  'BOWN', 'active'),
   ('pay-b', 'abababab-0000-0000-0000-000000000009', 'admin',  'BADM', 'active')
 ) as u(slug, pid, role, code, status) on u.slug = o.slug;
@@ -111,7 +113,10 @@ select 'adm',  'abababab-0000-0000-0000-000000000002' union all
 select 'dinh', 'abababab-0000-0000-0000-000000000004' union all
 select 'teo',  'abababab-0000-0000-0000-000000000005' union all
 select 'bao',  'abababab-0000-0000-0000-000000000006' union all
-select 'bown', 'abababab-0000-0000-0000-000000000008';
+select 'bown', 'abababab-0000-0000-0000-000000000008' union all
+select 'rmv',  'abababab-0000-0000-0000-00000000000a' union all
+select 'm_rmv', id::text from public.memberships
+ where profile_id = 'abababab-0000-0000-0000-00000000000a';
 
 -- Everybody connected except TEO and NOL. GONE's link outlived the removal.
 insert into public.telegram_links (membership_id, org_id, chat_id, linked_at)
@@ -178,6 +183,31 @@ insert into probe values ('P5 and the money still reached them',
 insert into ctx values ('p6', pg_temp.bank('org_a', 'pay-6', 30000, 'LUNCHGONE')::text);
 insert into probe values ('P6 a removed member is not messaged, linked or not',
   pg_temp.sent(pg_temp.c('p6')::bigint), '(none)');
+
+-- RMV is linked and active until an admin removes them from People, which is
+-- the path that stamps removed_at.
+do $$
+begin
+  set local role authenticated;
+  perform pg_temp.act_as(pg_temp.c('adm'));
+  insert into probe values ('P7 an admin removes RMV',
+    pg_temp.attempt(format($q$update public.memberships set status = 'inactive' where id = %s$q$,
+                           pg_temp.c('m_rmv'))), 'ok 1');
+  reset role;
+end $$;
+insert into probe values ('P7 control: the removal is on the record and the link outlived it',
+  (select m.status || ' ' || (m.removed_at is not null)::text || ' ' || m.removed_by::text
+          || ' ' || (tl.chat_id is not null)::text
+     from public.memberships m left join public.telegram_links tl on tl.membership_id = m.id
+    where m.id = pg_temp.c('m_rmv')::bigint),
+  'inactive true ' || pg_temp.c('adm') || ' true');
+
+insert into ctx values ('p7', pg_temp.bank('org_a', 'pay-7', 30000, 'LUNCHRMV')::text);
+insert into probe values ('P7 a member removed by an admin is not messaged about money arriving',
+  (select count(*)::text from public.notification_outbox
+    where kind = 'payment_ack' and recipient_profile_id = pg_temp.c('rmv')::uuid), '0');
+insert into probe values ('P7 control: the transfer did arrive',
+  (select count(*)::text from public.payments where id = pg_temp.c('p7')::bigint), '1');
 
 ------------------------------------------- U: an unmatched transfer is raised
 

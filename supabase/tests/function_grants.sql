@@ -102,4 +102,12 @@ select case when count(*) = 0 then 'PASS: no trigger function is granted'
        end as check_5_no_trigger_functions
   from found where is_trigger;
 
+-- 6. Each callable name is one signature. A second overload is a second door
+--    with its own grants, and the one left behind after its callers moved on is
+--    the one nobody reviews again.
+select case when count(*) = 0 then 'PASS: no callable function is overloaded'
+            else 'FAIL: callable under more than one signature -> ' || string_agg(name, ', ')
+       end as check_6_one_signature
+  from (select name from found group by name having count(*) > 1) o;
+
 rollback;
