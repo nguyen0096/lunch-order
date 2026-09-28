@@ -50,18 +50,19 @@ import { asMember, asSystem, isDatabaseError, type Tx } from "../_shared/db.ts";
 import { signedOutClient } from "../_shared/supabaseClient.ts";
 import { secretsMatch } from "../_shared/secrets.ts";
 import {
-  answerCallbackQuery, deleteMyCommands, editMessageText, sendMessage, setMyCommands,
-  type InlineKeyboard,
+  answerCallbackQuery, deleteMyCommands, editMessageText, getMe, getWebhookInfo, sendMessage,
+  setMyCommands, type InlineKeyboard,
 } from "../_shared/telegramApi.ts";
 import {
   addDaysIso, commandsFor, decodeCallback, encodeCallback, escapeHtml, formatServiceDate,
-  helpFor, humanError, isJoinCode, isLinkToken, joinCodeInPrompt, namePrompt,
+  groupChatIdText, groupEvent, helpFor, humanError, isJoinCode, isLinkToken, joinCodeInPrompt,
+  mayBeServiceMessageAdd, namePrompt, receivesMyChatMember,
   NOBODY_TO_PASS_IT_TO, normalizeJoinCode, NOTHING_TO_LEAVE, NOTHING_TO_PASS_ON,
   orderingClosedReason, orgHeading, parseCommand, randomDish, renderAccountText,
   renderDayText, renderExitCancelledText, renderExitRefusedText, renderHandoverOfferedText,
   renderHandoverPickText, renderLeaveConfirmText, renderLeftText, renderOfferText,
   renderUnlinkConfirmText, renderUnlinkedText, targetMenu, todayIn, vietQrLink,
-  type CallbackAction, type ExitKind, type Handover, type MemberKind, type Money,
+  type CallbackAction, type ExitKind, type GroupEvent, type Handover, type MemberKind, type Money,
 } from "../_shared/telegram.ts";
 import { formatMoney, type Currency } from "../_shared/money.ts";
 
@@ -162,9 +163,19 @@ async function handle(update: Record<string, unknown>): Promise<void> {
   const callback = update["callback_query"] as CallbackQuery | undefined;
   const message = (update["message"] ?? update["edited_message"]) as Message | undefined;
 
+  // Outside the guard below on purpose: its "Something went wrong" would land
+  // in a group that asked nothing, or in a migrated group that no longer exists.
+  try {
+    const event = await groupEventOf(update);
+    if (event !== null) return await onGroupEvent(event);
+  } catch (e) {
+    console.error("telegram group event failed", e);
+    return;
+  }
+
   try {
     if (callback) return await onCallback(callback);
-    if (!message) return; // joins, leaves, channel posts: nothing to answer
+    if (!message) return; // removals, channel posts: nothing to answer
     return await onMessage(message);
   } catch (e) {
     // Anything reaching here is ours, not the member's: the database was
@@ -274,6 +285,49 @@ async function onMessage(message: Message): Promise<void> {
       await say(chatId, helpFor(memberKind(links)));
       return;
   }
+}
+
+/* ------------------------------------------------------------------- groups */
+
+async function groupEventOf(update: Record<string, unknown>): Promise<GroupEvent | null> {
+  if (!mayBeServiceMessageAdd(update)) {
+    return groupEvent(update, { botId: null, myChatMemberSubscribed: true });
+  }
+  const [me, hook] = await Promise.all([getMe(BOT_TOKEN), getWebhookInfo(BOT_TOKEN)]);
+  return groupEvent(update, {
+    botId: me.ok ? me.result.id : null,
+    // Unknown is read as the setWebhook the docs give, which delivers
+    // my_chat_member: a missed announcement is recoverable, a double one is not.
+    myChatMemberSubscribed: hook.ok ? receivesMyChatMember(hook.result.allowed_updates) : true,
+  });
+}
+
+/**
+ * Tells a group its own chat id, and nothing else: anybody can add the bot to
+ * any group.
+ *
+ * A migration also moves every office that posted to the old group, and its
+ * unsent messages, to the new id. The old id is dead from that moment, and the
+ * update saying so passed the webhook secret, so it is Telegram's word and not
+ * a caller's. Which offices matched is not said in the group.
+ */
+async function onGroupEvent(event: GroupEvent): Promise<void> {
+  if (event.kind === "migrated") {
+    try {
+      await asSystem(async (tx) => {
+        await tx`update public.organizations
+                    set telegram_group_chat_id = ${event.toChatId}
+                  where telegram_group_chat_id = ${event.fromChatId}`;
+        await tx`update public.notification_outbox
+                    set chat_id = ${event.toChatId}
+                  where chat_id = ${event.fromChatId} and status = 'pending'`;
+      });
+    } catch (e) {
+      console.error("following a group migration failed", e);
+    }
+  }
+  const chatId = event.kind === "added" ? event.chatId : event.toChatId;
+  await say(chatId, groupChatIdText(event));
 }
 
 /* --------------------------------------------------------- joining an office */

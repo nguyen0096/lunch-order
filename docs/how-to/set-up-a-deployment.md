@@ -102,9 +102,17 @@ curl -sX POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{"url":"https://<ref>.supabase.co/functions/v1/telegram",
        "secret_token":"<TELEGRAM_WEBHOOK_SECRET>",
-       "allowed_updates":["message","callback_query"],
+       "allowed_updates":["message","callback_query","my_chat_member"],
        "drop_pending_updates":true}'
 ```
+
+`my_chat_member` is how the bot learns it was added to a group, which is when
+it posts the group's chat ID there. Telegram keeps the previous
+`allowed_updates` whenever the field is left out, so a webhook registered with
+the old list keeps the old list until `setWebhook` is called again with this
+one. The bot still posts the ID on such a webhook, from the service message
+announcing the new member, but only once `my_chat_member` is in the list is
+one add sure to be one message.
 
 ## 8. Per office
 
@@ -118,7 +126,9 @@ empty one quietly disables a feature:
   office's own webhook key in `public.org_webhook_secrets`. See
   [Connect SePay](connect-sepay.md).
 - **The Telegram group.** Until `telegram_group_chat_id` is set, nothing is
-  posted to the group.
+  posted to the group. Add the bot to the group and it replies with the
+  group's chat ID; an admin pastes that under *Settings > Telegram group chat*.
+  See [Set up where the money goes](set-up-payment.md#telling-the-bot-where-to-post).
 
 ## 9. Verify
 

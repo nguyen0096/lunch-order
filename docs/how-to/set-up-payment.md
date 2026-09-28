@@ -45,10 +45,25 @@ produces a bill with no QR on it.
 
 ## Telling the bot where to post
 
-Same screen, **Where the bot posts**. The bot normally fills this in itself from
-the first message it sees in the group, so the usual answer is to add the bot to
-the group and send anything. The field is there for an admin who already knows
-the chat id and does not want to wait.
+Same screen, **Telegram group chat**. The bot does not fill this in by itself:
+
+1. Add the bot to the office's group. As it arrives it posts one message there:
+   "This group's chat ID is `-1001234567890`. An admin can paste it in the lunch
+   app under Settings > Telegram group chat." The ID is formatted as code, so a
+   tap copies it.
+2. Paste the ID into **Chat id** and press **Save**.
+
+The message names no office, because anybody can add the bot to any group. The
+bot says nothing when it is removed.
+
+If the group is later upgraded to a supergroup, Telegram gives it a new ID. The
+bot posts the new one in the supergroup and moves every office that posted to
+the old ID, and any of its messages not yet sent, to the new one, so nothing
+needs re-pasting. Pasting it by hand is still possible if the bot missed the
+upgrade.
+
+The webhook must receive `my_chat_member` for the bot to hear about being
+added reliably; see step 7 of [Set up a deployment](set-up-a-deployment.md).
 
 While `telegram_group_chat_id` is null the bot has nowhere to announce a
 published menu, which is why `notification_outbox` stays empty.

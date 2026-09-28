@@ -10,17 +10,21 @@ import {
   escapeHtml,
   formatCutoffIn,
   formatServiceDate,
+  groupChatIdText,
+  groupEvent,
   helpFor,
   humanError as botHumanError,
   isJoinCode,
   isLinkToken,
   joinCodeInPrompt,
+  mayBeServiceMessageAdd,
   namePrompt,
   normalizeJoinCode,
   orderingClosedReason,
   parseCommand,
   priceText,
   randomDish,
+  receivesMyChatMember,
   renderAccountText,
   renderDayText,
   renderExitCancelledText,
@@ -44,6 +48,7 @@ import {
   type CallbackAction,
   type AccountMessage,
   type DayMessage,
+  type GroupEventContext,
   type MemberKind,
 } from "../src/shared/telegram.js";
 import { orderDisabledReason } from "../src/shared/gating.js";
@@ -1239,5 +1244,187 @@ describe("joining from Telegram", () => {
     const said = REMOVED.replace("%", "Acme");
     expect(botHumanError({ message: said, code: "55000" })).toBe(said);
     expect(webHumanError({ message: said, code: "55000" })).toBe(said);
+  });
+});
+
+/* ------------------------------------------------------------------- groups */
+
+describe("the bot telling a group its chat id", () => {
+  const BOT = 4242;
+  const GROUP = -5012345678;
+  const SUPER = -1001234567890;
+  const ME = { id: BOT, is_bot: true, first_name: "Lunch" };
+  const SUBSCRIBED: GroupEventContext = { botId: null, myChatMemberSubscribed: true };
+  const UNSUBSCRIBED: GroupEventContext = { botId: BOT, myChatMemberSubscribed: false };
+
+  function change(
+    before: Record<string, unknown>,
+    after: Record<string, unknown>,
+    chat: Record<string, unknown> = { id: GROUP, type: "group" },
+  ) {
+    return {
+      update_id: 1,
+      my_chat_member: {
+        chat,
+        from: { id: 7, is_bot: false },
+        date: 0,
+        old_chat_member: { user: ME, ...before },
+        new_chat_member: { user: ME, ...after },
+      },
+    };
+  }
+
+  function service(fields: Record<string, unknown>, chat: Record<string, unknown> = { id: GROUP, type: "group" }) {
+    return { update_id: 2, message: { message_id: 9, date: 0, chat, ...fields } };
+  }
+
+  it("announces the bot arriving, as a member or an administrator, from left or kicked", () => {
+    for (const before of ["left", "kicked"]) {
+      for (const after of ["member", "administrator"]) {
+        expect(groupEvent(change({ status: before }, { status: after }), SUBSCRIBED))
+          .toEqual({ kind: "added", chatId: GROUP });
+      }
+    }
+  });
+
+  it("announces a supergroup by its own id", () => {
+    const sup = { id: SUPER, type: "supergroup" };
+    expect(groupEvent(change({ status: "left" }, { status: "member" }, sup), SUBSCRIBED))
+      .toEqual({ kind: "added", chatId: SUPER });
+  });
+
+  it("reads restricted by is_member, which is how a supergroup says in or out", () => {
+    expect(groupEvent(
+      change({ status: "left" }, { status: "restricted", is_member: true }), SUBSCRIBED,
+    )).toEqual({ kind: "added", chatId: GROUP });
+    expect(groupEvent(
+      change({ status: "restricted", is_member: false }, { status: "member" }), SUBSCRIBED,
+    )).toEqual({ kind: "added", chatId: GROUP });
+    expect(groupEvent(
+      change({ status: "left" }, { status: "restricted", is_member: false }), SUBSCRIBED,
+    )).toBeNull();
+  });
+
+  it("says nothing when the bot is removed", () => {
+    for (const after of ["left", "kicked"]) {
+      expect(groupEvent(change({ status: "member" }, { status: after }), SUBSCRIBED)).toBeNull();
+      expect(groupEvent(change({ status: "administrator" }, { status: after }), SUBSCRIBED)).toBeNull();
+    }
+    expect(groupEvent(service({ left_chat_member: ME }), UNSUBSCRIBED)).toBeNull();
+  });
+
+  it("says nothing when a bot already in the group is promoted or demoted", () => {
+    expect(groupEvent(change({ status: "member" }, { status: "administrator" }), SUBSCRIBED)).toBeNull();
+    expect(groupEvent(change({ status: "administrator" }, { status: "member" }), SUBSCRIBED)).toBeNull();
+  });
+
+  it("says nothing in a private chat or a channel", () => {
+    // my_chat_member arrives for a private chat when the person blocks or unblocks the bot.
+    const dm = { id: 99, type: "private" };
+    expect(groupEvent(change({ status: "kicked" }, { status: "member" }, dm), SUBSCRIBED)).toBeNull();
+    const channel = { id: -100777, type: "channel" };
+    expect(groupEvent(change({ status: "left" }, { status: "administrator" }, channel), SUBSCRIBED))
+      .toBeNull();
+  });
+
+  it("ignores a my_chat_member about somebody who is not this bot", () => {
+    const human = change({ status: "left" }, { status: "member" });
+    (human.my_chat_member.new_chat_member as Record<string, unknown>).user = { id: 5, is_bot: false };
+    expect(groupEvent(human, SUBSCRIBED)).toBeNull();
+    expect(groupEvent(change({ status: "left" }, { status: "member" }), { ...SUBSCRIBED, botId: 1 }))
+      .toBeNull();
+  });
+
+  it("posts once per add while the webhook receives my_chat_member", () => {
+    const joined = service({ new_chat_members: [ME] });
+    expect(mayBeServiceMessageAdd(joined)).toBe(true);
+    expect(groupEvent(joined, { botId: BOT, myChatMemberSubscribed: true })).toBeNull();
+    expect(groupEvent(service({ group_chat_created: true }), { botId: BOT, myChatMemberSubscribed: true }))
+      .toBeNull();
+  });
+
+  it("falls back to the service message on a webhook that does not receive my_chat_member", () => {
+    expect(groupEvent(service({ new_chat_members: [{ id: 1, is_bot: false }, ME] }), UNSUBSCRIBED))
+      .toEqual({ kind: "added", chatId: GROUP });
+    expect(groupEvent(service({ group_chat_created: true }), UNSUBSCRIBED))
+      .toEqual({ kind: "added", chatId: GROUP });
+  });
+
+  it("does not announce another bot joining, or a bot it could not identify", () => {
+    const other = service({ new_chat_members: [{ id: 777, is_bot: true }] });
+    expect(groupEvent(other, UNSUBSCRIBED)).toBeNull();
+    expect(groupEvent(service({ new_chat_members: [ME] }), { botId: null, myChatMemberSubscribed: false }))
+      .toBeNull();
+  });
+
+  it("only asks Telegram who it is for a service message that could be an add", () => {
+    expect(mayBeServiceMessageAdd(service({ text: "hello" }))).toBe(false);
+    expect(mayBeServiceMessageAdd(service({ new_chat_members: [{ id: 1, is_bot: false }] }))).toBe(false);
+    expect(mayBeServiceMessageAdd(service({ new_chat_members: [ME] }, { id: 1, type: "private" })))
+      .toBe(false);
+    expect(mayBeServiceMessageAdd(change({ status: "left" }, { status: "member" }))).toBe(false);
+    expect(mayBeServiceMessageAdd(service({ group_chat_created: true }))).toBe(true);
+  });
+
+  it("follows a group to its supergroup from the old group's message only", () => {
+    const moved = service({ migrate_to_chat_id: SUPER });
+    expect(groupEvent(moved, SUBSCRIBED)).toEqual({ kind: "migrated", fromChatId: GROUP, toChatId: SUPER });
+    expect(groupEvent(moved, UNSUBSCRIBED)).toEqual({ kind: "migrated", fromChatId: GROUP, toChatId: SUPER });
+    const arrived = service({ migrate_from_chat_id: GROUP }, { id: SUPER, type: "supergroup" });
+    expect(groupEvent(arrived, SUBSCRIBED)).toBeNull();
+    expect(groupEvent(arrived, UNSUBSCRIBED)).toBeNull();
+  });
+
+  it("never reads supergroup_chat_created, which Telegram says no update carries", () => {
+    expect(groupEvent(service({ supergroup_chat_created: true }, { id: SUPER, type: "supergroup" }), UNSUBSCRIBED))
+      .toBeNull();
+  });
+
+  it("ignores an ordinary group message, an edit, and anything malformed", () => {
+    expect(groupEvent(service({ text: "/start" }), UNSUBSCRIBED)).toBeNull();
+    expect(groupEvent({ edited_message: service({ migrate_to_chat_id: SUPER }).message }, SUBSCRIBED))
+      .toBeNull();
+    for (const junk of [null, undefined, 1, "x", {}, { my_chat_member: null }, { message: { chat: null } }]) {
+      expect(groupEvent(junk, UNSUBSCRIBED)).toBeNull();
+    }
+  });
+
+  it("reads Telegram's default allowed_updates as including my_chat_member", () => {
+    expect(receivesMyChatMember(undefined)).toBe(true);
+    expect(receivesMyChatMember([])).toBe(true);
+    expect(receivesMyChatMember(["message", "callback_query", "my_chat_member"])).toBe(true);
+    expect(receivesMyChatMember(["message", "callback_query"])).toBe(false);
+  });
+
+  it("says the id as copyable code and names nothing but where it goes", () => {
+    const text = groupChatIdText({ kind: "added", chatId: SUPER });
+    expect(text).toBe(
+      "This group's chat ID is <code>-1001234567890</code>. An admin can paste it in the " +
+      "lunch app under <b>Settings</b> &gt; <b>Telegram group chat</b>.",
+    );
+    const moved = groupChatIdText({ kind: "migrated", fromChatId: GROUP, toChatId: SUPER });
+    expect(moved).toContain("<code>-1001234567890</code>");
+    expect(moved).not.toContain(String(GROUP));
+    for (const t of [text, moved]) {
+      // A bare > is a parse error in Telegram's HTML mode; it has to be an entity.
+      expect(t.replace(/<\/?(b|code)>/g, "")).not.toMatch(/[<>]/);
+      expect(t).not.toContain("\u2014");
+    }
+  });
+
+  const bot = readFileSync(
+    join(import.meta.dirname, "..", "supabase", "functions", "telegram", "index.ts"), "utf8",
+  );
+
+  it("handles a group event after the webhook secret, not before it", () => {
+    expect(bot.indexOf("secretsMatch(")).toBeLessThan(bot.indexOf("await handle(update)"));
+    expect(bot.indexOf("groupEventOf(update)")).toBeGreaterThan(bot.indexOf("async function handle("));
+  });
+
+  it("is registered in the docs with my_chat_member in allowed_updates", () => {
+    const howTo = readFileSync(
+      join(import.meta.dirname, "..", "docs", "how-to", "set-up-a-deployment.md"), "utf8",
+    );
+    expect(howTo).toMatch(/"allowed_updates":\[[^\]]*"my_chat_member"/);
   });
 });
