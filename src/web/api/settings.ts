@@ -35,64 +35,37 @@ export type TelegramLink = {
   linked: boolean;
 };
 
-/**
- * This member's bot link, or null if they have never had one.
- *
- * The profile_id filter is mandatory, not defensive: telegram_links_admin lets
- * an org admin read every row in the org, so an unfiltered query hands an admin
- * a colleague's link_token -- the single credential that binds a Telegram chat
- * to a membership. That is exactly why this table is separate from memberships.
- */
-export async function fetchTelegramLink(
-  orgId: number, profileId: string,
-): Promise<TelegramLink | null> {
-  const { data, error } = await supabase
-    .from("telegram_links")
-    .select("membership_id, link_token, chat_id, memberships!inner ( profile_id )")
-    .eq("org_id", orgId)
-    .eq("memberships.profile_id", profileId)
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) return null;
-  return {
-    membershipId: data.membership_id,
-    linkToken: data.link_token,
-    linked: data.chat_id !== null,
-  };
+type LinkRow = { membership_id: number; link_token: string; linked: boolean };
+
+function toLink(row: LinkRow): TelegramLink {
+  return { membershipId: row.membership_id, linkToken: row.link_token, linked: row.linked };
 }
 
 /**
- * Mint the row on demand rather than on read: a token that exists only because
- * somebody opened Preferences is a credential nobody asked for.
+ * This member's bot link in `orgId`, or null if they have never had one.
+ *
+ * A function, not a table read: `link_token` is the credential that binds a
+ * Telegram chat to a membership, and no browser role may select that column.
+ * The function answers for the caller's own membership and nobody else's.
  */
-export async function createTelegramLink(
-  orgId: number, profileId: string,
-): Promise<TelegramLink> {
-  const membership = await supabase
-    .from("memberships").select("id")
-    .eq("org_id", orgId).eq("profile_id", profileId).single();
-  if (membership.error) throw membership.error;
-
-  // Insert-or-nothing, then read. An upsert would rewrite membership_id and
-  // org_id on conflict, and a browser holds no UPDATE on either: the office a
-  // link belongs to is its membership's, and nobody moves it.
-  const inserted = await supabase
-    .from("telegram_links")
-    .upsert({ membership_id: membership.data.id, org_id: orgId },
-            { onConflict: "membership_id", ignoreDuplicates: true });
-  if (inserted.error) throw inserted.error;
-
-  const { data, error } = await supabase
-    .from("telegram_links")
-    .select("membership_id, link_token, chat_id")
-    .eq("membership_id", membership.data.id)
-    .single();
+export async function fetchTelegramLink(orgId: number): Promise<TelegramLink | null> {
+  const { data, error } = await supabase.rpc("my_telegram_link", { p_org_id: orgId });
   if (error) throw error;
-  return {
-    membershipId: data.membership_id,
-    linkToken: data.link_token,
-    linked: data.chat_id !== null,
-  };
+  const row = (data as LinkRow[] | null)?.[0];
+  return row ? toLink(row) : null;
+}
+
+/**
+ * Mint the caller's link if there is none, and hand it back either way. Minted
+ * on demand rather than on read: a token that exists only because somebody
+ * opened Preferences is a credential nobody asked for.
+ */
+export async function createTelegramLink(orgId: number): Promise<TelegramLink> {
+  const { data, error } = await supabase.rpc("create_my_telegram_link", { p_org_id: orgId });
+  if (error) throw error;
+  const row = (data as LinkRow[] | null)?.[0];
+  if (!row) throw new Error("The Telegram link could not be made. Try again.");
+  return toLink(row);
 }
 
 /**

@@ -209,10 +209,10 @@ export type AnnouncementPerson = {
  * because the admin needs the count before the send rather than after it. The
  * numbers the RPC returns afterwards are still what the screen reports as fact.
  *
- * `chat_id` and nothing else from `telegram_links`: an admin may read every row
- * in the org, and `link_token` is the single credential binding a Telegram chat
- * to a membership. Selecting it here would hand it to a colleague's admin for
- * no reason at all.
+ * `chat_id` and nothing else from `telegram_links`. An admin may read every row
+ * in the org but not `link_token`, the credential binding a Telegram chat to a
+ * membership: the column is closed to every browser role, so naming it here, or
+ * asking for `*`, is refused outright.
  */
 export async function fetchAnnouncementAudience(args: {
   orgId: number;

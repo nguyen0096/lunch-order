@@ -97,7 +97,7 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
     try {
       const [standing, link, office] = await Promise.all([
         fetchStandingOrders(org.id, me.profileId),
-        fetchTelegramLink(org.id, me.profileId),
+        fetchTelegramLink(org.id),
         admin ? fetchOrgSettings(org.id) : Promise.resolve(null),
       ]);
       setData({ standing, link, office });
@@ -165,7 +165,6 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
         />
         <Telegram
           orgId={org.id}
-          profileId={me.profileId}
           link={data.link}
           onChange={(link) => setData((d) => (d ? { ...d, link } : d))}
         />
@@ -287,12 +286,10 @@ function StandingDays({
 
 function Telegram({
   orgId,
-  profileId,
   link,
   onChange,
 }: {
   orgId: number;
-  profileId: string;
   link: TelegramLink | null;
   onChange: (next: TelegramLink | null) => void;
 }) {
@@ -302,10 +299,10 @@ function Telegram({
   const deepLink = link === null ? null : botDeepLink(bot, link.linkToken);
   const command = link === null ? "" : `/start ${link.linkToken}`;
 
-  // Also the "check again" control: the upsert is idempotent and hands back the
+  // Also the "check again" control: create_my_telegram_link is idempotent and hands back the
   // row's current chat_id, so asking for the link a second time is how a member
   // finds out the bot has answered.
-  const connect = useAction(async () => createTelegramLink(orgId, profileId), {
+  const connect = useAction(async () => createTelegramLink(orgId), {
     success: (next) => (next.linked ? "Connected" : "Link ready"),
     onSuccess: (next) => onChange(next),
   });
