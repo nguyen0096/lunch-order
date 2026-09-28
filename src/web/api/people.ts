@@ -45,6 +45,33 @@ export async function revokeInvitation(id: number): Promise<void> {
   if (error) throw error;
 }
 
+export type InvitationPreview = {
+  orgName: string;
+  role: "member" | "admin";
+  expiresAt: string;
+  state: "valid" | "expired" | "used";
+};
+
+const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Where an invitation leads, before it is accepted, or null when the token
+ * matches nothing. A token that is not even shaped like one is null without
+ * asking: PostgREST answers a malformed uuid with a 400 naming the parameter,
+ * which is a worse answer than "that link is not valid".
+ */
+export async function previewInvitation(token: string): Promise<InvitationPreview | null> {
+  if (!TOKEN_RE.test(token)) return null;
+  const { data, error } = await supabase.rpc("invitation_preview", { p_token: token });
+  if (error) throw error;
+  const row = (data as Array<{
+    org_name: string; role: InvitationPreview["role"]; expires_at: string; state: InvitationPreview["state"];
+  }> | null)?.[0];
+  return row
+    ? { orgName: row.org_name, role: row.role, expiresAt: row.expires_at, state: row.state }
+    : null;
+}
+
 /**
  * The only way a non-member gets into an org. Every check lives in the
  * database function: an invitee is in no org, so no RLS policy could grant

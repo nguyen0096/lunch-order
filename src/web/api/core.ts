@@ -67,6 +67,23 @@ export async function fetchMe(): Promise<Me | null> {
     supabase.from("app_settings").select("enabled").eq("key", "office_creation").maybeSingle(),
   ]);
 
+  const orgs: Me["orgs"] = (data ?? []).flatMap((row) => {
+    const org = row.organizations as unknown as OrgRow | null;
+    if (!org) return [];
+    return [{
+      org: toOrg(org),
+      role: row.role as Role,
+      shortCode: row.short_code,
+      // Defaulted rather than assumed: the column arrived with
+      // `money_belongs_to_a_person` and a stale row would render an empty
+      // reference, which is the one thing on this screen that must not be
+      // wrong.
+      paymentRef: row.payment_ref ?? `LUNCH${row.short_code}`,
+      shortCodeChangesLeft: Math.max(1 - (row.short_code_changes ?? 0), 0),
+      displayName: row.display_name ?? profile?.full_name ?? auth.user.email ?? "",
+    }];
+  });
+
   return {
     profileId: auth.user.id,
     // Missing row means a database that predates the switch, and the function
@@ -74,23 +91,22 @@ export async function fetchMe(): Promise<Me | null> {
     mayFoundOffice: settings?.enabled ?? true,
     fullName: profile?.full_name ?? auth.user.email ?? "",
     email: profile?.email ?? auth.user.email ?? "",
-    orgs: (data ?? []).flatMap((row) => {
-      const org = row.organizations as unknown as OrgRow | null;
-      if (!org) return [];
-      return [{
-        org: toOrg(org),
-        role: row.role as Role,
-        shortCode: row.short_code,
-        // Defaulted rather than assumed: the column arrived with
-        // `money_belongs_to_a_person` and a stale row would render an empty
-        // reference, which is the one thing on this screen that must not be
-        // wrong.
-        paymentRef: row.payment_ref ?? `LUNCH${row.short_code}`,
-        shortCodeChangesLeft: Math.max(1 - (row.short_code_changes ?? 0), 0),
-        displayName: row.display_name ?? profile?.full_name ?? auth.user.email ?? "",
-      }];
-    }),
+    orgs,
+    // Asked only of somebody with nowhere to go: it is the no-office page's
+    // question, and everybody else would pay a round trip for nothing.
+    removedFrom: orgs.length === 0 ? await fetchRemovedOffices() : undefined,
   };
+}
+
+/**
+ * The offices this person was an active member of and no longer is. Undefined
+ * when the question could not be asked: a failure here must not keep somebody
+ * out of the app, and the page has words for not knowing.
+ */
+async function fetchRemovedOffices(): Promise<string[] | undefined> {
+  const { data, error } = await supabase.rpc("my_removed_offices");
+  if (error) return undefined;
+  return ((data ?? []) as Array<{ org_name: string }>).map((r) => r.org_name);
 }
 
 /**

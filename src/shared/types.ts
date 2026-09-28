@@ -62,6 +62,12 @@ export type Me = {
      */
     shortCodeChangesLeft?: number;
   }>;
+  /**
+   * Names of the live offices this person was removed from (or left), asked
+   * only when `orgs` is empty. An empty list means they were never in one;
+   * absent means it was not asked or could not be answered.
+   */
+  removedFrom?: string[];
 };
 
 export type MenuItem = {

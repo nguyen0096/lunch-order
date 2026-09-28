@@ -91,6 +91,7 @@ export function SignInScreen({
 export function NoOfficeScreen({
   email,
   fullName,
+  removedFrom,
   mayFoundOffice,
   onSignOut,
   onCreated,
@@ -99,6 +100,8 @@ export function NoOfficeScreen({
   email: string;
   /** Their Google name, offered as the name colleagues will see. */
   fullName: string;
+  /** `Me.removedFrom`: whom to name, or undefined when it is not known. */
+  removedFrom?: string[];
   /** Off while the app lives inside one company: joining is the only way in. */
   mayFoundOffice: boolean;
   onSignOut: () => void;
@@ -108,23 +111,36 @@ export function NoOfficeScreen({
 }) {
   const [creating, setCreating] = useState(false);
   const [joining, setJoining] = useState(false);
+  // Somebody who joined from Telegram has no email address at all, and naming
+  // them "signed in as ," is the worst possible greeting for the person this
+  // app was most careful to support.
+  const signedIn = email === "" ? "You're signed in" : `You're signed in as ${email}`;
+  const removed = removedFrom !== undefined && removedFrom.length > 0;
 
   return (
     <main className="mx-auto flex min-h-dvh max-w-prose flex-col items-start justify-center gap-4 px-6">
       <h1 className="text-xl font-semibold">No office</h1>
-      <p className="text-muted">
-        {/* Somebody who joined from Telegram has no email address at all, and
-            naming them "signed in as ," is the worst possible greeting for the
-            person this app was most careful to support. */}
-        {`${email === "" ? "You're signed in" : `You're signed in as ${email}`}, but you're not a member of any office. Ask a colleague for their office's join code and enter it here.`}
-      </p>
-      {/* Somebody an admin deactivated lands here too. Their inactive row is
-          invisible to them under RLS, so the words cover both cases rather
-          than guessing which one this is. */}
-      <p className="text-sm text-muted">
-        Were you in an office before? An admin may have removed you from it. Ask them to add you
-        back, or join again with the office's code.
-      </p>
+      {removed ? (
+        <p role="status" className="text-muted">
+          {`You were removed from ${listOf(removedFrom)}. Ask an admin to add you back.`}
+        </p>
+      ) : removedFrom === undefined ? (
+        <>
+          <p className="text-muted">
+            {`${signedIn}, but you're not a member of any office. Ask a colleague for their office's join code and enter it here.`}
+          </p>
+          {/* Said only when the database could not be asked: without an
+              answer, the words cover both cases rather than guessing. */}
+          <p className="text-sm text-muted">
+            Were you in an office before? An admin may have removed you from it. Ask them to add
+            you back, or join again with the office's code.
+          </p>
+        </>
+      ) : (
+        <p className="text-muted">
+          {`${signedIn}, but you're not a member of any office yet. Ask a colleague for their office's join code and enter it here.`}
+        </p>
+      )}
       <Button onClick={() => setJoining(true)}>Join with a code</Button>
 
       {/* The offer goes with the switch. Leaving it up and letting the database
@@ -156,4 +172,10 @@ export function NoOfficeScreen({
       />
     </main>
   );
+}
+
+/** "A", "A and B", "A, B and C". */
+function listOf(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
