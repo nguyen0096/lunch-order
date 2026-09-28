@@ -17,10 +17,9 @@ function parseChatId(raw: string): number | null | false {
 /**
  * The group the bot posts in.
  *
- * Labelled as the fallback it is. The id is normally discovered by the bot
- * from the first message it sees in the group, and an admin who is told to
- * come here and type it will mostly not know what to type -- so the field says
- * where the number comes from rather than implying this is the way in.
+ * An admin who is told to type a chat id will mostly not know what to type, so
+ * the field says where the number comes from: the bot posts it in the group as
+ * it is added.
  */
 export function GroupChat({
   orgId,
@@ -77,7 +76,7 @@ export function GroupChat({
       <TextField
         id="group-chat-id"
         label="Chat id"
-        hint="The bot normally fills this in itself, from the first message it sees in your group. Type it here only if you already know the number; it usually starts with -100. Leave it empty to clear."
+        hint="Add the bot to your group and it posts the group's chat ID there. Paste that number here; it usually starts with -100. Leave it empty to clear."
         value={text}
         onChange={setText}
         placeholder="-1001234567890"

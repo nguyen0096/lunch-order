@@ -168,6 +168,16 @@ export function answerCallbackQuery(
   });
 }
 
+export function getMe(token: string): Promise<BotResult<{ id: number; is_bot: boolean }>> {
+  return callBot<{ id: number; is_bot: boolean }>(token, "getMe", {});
+}
+
+export function getWebhookInfo(
+  token: string,
+): Promise<BotResult<{ url: string; allowed_updates?: string[] }>> {
+  return callBot<{ url: string; allowed_updates?: string[] }>(token, "getWebhookInfo", {});
+}
+
 // notification_outbox.parse_mode is 'HTML' | 'MarkdownV2' | 'none', and
 // Telegram has no 'none': the field is simply absent.
 function parseModeOf(mode: string | null | undefined): Record<string, string> {

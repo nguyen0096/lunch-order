@@ -864,6 +864,147 @@ export const NOTHING_TO_LEAVE = [
   "you can also open it, go to <b>Preferences</b> and tap <b>Connect Telegram</b>.",
 ].join("\n");
 
+/* ------------------------------------------------------------------- groups */
+
+/**
+ * A group the bot should tell its own chat id to.
+ *
+ * `added` is the bot arriving in a group; `migrated` is a group Telegram has
+ * turned into a supergroup, which gives it a new id and retires the old one.
+ */
+export type GroupEvent =
+  | { kind: "added"; chatId: number }
+  | { kind: "migrated"; fromChatId: number; toChatId: number };
+
+/**
+ * What groupEvent needs to know that an update does not carry.
+ *
+ * Both only matter for a service message, so the bot asks Telegram for them
+ * only when mayBeServiceMessageAdd() says it has to.
+ */
+export type GroupEventContext = {
+  /** getMe's id, or null when it was not looked up. */
+  botId: number | null;
+  /**
+   * Whether the webhook receives my_chat_member. When it does, that update is
+   * the one that announces an add, and the service message for the same add
+   * says nothing, so one add is one message.
+   */
+  myChatMemberSubscribed: boolean;
+};
+
+type Obj = Record<string, unknown>;
+
+function obj(v: unknown): Obj | null {
+  return typeof v === "object" && v !== null ? v as Obj : null;
+}
+
+function isGroup(chat: Obj | null): chat is Obj {
+  return chat !== null && typeof chat["id"] === "number" &&
+    (chat["type"] === "group" || chat["type"] === "supergroup");
+}
+
+/**
+ * Whether a ChatMember is in the chat. "restricted" is in or out by its
+ * is_member flag; "left" and "kicked" are out.
+ */
+function isIn(member: Obj | null): boolean {
+  const status = member?.["status"];
+  if (status === "member" || status === "administrator" || status === "creator") return true;
+  return status === "restricted" && member?.["is_member"] === true;
+}
+
+function groupMessage(update: Obj): Obj | null {
+  const message = obj(update["message"]);
+  return message !== null && isGroup(obj(message["chat"])) ? message : null;
+}
+
+function botsJoining(message: Obj): Obj[] {
+  const members = message["new_chat_members"];
+  if (!Array.isArray(members)) return [];
+  return members.map(obj).filter((u): u is Obj => u?.["is_bot"] === true);
+}
+
+/**
+ * Whether groupEvent needs a real GroupEventContext for this update, so the
+ * bot calls getWebhookInfo and getMe for an add, not for every group message.
+ */
+export function mayBeServiceMessageAdd(update: unknown): boolean {
+  const u = obj(update);
+  const message = u === null ? null : groupMessage(u);
+  if (message === null) return false;
+  return message["group_chat_created"] === true || botsJoining(message).length > 0;
+}
+
+/**
+ * Whether a webhook's allowed_updates delivers my_chat_member. Telegram leaves
+ * the field out, or sends it empty, for the default, which includes it.
+ */
+export function receivesMyChatMember(allowedUpdates: unknown): boolean {
+  if (!Array.isArray(allowedUpdates) || allowedUpdates.length === 0) return true;
+  return allowedUpdates.includes("my_chat_member");
+}
+
+/**
+ * Is this update the bot arriving in a group, or a group becoming a
+ * supergroup, and which chat is it about.
+ *
+ * Only groups and supergroups: my_chat_member also arrives for a private chat
+ * blocking or unblocking the bot, and for channels. Being removed, and being
+ * promoted inside a chat the bot was already in, are not arrivals.
+ *
+ * supergroup_chat_created is not looked at: Telegram documents that it never
+ * arrives in an update, since a bot cannot be in a supergroup as it is created.
+ * A migration is announced from the old group's migrate_to_chat_id message
+ * only, not also from the new one's migrate_from_chat_id.
+ */
+export function groupEvent(update: unknown, ctx: GroupEventContext): GroupEvent | null {
+  const u = obj(update);
+  if (u === null) return null;
+
+  const change = obj(u["my_chat_member"]);
+  if (change !== null) {
+    const chat = obj(change["chat"]);
+    if (!isGroup(chat)) return null;
+    const before = obj(change["old_chat_member"]);
+    const after = obj(change["new_chat_member"]);
+    const who = obj(after?.["user"]);
+    if (who?.["is_bot"] !== true) return null;
+    if (ctx.botId !== null && who["id"] !== ctx.botId) return null;
+    return !isIn(before) && isIn(after) ? { kind: "added", chatId: chat["id"] as number } : null;
+  }
+
+  const message = groupMessage(u);
+  if (message === null) return null;
+  const chatId = (message["chat"] as Obj)["id"] as number;
+
+  const to = message["migrate_to_chat_id"];
+  if (typeof to === "number") return { kind: "migrated", fromChatId: chatId, toChatId: to };
+
+  if (ctx.myChatMemberSubscribed) return null;
+  if (message["group_chat_created"] === true) return { kind: "added", chatId };
+  if (ctx.botId !== null && botsJoining(message).some((b) => b["id"] === ctx.botId)) {
+    return { kind: "added", chatId };
+  }
+  return null;
+}
+
+/**
+ * The only thing the bot says to a group it has just arrived in. Anybody can
+ * add the bot to any group, so it names no office and nothing else about the
+ * app beyond where the number goes.
+ */
+export function groupChatIdText(event: GroupEvent): string {
+  if (event.kind === "added") {
+    return `This group's chat ID is <code>${event.chatId}</code>. ` +
+      "An admin can paste it in the lunch app under <b>Settings</b> &gt; " +
+      "<b>Telegram group chat</b>.";
+  }
+  return `This group is now a supergroup, and its chat ID changed to <code>${event.toChatId}</code>. ` +
+    "The lunch app follows the change by itself; if it stops posting here, an admin " +
+    "can paste the new ID under <b>Settings</b> &gt; <b>Telegram group chat</b>.";
+}
+
 /* ------------------------------------------------------------------ payment */
 
 /**

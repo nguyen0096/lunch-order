@@ -593,6 +593,13 @@ your one change. An admin can change it for you." An admin or owner is told
 they can change it whenever they need to, and is never counted. A refusal for
 being too close to a colleague's code is the database's sentence, as it comes.
 
+An admin also sees **Your office**: when ordering closes, the bank account,
+and the **Telegram group chat**. The group chat card does not ask anybody to
+know a chat id: its hint says the bot posts the ID in the group as it is added,
+and the field takes that number pasted as it comes. Empty clears it; anything
+but a whole number keeps Save unavailable with "A chat id is a whole number,
+like -1001234567890".
+
 The **theme** lives in the account menu itself rather than on the settings page,
 beside sign out, because it is the one preference somebody changes on a whim and
 wants to see take effect in the same breath. Three states, `System / Light /

@@ -141,11 +141,8 @@ export async function setPaymentConfig(orgId: number, config: PaymentConfig): Pr
 }
 
 /**
- * The group chat id, as a fallback.
- *
- * The bot normally discovers this itself from a message in the group, so this
- * exists for the admin who already knows the number and does not want to wait
- * for that. Null clears it.
+ * The group chat id, pasted from the message the bot posts in a group as it is
+ * added. Null clears it.
  */
 export async function setTelegramGroupChatId(
   orgId: number, chatId: number | null,

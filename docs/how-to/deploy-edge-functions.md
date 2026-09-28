@@ -73,6 +73,7 @@ identical from the outside.
 | --- | --- |
 | Telegram silent, `getWebhookInfo` shows `401 Unauthorized` | `TELEGRAM_WEBHOOK_SECRET` differs between Supabase and the value given to `setWebhook` |
 | Telegram silent, `getWebhookInfo` clean | `verify_jwt` is true for `telegram`; check `config.toml` deployed |
+| Bot added to a group but posts no chat ID | `getWebhookInfo` lists `allowed_updates` without `my_chat_member`; call `setWebhook` again as in [Set up a deployment](set-up-a-deployment.md), step 7 |
 | Outbox never sends, cron says succeeded | `pg_net` is asynchronous, so the cron job never sees the response. Look in `net._http_response`, not `cron.job_run_details` |
 | `404 NOT_FOUND: Requested function was not found` in `net._http_response` | the function is not deployed |
 

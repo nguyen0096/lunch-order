@@ -524,8 +524,9 @@ describe("the group chat id", () => {
     const chat = card("Telegram group chat");
     expect(within(chat).getByText("Not set")).toBeInTheDocument();
     expect(within(chat).getByText(/no group to post in/)).toBeInTheDocument();
-    // Named as the fallback it is, not as the way this normally happens.
-    expect(within(chat).getByText(/normally fills this in itself/)).toBeInTheDocument();
+    // Says where the number comes from, since nobody knows a chat id by heart.
+    expect(within(chat).getByText(/Add the bot to your group and it posts the group's chat ID there/))
+      .toBeInTheDocument();
   });
 
   it("saves the id as a number", async () => {
