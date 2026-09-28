@@ -82,5 +82,5 @@ retry was a stale isolate, not a wrong secret.
 
 ## Related
 
-- [Secrets](../../README.md#secrets) for what each function needs and where it lives
+- [Secrets](../reference/secrets.md) for what each function needs and where it lives
 - [Rotate the Telegram join code](rotate-the-join-code.md)

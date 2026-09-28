@@ -1,8 +1,19 @@
-# Typecheck and unit tests on every push. The parser and billing maths are pure
-# functions and exactly the kind of logic that regresses silently. A push to main
-# that passes those then builds the SPA and deploys it to Cloudflare.
-name: ci
-on: [push, pull_request]
+# Typecheck and unit tests on every push and pull request. The parser and
+# billing maths are pure functions and exactly the kind of logic that regresses
+# silently. A green run on a push to main is what starts deploy.yml.
+name: CI
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Never cancel a main run: deploy.yml acts only on a successful one.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -28,67 +39,3 @@ jobs:
       # runtime's types and trip Deno's minimum-dependency-age policy on
       # devDependencies they never import.
       - run: deno check --node-modules-dir=none supabase/functions/*/index.ts
-
-  deploy:
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
-        env:
-          # Repository variables, not secrets: Vite inlines every VITE_ var into
-          # the bundle, so masking them in the log would only give false comfort.
-          # They must be set, or the build ships a Supabase client that reports a
-          # config error to every visitor.
-          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
-          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
-          # Optional. Absent, the preferences screen shows the raw /start command
-          # instead of a t.me deep link, which still works.
-          VITE_TELEGRAM_BOT: ${{ vars.VITE_TELEGRAM_BOT }}
-      # A missing repository variable does not fail the build, it changes what
-      # gets built: supabase.ts sets configError, main.tsx renders "Not
-      # configured" instead of <App/>, and Rollup then tree-shakes the entire
-      # application out of the bundle. The build succeeds, the deploy is green,
-      # and every visitor gets an error page. Two strings from opposite ends of
-      # the app are cheaper than discovering that from a screenshot.
-      - name: Refuse to deploy an empty bundle
-        run: |
-          for marker in billing_statements 'Continue with Google'; do
-            grep -rqF "$marker" dist/web/assets/*.js \
-              || { echo "::error::built bundle has no '$marker' -- is a VITE_ variable unset?"; exit 1; }
-          done
-      # Cloudflare's official action. It installs its own wrangler, so the
-      # devDependency here only serves local `npm run deploy`.
-      - uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy
-
-  # Migrations reach the database through the Supabase GitHub integration, but
-  # Edge Functions do not: without this they stay whatever was last pushed by
-  # hand. A deploy script could not prevent that, because running it was
-  # optional. verify_jwt per function comes from supabase/config.toml, so this
-  # deploys the whole directory in one command.
-  deploy-functions:
-    needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      # Pinned, not `latest`. `latest` asks the GitHub releases API on every
-      # run, unauthenticated from a shared runner, and a rate limit there fails
-      # a deploy that has nothing to do with it -- which it did, on a push that
-      # changed no Edge Function at all. A version bump should be a commit.
-      - uses: supabase/setup-cli@v1
-        with:
-          version: 2.117.0
-      - run: supabase functions deploy --project-ref wvtbstticnactealupph
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

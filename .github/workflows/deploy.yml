@@ -1,0 +1,159 @@
+# Deploys main once CI has passed on it: the SPA to Cloudflare, the Edge
+# Functions to Supabase, then a GitHub release for what went out. Migrations are
+# not here; the Supabase GitHub integration applies them.
+name: Deploy
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # `branches` matches the head branch name, which a fork's pull request can
+    # also call main. Only a push is ours.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://lunch-order.nexus-9c9.workers.dev
+    steps:
+      # workflow_run otherwise checks out the tip of main, which may be newer
+      # than the commit CI just passed.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+        env:
+          # Repository variables, not secrets: Vite inlines every VITE_ var into
+          # the bundle, so masking them in the log would only give false comfort.
+          # They must be set, or the build ships a Supabase client that reports a
+          # config error to every visitor.
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ vars.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          # Optional. Absent, the preferences screen shows the raw /start command
+          # instead of a t.me deep link, which still works.
+          VITE_TELEGRAM_BOT: ${{ vars.VITE_TELEGRAM_BOT }}
+      # A missing repository variable does not fail the build, it changes what
+      # gets built: supabase.ts sets configError, main.tsx renders "Not
+      # configured" instead of <App/>, and Rollup then tree-shakes the entire
+      # application out of the bundle. The build succeeds, the deploy is green,
+      # and every visitor gets an error page. Two strings from opposite ends of
+      # the app are cheaper than discovering that from a screenshot.
+      - name: Refuse to deploy an empty bundle
+        run: |
+          for marker in billing_statements 'Continue with Google'; do
+            grep -rqF "$marker" dist/web/assets/*.js \
+              || { echo "::error::built bundle has no '$marker' -- is a VITE_ variable unset?"; exit 1; }
+          done
+      # Cloudflare's official action. It installs its own wrangler, so the
+      # devDependency here only serves local `npm run deploy`.
+      - uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+  # Migrations reach the database through the Supabase GitHub integration, but
+  # Edge Functions do not: without this they stay whatever was last pushed by
+  # hand. A deploy script could not prevent that, because running it was
+  # optional. verify_jwt per function comes from supabase/config.toml, so this
+  # deploys the whole directory in one command.
+  deploy-functions:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      # Pinned, not `latest`. `latest` asks the GitHub releases API on every
+      # run, unauthenticated from a shared runner, and a rate limit there fails
+      # a deploy that has nothing to do with it -- which it did, on a push that
+      # changed no Edge Function at all. A version bump should be a commit.
+      - uses: supabase/setup-cli@v1
+        with:
+          version: 2.117.0
+      - run: supabase functions deploy --project-ref wvtbstticnactealupph
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+  # One release per successful deploy, so the Releases list is the deploy
+  # history. Versions are UTC dates (v2026.09.28, then v2026.09.28.2 for a
+  # second deploy that day) because commits here are prose, not Conventional
+  # Commits, and nothing could derive a semantic version from them.
+  release:
+    needs: [deploy, deploy-functions]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # The commit CI passed and both deploys shipped. Tagging anything later
+      # would attach the release to a commit nobody tested.
+      SHA: ${{ github.event.workflow_run.head_sha }}
+      REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Pick the version
+        id: version
+        run: |
+          previous=$(git describe --tags --abbrev=0 --match 'v[0-9]*' "$SHA" 2>/dev/null || true)
+          if [ -n "$previous" ] && [ "$(git rev-list --count "$previous..$SHA")" -eq 0 ]; then
+            echo "::notice::$SHA is already released as $previous"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          base="v$(date -u +%Y.%m.%d)"
+          count=$(git tag --list "$base" "$base.*" | wc -l)
+          if [ "$count" -eq 0 ]; then tag="$base"; else tag="$base.$((count + 1))"; fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "previous=$previous" >> "$GITHUB_OUTPUT"
+      # GitHub's --generate-notes lists merged pull requests only, and this
+      # repository commits straight to main, so the notes are the commits.
+      - name: Write the notes
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          PREVIOUS: ${{ steps.version.outputs.previous }}
+        run: |
+          format="- %s ([%h]($REPO_URL/commit/%H))"
+          {
+            if [ -n "$PREVIOUS" ]; then
+              git log --no-merges --format="$format" "$PREVIOUS..$SHA"
+              echo
+              echo "**Full changelog**: $REPO_URL/compare/$PREVIOUS...$TAG"
+            else
+              echo "The first tagged release. The 30 most recent commits:"
+              echo
+              git log --no-merges --max-count=30 --format="$format" "$SHA"
+              echo
+              echo "**Full changelog**: $REPO_URL/commits/$TAG"
+            fi
+          } > notes.md
+      - name: Publish the release
+        if: steps.version.outputs.skip != 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "$TAG" --notes-file notes.md --latest
