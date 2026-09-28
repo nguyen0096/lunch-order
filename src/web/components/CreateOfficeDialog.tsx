@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useId, useState } from "react";
+import { ShortCodeField, onboardingCodeProblem } from "./ShortCodeField.js";
 import {
   Action,
   Button,
@@ -55,6 +56,7 @@ export function CreateOfficeDialog({
   // who cleared the field, and must not silently refill.
   const [slug, setSlug] = useState<string | null>(null);
   const address = slug ?? suggestSlug(name);
+  const [code, setCode] = useState("");
 
   const create = useAction(createOffice, {
     success: (created) => `Created ${created.name}`,
@@ -71,11 +73,12 @@ export function CreateOfficeDialog({
     if (!open) {
       setName("");
       setSlug(null);
+      setCode("");
       reset();
     }
   }, [open, reset]);
 
-  const problem = officeProblem({ name, slug: address });
+  const problem = officeProblem({ name, slug: address }) ?? onboardingCodeProblem(code);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -92,7 +95,7 @@ export function CreateOfficeDialog({
           onSubmit={(e) => {
             e.preventDefault();
             if (problem !== null) return;
-            void create.run({ name, slug: address });
+            void create.run({ name, slug: address, shortCode: code });
           }}
         >
           <div className="flex flex-col gap-1.5">
@@ -130,6 +133,8 @@ export function CreateOfficeDialog({
               {`The office lives at #/o/${address || "…"}/board, and the address is what colleagues paste into a chat. Suggested from the name; change it if you like.`}
             </p>
           </div>
+
+          <ShortCodeField value={code} onChange={setCode} />
 
           <p className="max-w-prose text-xs text-muted">
             Days and cutoffs run in Asia/Ho_Chi_Minh, and the bill is in dong.

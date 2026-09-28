@@ -54,6 +54,13 @@ export type Me = {
      */
     paymentRef: string;
     displayName: string;
+    /**
+     * How many more times this member may change their own short code: one
+     * after joining, then none. Enforced by `enforce_short_code`; an admin's
+     * changes are not counted and an admin is never out of them. Absent when
+     * not loaded, which a screen reads as one.
+     */
+    shortCodeChangesLeft?: number;
   }>;
 };
 

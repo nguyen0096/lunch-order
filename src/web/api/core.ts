@@ -49,7 +49,7 @@ export async function fetchMe(): Promise<Me | null> {
   const { data, error } = await supabase
     .from("memberships")
     .select(
-      `role, short_code, display_name, payment_ref,
+      `role, short_code, short_code_changes, display_name, payment_ref,
        organizations ( id, slug, name, timezone, currency, currency_minor_units,
                        locale, default_cutoff_local_time, billing_week_starts_on,
                        business_day_starts_at, business_day_ends_at, short_code )`,
@@ -82,6 +82,7 @@ export async function fetchMe(): Promise<Me | null> {
         // reference, which is the one thing on this screen that must not be
         // wrong.
         paymentRef: row.payment_ref ?? `LUNCH${row.short_code}`,
+        shortCodeChangesLeft: Math.max(1 - (row.short_code_changes ?? 0), 0),
         displayName: row.display_name ?? profile?.full_name ?? auth.user.email ?? "",
       }];
     }),
@@ -107,6 +108,12 @@ export function humanError(e: unknown): string {
   if (/organizations_slug_uk/i.test(err.message)) {
     return "That web address is already taken by another office. Try a different one.";
   }
+  if (/organizations_account_number_uk/i.test(err.message)) {
+    return "Another office already receives its lunch payments into that account. One bank account can serve one office.";
+  }
+  if (/memberships_code_uk/i.test(err.message)) {
+    return "Somebody in this office already uses that short code. Pick a different one.";
+  }
   if (/violates|constraint|duplicate key/i.test(err.message)) {
     return "That change conflicts with something else. Reload and try again.";
   }
@@ -120,7 +127,12 @@ const NAME_MAX = 120;
 const SLUG_MIN = 3;
 const SLUG_MAX = 40;
 
-export type OfficeDraft = { name: string; slug: string };
+export type OfficeDraft = {
+  name: string;
+  slug: string;
+  /** Blank means "make one from my name". */
+  shortCode?: string;
+};
 
 /**
  * A web address guessed from the office name, so nobody has to invent a URL
@@ -185,6 +197,7 @@ export async function createOffice(draft: OfficeDraft): Promise<Org> {
   const { data, error } = await supabase.rpc("create_organization", {
     p_slug: draft.slug.trim().toLowerCase(),
     p_name: draft.name.trim(),
+    p_short_code: draft.shortCode?.trim().toUpperCase() || null,
   });
   if (error) throw error;
 
@@ -222,11 +235,14 @@ export function joinCodeProblem(code: string): string | null {
 export async function joinWithCode(args: {
   code: string;
   displayName: string;
+  /** Blank means "make one from my name". Ignored when coming back to an office. */
+  shortCode?: string;
 }): Promise<{ slug: string; name: string }> {
   const { data, error } = await supabase.rpc("join_with_code", {
     p_code: args.code.trim().toUpperCase(),
     p_display_name: args.displayName.trim(),
     p_chat_id: null,
+    p_short_code: args.shortCode?.trim().toUpperCase() || null,
   });
   if (error) throw error;
   const row = (Array.isArray(data) ? data[0] : data) as

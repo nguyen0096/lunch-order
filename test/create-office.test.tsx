@@ -156,6 +156,7 @@ describe("Creating an office", () => {
       expect(createOffice).toHaveBeenCalledWith({
         name: "Công ty Ăn Trưa",
         slug: "cong-ty-an-trua",
+        shortCode: "",
       }),
     );
     expect(success).toHaveBeenCalledWith("Created Công ty Ăn Trưa");
@@ -176,7 +177,27 @@ describe("Creating an office", () => {
     expect(address.value).toBe("lunch-hcm");
     await userEvent.click(submit());
     await waitFor(() =>
-      expect(createOffice).toHaveBeenCalledWith({ name: "Lunch Club Saigon", slug: "lunch-hcm" }),
+      expect(createOffice).toHaveBeenCalledWith({
+        name: "Lunch Club Saigon",
+        slug: "lunch-hcm",
+        shortCode: "",
+      }),
+    );
+  });
+
+  it("sends the short code the founder picked, uppercased, and refuses a malformed one", async () => {
+    const { name, submit } = dialog();
+
+    await userEvent.type(name, "Lunch Club");
+    const code = screen.getByLabelText(/Your short code/);
+    await userEvent.type(code, "n");
+    expect(submit()).toHaveAccessibleDescription("A short code is 2 characters at least");
+
+    await userEvent.type(code, "d");
+    expect(code).toHaveValue("ND");
+    await userEvent.click(submit());
+    await waitFor(() =>
+      expect(createOffice).toHaveBeenCalledWith({ name: "Lunch Club", slug: "lunch-club", shortCode: "ND" }),
     );
   });
 
@@ -190,7 +211,7 @@ describe("Creating an office", () => {
 
     await userEvent.click(submit());
     await waitFor(() =>
-      expect(createOffice).toHaveBeenCalledWith({ name: "Lunch Club", slug: "lunch-hcm" }),
+      expect(createOffice).toHaveBeenCalledWith({ name: "Lunch Club", slug: "lunch-hcm", shortCode: "" }),
     );
   });
 
