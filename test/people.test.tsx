@@ -79,19 +79,19 @@ function makeMembers(meRole: Role = "admin"): OrgMember[] {
   return [
     {
       membershipId: 1, profileId: "me", email: "neyu@example.com", name: "Neyu",
-      shortCode: "NEYU", role: meRole, status: "active", createdAt: ago(40 * DAY), isMe: true,
+      shortCode: "NEYU", role: meRole, status: "active", removedAt: null, createdAt: ago(40 * DAY), isMe: true,
     },
     {
       membershipId: 2, profileId: "sep", email: "", name: "Sếp",
-      shortCode: "SEP", role: "owner", status: "active", createdAt: ago(50 * DAY), isMe: false,
+      shortCode: "SEP", role: "owner", status: "active", removedAt: null, createdAt: ago(50 * DAY), isMe: false,
     },
     {
       membershipId: 3, profileId: "teo", email: "", name: "Tèo",
-      shortCode: "TEO", role: "member", status: "active", createdAt: ago(2 * DAY), isMe: false,
+      shortCode: "TEO", role: "member", status: "active", removedAt: null, createdAt: ago(2 * DAY), isMe: false,
     },
     {
       membershipId: 4, profileId: "dinh", email: "", name: "Dinh",
-      shortCode: "DINH", role: "member", status: "inactive", createdAt: ago(10 * DAY), isMe: false,
+      shortCode: "DINH", role: "member", status: "inactive", removedAt: ago(3 * DAY), createdAt: ago(10 * DAY), isMe: false,
     },
   ];
 }
@@ -415,14 +415,14 @@ describe("People, the role rules", () => {
       );
     }
     expect(within(owner).getAllByText("Only an owner can stand down an owner.")).toHaveLength(2);
-    expect(within(owner).getByRole("button", { name: "Deactivate" })).toHaveAttribute(
+    expect(within(owner).getByRole("button", { name: "Remove" })).toHaveAttribute(
       "aria-disabled",
       "true",
     );
-    expect(within(owner).getByText("Only an owner can deactivate an owner.")).toBeInTheDocument();
+    expect(within(owner).getByText("Only an owner can remove an owner.")).toBeInTheDocument();
 
     await userEvent.click(within(owner).getByRole("button", { name: "Make member" }));
-    await userEvent.click(within(owner).getByRole("button", { name: "Deactivate" }));
+    await userEvent.click(within(owner).getByRole("button", { name: "Remove" }));
     expect(updateMembership).not.toHaveBeenCalled();
   });
 
@@ -494,49 +494,70 @@ describe("People, the role rules", () => {
 
 /* ------------------------------------------------------------------ status */
 
-describe("People, deactivating", () => {
-  it("deactivates a member and reports it", async () => {
+describe("People, removing and adding back", () => {
+  it("removes a member and reports it", async () => {
     serve();
     renderPeople();
     await settled();
 
-    await userEvent.click(control("Tèo", "Deactivate"));
+    await userEvent.click(control("Tèo", "Remove"));
 
     await waitFor(() => expect(updateMembership).toHaveBeenCalledWith({
       membershipId: 3,
       status: "inactive",
     }));
-    expect(success).toHaveBeenCalledWith("Deactivated Tèo");
+    expect(success).toHaveBeenCalledWith("Removed Tèo");
   });
 
-  it("refuses to let you deactivate yourself, and says why", async () => {
+  it("refuses to let you remove yourself, and says where leaving is", async () => {
     serve();
     renderPeople();
     await settled();
 
     const mine = within(memberRow("Neyu"));
-    const deactivate = mine.getByRole("button", { name: "Deactivate" });
-    expect(deactivate).toHaveAttribute("aria-disabled", "true");
-    expect(mine.getByText("You cannot deactivate yourself. Ask another admin.")).toBeInTheDocument();
+    const remove = mine.getByRole("button", { name: "Remove" });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(mine.getByText("You cannot remove yourself. To leave, use Settings.")).toBeInTheDocument();
 
-    await userEvent.click(deactivate);
+    await userEvent.click(remove);
     expect(updateMembership).not.toHaveBeenCalled();
   });
 
-  it("offers Reactivate for somebody already deactivated", async () => {
+  it("marks somebody an admin removed, and adds them back", async () => {
     serve();
     renderPeople();
     await settled();
 
     const row = within(memberRow("Dinh"));
-    expect(row.getByText("inactive")).toBeInTheDocument();
-    await userEvent.click(row.getByRole("button", { name: "Reactivate" }));
+    expect(row.getByText("removed")).toBeInTheDocument();
+    expect(row.queryByText("left")).not.toBeInTheDocument();
+    await userEvent.click(row.getByRole("button", { name: "Add back" }));
 
     await waitFor(() => expect(updateMembership).toHaveBeenCalledWith({
       membershipId: 4,
       status: "active",
     }));
-    expect(success).toHaveBeenCalledWith("Reactivated Dinh");
+    expect(success).toHaveBeenCalledWith("Added Dinh back");
+  });
+
+  it("marks somebody who left as having left, not as removed", async () => {
+    const members = makeMembers().map((m) =>
+      m.name === "Dinh" ? { ...m, removedAt: null } : m);
+    serve({ members });
+    renderPeople();
+    await settled();
+
+    const row = within(memberRow("Dinh"));
+    expect(row.getByText("left")).toBeInTheDocument();
+    expect(row.queryByText("removed")).not.toBeInTheDocument();
+    expect(row.getByRole("button", { name: "Add back" })).toBeInTheDocument();
+  });
+
+  it("says the join code does not undo a removal", async () => {
+    serve();
+    renderPeople();
+    await settled();
+    expect(screen.getByText(/The join code will not bring back somebody you removed/)).toBeInTheDocument();
   });
 });
 

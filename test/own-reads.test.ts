@@ -1,4 +1,4 @@
-import { fetchMe } from "../src/web/api/core.js";
+import { fetchMe, joinWithCode } from "../src/web/api/core.js";
 import { previewInvitation } from "../src/web/api/people.js";
 import { createTelegramLink, fetchTelegramLink } from "../src/web/api/settings.js";
 
@@ -103,12 +103,16 @@ describe("fetchMe, for somebody with no office", () => {
       ));
   }
 
-  it("names the offices they were removed from", async () => {
+  it("names the offices they were removed from apart from the ones they left", async () => {
     signedInWith([]);
-    client.rpc.mockResolvedValue({ data: [{ org_name: "Acme" }], error: null });
+    client.rpc.mockResolvedValue({
+      data: [{ org_name: "Acme", removed: true }, { org_name: "Beta", removed: false }],
+      error: null,
+    });
     const me = await fetchMe();
     expect(me?.removedFrom).toEqual(["Acme"]);
-    expect(client.rpc).toHaveBeenCalledWith("my_removed_offices");
+    expect(me?.leftFrom).toEqual(["Beta"]);
+    expect(client.rpc).toHaveBeenCalledWith("my_former_offices");
   });
 
   it("says nothing it does not know when the question fails", async () => {
@@ -117,6 +121,7 @@ describe("fetchMe, for somebody with no office", () => {
     const me = await fetchMe();
     expect(me).not.toBeNull();
     expect(me?.removedFrom).toBeUndefined();
+    expect(me?.leftFrom).toBeUndefined();
   });
 
   it("does not ask somebody who is in an office", async () => {
@@ -129,5 +134,17 @@ describe("fetchMe, for somebody with no office", () => {
     expect(me?.orgs).toHaveLength(1);
     expect(me?.removedFrom).toBeUndefined();
     expect(client.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe("joining with a code from the browser", () => {
+  it("names no Telegram chat: only the bot binds one", async () => {
+    client.rpc.mockResolvedValue({ data: [{ org_slug: "acme", org_name: "Acme" }], error: null });
+    await expect(joinWithCode({ code: " kgsd4582 ", displayName: " Neyu " }))
+      .resolves.toEqual({ slug: "acme", name: "Acme" });
+    expect(client.rpc).toHaveBeenCalledWith("join_with_code", {
+      p_code: "KGSD4582", p_display_name: "Neyu", p_short_code: null,
+    });
+    expect(client.rpc.mock.calls[0]?.[1]).not.toHaveProperty("p_chat_id");
   });
 });

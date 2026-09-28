@@ -126,7 +126,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
     },
     {
       success: (a) =>
-        a.status === "inactive" ? `Deactivated ${a.member.name}` : `Reactivated ${a.member.name}`,
+        a.status === "inactive" ? `Removed ${a.member.name}` : `Added ${a.member.name} back`,
       onSuccess: () => void load(),
     },
   );
@@ -214,7 +214,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
           Members
         </h2>
         <p className="mt-1 text-sm text-muted">
-          {`${activeCount} active in ${org.name}. Deactivating somebody stops every request they make from their next one; their past orders stay on the bill, because they ate the food.`}
+          {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one; their past orders stay on the bill, because they ate the food. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
         </p>
 
         {members.length === 0 ? (
@@ -433,7 +433,7 @@ function RotateDialog({
           <DialogDescription>
             The current code stops working straight away, so anybody holding it who has not joined
             yet will need the new one. Everybody already in the office keeps their access: rotating
-            removes nobody. To remove somebody, deactivate them in the member list.
+            removes nobody. To remove somebody, use Remove in the member list.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>
@@ -474,7 +474,7 @@ function RecentJoins({
       </h2>
       <p className="mt-1 text-sm text-muted">
         A shared code is watched rather than locked. A name here you do not recognise is the signal
-        to rotate the code and deactivate them.
+        to rotate the code and remove them.
       </p>
 
       {alone ? (
@@ -494,7 +494,7 @@ function RecentJoins({
               <span className="font-medium">{m.name}</span>
               {m.isMe && <span className="text-sm text-muted">(you)</span>}
               {m.role !== "member" && <Badge variant="outline">{m.role}</Badge>}
-              {m.status === "inactive" && <Badge variant="warn">inactive</Badge>}
+              {m.status === "inactive" && <GoneBadge member={m} />}
               <span
                 className="ml-auto text-sm text-muted"
                 title={absoluteLabel(m.createdAt, timeZone)}
@@ -678,7 +678,7 @@ function MemberRow({
   // control that is not theirs, and we already handle those by absence -- a
   // member sees no Menu tab rather than a greyed one.
   const others = ROLES.filter((r) => r !== member.role && (iAmOwner || r !== "owner"));
-  const deactivating = member.status === "active";
+  const removing = member.status === "active";
 
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
@@ -689,7 +689,7 @@ function MemberRow({
         </p>
         <p className="mt-0.5 flex flex-wrap items-center gap-2 text-sm text-muted">
           <Badge variant={member.role === "member" ? "neutral" : "accent"}>{member.role}</Badge>
-          {member.status === "inactive" && <Badge variant="warn">inactive</Badge>}
+          {member.status === "inactive" && <GoneBadge member={member} />}
           {/* Most members joined from Telegram and have no email at all, so the
               short code -- the one that appears in a bank transfer memo -- is
               the identifier that is always there. */}
@@ -716,9 +716,9 @@ function MemberRow({
           pending={busy}
           size="sm"
           variant="outline"
-          onClick={() => onStatus(deactivating ? "inactive" : "active")}
+          onClick={() => onStatus(removing ? "inactive" : "active")}
         >
-          {deactivating ? "Deactivate" : "Reactivate"}
+          {removing ? "Remove" : "Add back"}
         </Action>
       </div>
     </li>
@@ -762,17 +762,24 @@ function statusReason({
   member: OrgMember;
   iAmOwner: boolean;
 }): string | null {
-  // Not a database rule, which is the problem: nothing stops you deactivating
-  // yourself, and it locks you out of the office in one tap with no way back.
-  if (member.isMe) return "You cannot deactivate yourself. Ask another admin.";
-  // my_org_ids() filters on status, so deactivating an owner is demotion by
+  // enforce_membership_role refuses your own status change too; leaving has
+  // its own door, with its own checks.
+  if (member.isMe) return "You cannot remove yourself. To leave, use Settings.";
+  // my_org_ids() filters on status, so removing an owner is demotion by
   // another name, and enforce_membership_role treats it as one.
   if (member.role === "owner" && !iAmOwner) {
     return member.status === "active"
-      ? "Only an owner can deactivate an owner."
-      : "Only an owner can reactivate an owner.";
+      ? "Only an owner can remove an owner."
+      : "Only an owner can add an owner back.";
   }
   return null;
+}
+
+/** Why somebody is not active, which decides whether the join code works for them. */
+function GoneBadge({ member }: { member: OrgMember }) {
+  return member.removedAt === null
+    ? <Badge variant="neutral">left</Badge>
+    : <Badge variant="warn">removed</Badge>;
 }
 
 function withArticle(role: Role): string {

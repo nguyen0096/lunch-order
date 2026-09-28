@@ -151,6 +151,7 @@ export function App({ oauthError = null }: { oauthError?: string | null }) {
         email={me.email}
         fullName={me.fullName}
         removedFrom={me.removedFrom}
+        leftFrom={me.leftFrom}
         mayFoundOffice={me.mayFoundOffice}
         onSignOut={() => void signOut()}
         onCreated={(org) => void enter(org)}

@@ -77,7 +77,7 @@ export function GroupChat({
       <TextField
         id="group-chat-id"
         label="Chat id"
-        hint="The bot normally fills this in itself, from the first message it sees in your group. Type it here only if you already know the number — it usually starts with -100. Leave it empty to clear."
+        hint="The bot normally fills this in itself, from the first message it sees in your group. Type it here only if you already know the number; it usually starts with -100. Leave it empty to clear."
         value={text}
         onChange={setText}
         placeholder="-1001234567890"

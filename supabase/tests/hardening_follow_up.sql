@@ -62,8 +62,10 @@ values ('fup-a', 'Follow A', 'FUPA'),
        ('fup-c', 'Follow C', 'FUPC');
 
 -- GONE was removed from A and from C, and C has since been deleted.
-insert into public.memberships (org_id, profile_id, role, short_code, status)
-select o.id, u.pid::uuid, u.role, u.code, u.status from public.organizations o
+insert into public.memberships (org_id, profile_id, role, short_code, status, removed_at)
+select o.id, u.pid::uuid, u.role, u.code, u.status,
+       case when u.status = 'inactive' then now() end
+  from public.organizations o
 join (values
   ('fup-a', 'eeeeeeee-0000-0000-0000-000000000001', 'owner',  'OWN',  'active'),
   ('fup-a', 'eeeeeeee-0000-0000-0000-000000000002', 'admin',  'ADM',  'active'),
@@ -320,25 +322,28 @@ begin
   insert into probe values ('R control: GONE is in no office',
     (select count(*)::text from public.memberships), '0');
   insert into probe values ('R GONE is told the live office they were removed from, and not the deleted one',
-    (select string_agg(org_name, ',') from public.my_removed_offices()), 'Follow A');
+    (select string_agg(org_name || ':' || removed, ',') from public.my_former_offices()), 'Follow A:true');
 
   perform pg_temp.act_as(pg_temp.c('dinh'));
   insert into probe values ('R an active member was removed from nothing',
-    (select count(*)::text from public.my_removed_offices()), '0');
+    (select count(*)::text from public.my_former_offices()), '0');
 
   perform pg_temp.act_as(pg_temp.c('new'));
   insert into probe values ('R neither was somebody who never joined A',
-    (select count(*)::text from public.my_removed_offices()), '0');
+    (select count(*)::text from public.my_former_offices()), '0');
   reset role;
 end $$;
 
 insert into probe
-select 'R the answer is a name and nothing else',
-       pg_get_function_result('public.my_removed_offices()'::regprocedure),
-       'TABLE(org_name text)';
+select 'R the answer is a name and whether it was a removal, and nothing else',
+       pg_get_function_result('public.my_former_offices()'::regprocedure),
+       'TABLE(org_name text, removed boolean)';
 insert into probe
 select 'R anon cannot ask',
-       has_function_privilege('anon', 'public.my_removed_offices()', 'execute')::text, 'false';
+       has_function_privilege('anon', 'public.my_former_offices()', 'execute')::text, 'false';
+insert into probe
+select 'R the old name is gone',
+       (to_regprocedure('public.my_removed_offices()') is null)::text, 'true';
 
 --------------------------------------------------------------------- verdict
 

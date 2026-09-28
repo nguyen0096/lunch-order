@@ -94,6 +94,11 @@ export type OrgMember = {
   shortCode: string;
   role: "member" | "admin" | "owner";
   status: "active" | "inactive";
+  /**
+   * Set when an admin or owner removed them, null when they left or are
+   * active. A removed member cannot come back by the join code.
+   */
+  removedAt: string | null;
   /** When the membership row appeared, which is when this person got in. */
   createdAt: string;
   isMe: boolean;
@@ -104,7 +109,7 @@ export async function fetchOrgMembers(args: {
 }): Promise<OrgMember[]> {
   const { data, error } = await supabase
     .from("memberships")
-    .select(`id, profile_id, role, status, short_code, display_name, created_at,
+    .select(`id, profile_id, role, status, removed_at, short_code, display_name, created_at,
              profiles ( email, full_name )`)
     .eq("org_id", args.orgId);
   if (error) throw error;
@@ -119,6 +124,7 @@ export async function fetchOrgMembers(args: {
       shortCode: m.short_code,
       role: m.role as OrgMember["role"],
       status: m.status as OrgMember["status"],
+      removedAt: m.removed_at ?? null,
       createdAt: m.created_at,
       isMe: m.profile_id === args.meProfileId,
     };
@@ -213,7 +219,7 @@ export async function setJoinCode(args: { orgId: number; code: string }): Promis
 }
 
 /**
- * Change a role or deactivate someone.
+ * Change a role, remove someone, or add them back.
  *
  * Invitations deliberately cannot lower a role -- a stale link should not
  * quietly reduce access weeks later -- so demotion needs an explicit act, and

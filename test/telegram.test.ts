@@ -1117,7 +1117,9 @@ describe("/leave and /unlink", () => {
       const text = renderLeftText({ orgName: null, joinCode: CODE });
       expect(text).toContain("<b>You've left this office.</b>");
       expect(text).toContain("Nothing was deleted");
-      expect(text).toContain("deactivated rather than removed");
+      expect(text).toContain("membership is kept for when you come back");
+      // "Removed" now means an admin did it, and then the join code does not work.
+      expect(text).not.toContain("removed");
       expect(text).toContain(`send me the join code <code>${CODE}</code>`);
     });
 
@@ -1184,5 +1186,58 @@ describe("/leave and /unlink", () => {
     expect(NOTHING_TO_LEAVE).toContain("nothing to leave or disconnect");
     expect(NOTHING_TO_LEAVE).toContain("<b>join code</b>");
     expect(NOTHING_TO_LEAVE).not.toContain("I don't know who you are");
+  });
+});
+
+/**
+ * The bot is the one caller that can vouch for a chat id: it has checked the
+ * webhook secret, and the id is the one Telegram put in the update. So it binds
+ * the chat through the system join, and nothing it sends to the browser's
+ * join_with_code names a chat. The handler is not importable here (it serves
+ * on import), so this reads the source, as the leave_office tests read SQL.
+ */
+describe("joining from Telegram", () => {
+  const bot = readFileSync(
+    join(import.meta.dirname, "..", "supabase", "functions", "telegram", "index.ts"),
+    "utf8",
+  );
+  const sql = readFileSync(
+    join(import.meta.dirname, "..", "supabase", "migrations",
+      "20261013100100_a_removal_is_on_the_record.sql"),
+    "utf8",
+  );
+
+  it("binds the chat through the system join, with the chat Telegram reported", () => {
+    expect(bot.replace(/\s+/g, " ")).toContain(
+      "return await asSystem((tx) => tx<Array<{ org_name: string }>>` select j.org_name " +
+      "from private.join_office_with_code( ${profileId}::uuid, ${code}, ${name}, null, ${chatId}::bigint) j`)",
+    );
+  });
+
+  it("no longer hands a chat id to the browser's RPC from a signed-up session", () => {
+    expect(bot).not.toContain('client.rpc("join_with_code"');
+    expect(bot).not.toMatch(/\bp_chat_id\b/);
+  });
+
+  it("calls the old public signature only when the new function is missing", () => {
+    const legacy = bot.indexOf("public.join_with_code(${code}, ${name}, ${chatId})");
+    expect(legacy).toBeGreaterThan(-1);
+    const guard = bot.lastIndexOf("e.code !== UNDEFINED_FUNCTION", legacy);
+    expect(guard).toBeGreaterThan(-1);
+    expect(legacy - guard).toBeLessThan(300);
+  });
+
+  const REMOVED =
+    "An admin removed you from %, so its join code will not bring you back. Ask an admin there to add you back.";
+
+  it("tells a removed member why the code did not work, in the database's words", () => {
+    expect(sql).toContain(`raise exception '${REMOVED}'`);
+    // 55000, object_not_in_prerequisite_state: humanError passes it through,
+    // where 42501 would have become "You don't have permission to do that."
+    const raised = sql.slice(sql.indexOf(REMOVED));
+    expect(raised.slice(0, raised.indexOf(";"))).toContain("errcode = 'object_not_in_prerequisite_state'");
+    const said = REMOVED.replace("%", "Acme");
+    expect(botHumanError({ message: said, code: "55000" })).toBe(said);
+    expect(webHumanError({ message: said, code: "55000" })).toBe(said);
   });
 });

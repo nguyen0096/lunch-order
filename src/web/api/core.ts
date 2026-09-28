@@ -94,19 +94,24 @@ export async function fetchMe(): Promise<Me | null> {
     orgs,
     // Asked only of somebody with nowhere to go: it is the no-office page's
     // question, and everybody else would pay a round trip for nothing.
-    removedFrom: orgs.length === 0 ? await fetchRemovedOffices() : undefined,
+    ...(orgs.length === 0 ? await fetchFormerOffices() : {}),
   };
 }
 
 /**
- * The offices this person was an active member of and no longer is. Undefined
- * when the question could not be asked: a failure here must not keep somebody
- * out of the app, and the page has words for not knowing.
+ * The offices this person was an active member of and no longer is, split by
+ * whether an admin removed them. Nothing when the question could not be asked:
+ * a failure here must not keep somebody out of the app, and the page has words
+ * for not knowing.
  */
-async function fetchRemovedOffices(): Promise<string[] | undefined> {
-  const { data, error } = await supabase.rpc("my_removed_offices");
-  if (error) return undefined;
-  return ((data ?? []) as Array<{ org_name: string }>).map((r) => r.org_name);
+async function fetchFormerOffices(): Promise<Pick<Me, "removedFrom" | "leftFrom">> {
+  const { data, error } = await supabase.rpc("my_former_offices");
+  if (error) return {};
+  const rows = (data ?? []) as Array<{ org_name: string; removed: boolean }>;
+  return {
+    removedFrom: rows.filter((r) => r.removed).map((r) => r.org_name),
+    leftFrom: rows.filter((r) => !r.removed).map((r) => r.org_name),
+  };
 }
 
 /**
@@ -241,9 +246,9 @@ export function joinCodeProblem(code: string): string | null {
 /**
  * Join an office with the code from a colleague.
  *
- * The same RPC the Telegram bot calls, with `p_chat_id` left null: that
- * argument is the only Telegram-shaped thing about it, and skipping it skips
- * every branch that touches a chat. The code has always worked for somebody
+ * The browser's door takes no Telegram chat: only the bot binds one, because
+ * only the bot can show that the chat id came from Telegram. The code has
+ * always worked for somebody
  * signed in with Google; until now the web simply never asked for one, so a
  * person was told to get a code and then had nowhere on the page to put it.
  *
@@ -261,7 +266,6 @@ export async function joinWithCode(args: {
   const { data, error } = await supabase.rpc("join_with_code", {
     p_code: args.code.trim().toUpperCase(),
     p_display_name: args.displayName.trim(),
-    p_chat_id: null,
     p_short_code: args.shortCode?.trim().toUpperCase() || null,
   });
   if (error) throw error;

@@ -39,8 +39,8 @@ something that looks broken.
 | config missing | the `configError` from `supabase.ts`, verbatim, naming the missing variable |
 | sign-in refused | Google or Supabase sent back `#error=...`: the sentence above the button, the fragment gone from the address, and the route the person started from put back, so pressing the button again lands them there |
 | the account did not load | "Lunch did not load", the reason, and Try again. A dropped connection is not a sign-out, so it never shows this page |
-| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one. The words come from `my_removed_offices`: somebody new is told they are not in an office yet; somebody removed is told "You were removed from Acme. Ask an admin to add you back.", naming every live office they were removed from |
-| signed in, no office, the question failed | the words cover both cases, new and removed, rather than guess which this is, and the page still works: a failed `my_removed_offices` never keeps anybody out |
+| signed in, no office | join with a colleague's code, and below a rule, create the office yourself. Joining leads because most people are joining somebody else's office, not founding one. The words come from `my_former_offices`: somebody new is told they are not in an office yet; somebody removed is told "You were removed from Acme. Its join code will not bring you back; ask an admin there to add you back.", naming every live office they were removed from; somebody who left (or was inactive before removals were recorded) is told "You're no longer a member of Acme. Its join code will bring you back.", which does not say anybody removed them. Both lines appear when both are true |
+| signed in, no office, the question failed | the words cover both cases, left and removed, rather than guess which this is, and the page still works: a failed `my_former_offices` never keeps anybody out |
 | signed in, no office, founding switched off | the join code alone. `app_settings.office_creation` is a row the database holds and `create_organization` refuses on, so the second door is not hidden, it is shut: every place that offered it (this screen, the account menu, the office switcher) reads the same switch |
 
 Joining by code and founding an office both offer an optional **short code**
@@ -492,7 +492,12 @@ mechanism: a leaked code is noticed, not prevented. See
 [join-codes](../explanation/join-codes.md).
 
 Member list with roles below. **Every disabled control states why**: you cannot
-change your own role, and you cannot change an owner's. A row of grey controls
+change your own role or remove yourself (leaving is in Settings), and an admin
+cannot change, remove or add back an owner. Owners can do everything an admin
+can. An inactive member carries **left** or **removed**, because only the
+second is kept out of the join code; **Remove** on an active row, **Add back**
+on an inactive one, and adding back is the way in for a removed member (a new
+invitation is the other). A row of grey controls
 with no explanation is what made this screen look broken while it was working.
 
 | State | |
@@ -500,6 +505,8 @@ with no explanation is what made this screen look broken while it was working.
 | only you | the code, and "Share this to add your first colleague" |
 | no code set | "No join code yet" with Create |
 | role changed | toast, "Now an admin" |
+| removed | toast, "Removed Tèo"; the row stays, marked removed |
+| added back | toast, "Added Tèo back" |
 
 ## Messages (admin)
 

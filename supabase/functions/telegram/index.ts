@@ -15,9 +15,12 @@
  *     profile_id is the one binding, and it is read with the connection's own
  *     role because at that moment we do not yet know who is asking.
  *
- *  3. A join code is checked by the database, not here. public.join_with_code
- *     is SECURITY DEFINER, always grants the 'member' role, and is the only way
- *     in for somebody with no email address.
+ *  3. A join code is checked by the database, not here.
+ *     private.join_office_with_code always grants the 'member' role, is the
+ *     only way in for somebody with no email address, and is the only thing
+ *     that binds a chat as it joins. It runs as the system, because the chat id
+ *     it is given is one Telegram sent past gate 1; the browser's
+ *     public.join_with_code takes no chat at all.
  *
  *  4. Every domain read and write then runs AS that member, inside one
  *     transaction, over a direct Postgres connection. See _shared/db.ts: the
@@ -93,13 +96,13 @@ type Link = {
   profileId: string;
   /** telegram_links' own key, which is what /unlink clears. */
   membershipId: number;
-  /** profiles.full_name, not the per-org display name: join_with_code writes it. */
+  /** profiles.full_name, not the per-org display name: the join writes it. */
   fullName: string;
   /**
    * Whether this member has a way in that is not this chat.
    *
    * profiles.email is null for exactly one kind of person: somebody signed up
-   * by join_with_code() off an anonymous sign-in, who has no password, no
+   * by joining with a code off an anonymous sign-in, who has no password, no
    * Google account and no address anybody could send a magic link to. See
    * 20260924100000_emailless_members. It is the only column in the schema that
    * records the difference, and it is what decides which exit this chat is
@@ -340,7 +343,7 @@ async function orgForJoinCode(code: string): Promise<{ id: number; name: string 
  * Step one of joining: work out whether a name is needed, and ask for it.
  *
  * The code is validated first, and deliberately before any account exists.
- * join_with_code() writes profiles.full_name and private.suggest_short_code()
+ * The join writes profiles.full_name and private.suggest_short_code()
  * then folds that name into the code printed on bank transfer memos, so the
  * name has to be in hand before the signup -- and an anonymous user created for
  * a signup that is then abandoned is a row nobody can ever sign in to again.
@@ -372,16 +375,16 @@ async function onJoinCode(chatId: number, links: Link[], raw: string): Promise<v
  * membership, short code and history. It only holds if the bot recognises the
  * person coming back, and linksForChat cannot -- it answers with active
  * memberships, and theirs is not one. telegram_links still binds this chat to
- * them, and join_with_code() reactivates the very membership that row points at.
+ * them, and the join reactivates the very membership that row points at.
  *
  * Without this they are signed up as a second, separate person, and
- * join_with_code then refuses that with "This Telegram chat is already linked
+ * the join then refuses that with "This Telegram chat is already linked
  * to somebody else", where somebody else is them.
  *
  * Read with the connection's own role for linksForChat's reason: an inactive
  * membership resolves to nobody, so there is nobody to act as yet. It grants
- * nothing -- join_with_code decides, and it hands back the lowest role whatever
- * they were before, so a deactivation that removed authority is not undone here.
+ * nothing: the join decides. It refuses somebody an admin removed, and it
+ * hands back the lowest role to somebody who left, whatever they were before.
  */
 async function dormantLink(
   chatId: number, orgId: number,
@@ -433,7 +436,7 @@ async function onName(
  * person, so they join as themselves. Signing them up again would split one
  * human across two accounts, and the anonymous account has no email address to
  * ever merge them back with. Their existing name is passed through unchanged
- * because join_with_code() overwrites profiles.full_name unconditionally.
+ * because the join overwrites profiles.full_name unconditionally.
  */
 function soleProfile(links: Link[]): { profileId: string; fullName: string } | null {
   const distinct = new Map(links.map((l) => [l.profileId, l.fullName] as const));
@@ -441,25 +444,45 @@ function soleProfile(links: Link[]): { profileId: string; fullName: string } | n
   return distinct.size === 1 && only ? { profileId: only[0], fullName: only[1] } : null;
 }
 
+/** Postgres's undefined_function. */
+const UNDEFINED_FUNCTION = "42883";
+
+/**
+ * Joining, and binding this chat to the membership in the same transaction.
+ *
+ * `profileId` is this chat's own identity or one signed up for it a moment
+ * ago, and `chatId` came in an update that passed the webhook secret, which is
+ * what entitles this call to bind the one to the other.
+ */
 async function join(
   chatId: number, code: string, profileId: string, name: string,
 ): Promise<void> {
-  const outcome = await attempt(() =>
-    asMember(profileId, (tx) =>
-      tx<Array<{ org_name: string }>>`
-        select j.org_name from public.join_with_code(${code}, ${name}, ${chatId}) j`)
-  );
+  const outcome = await attempt(async () => {
+    try {
+      return await asSystem((tx) =>
+        tx<Array<{ org_name: string }>>`
+          select j.org_name
+            from private.join_office_with_code(
+              ${profileId}::uuid, ${code}, ${name}, null, ${chatId}::bigint) j`);
+    } catch (e) {
+      // A database still without 20261013100000, for the minutes a deploy
+      // runs ahead of the migration. Remove with the old join_with_code.
+      if (!isDatabaseError(e) || e.code !== UNDEFINED_FUNCTION) throw e;
+      return await asMember(profileId, (tx) =>
+        tx<Array<{ org_name: string }>>`
+          select j.org_name from public.join_with_code(${code}, ${name}, ${chatId}) j`);
+    }
+  });
   await sayJoined(chatId, outcome);
 }
 
 /**
  * Signing somebody up who has no account at all.
  *
- * signInAnonymously() returns a real GoTrue session signed with the project's
- * current key, which is the whole reason this path exists: nothing outside
- * GoTrue can produce a token PostgREST will trust. The handle_new_user trigger
- * creates the profile as 'New member', and join_with_code, called seconds later
- * on that same session, replaces the placeholder with the name they just gave.
+ * signInAnonymously() creates a real GoTrue user, which is the whole reason
+ * this path exists: an account here is a GoTrue account. The handle_new_user
+ * trigger creates the profile as 'New member', and the join, seconds later,
+ * replaces the placeholder with the name they just gave.
  *
  * A join that fails after the sign-in leaves an anonymous user with no
  * membership behind. That is left alone on purpose: the alternative is handing
@@ -468,18 +491,13 @@ async function join(
  */
 async function signUpAndJoin(chatId: number, code: string, name: string): Promise<void> {
   const client = signedOutClient();
-  const { error: signInError } = await client.auth.signInAnonymously();
-  if (signInError) {
+  const { data, error: signInError } = await client.auth.signInAnonymously();
+  const profileId = data.user?.id;
+  if (signInError || !profileId) {
     console.error("anonymous sign-in failed", signInError);
     return await say(chatId, "I couldn't create an account for you just now. Try again shortly.");
   }
-
-  const { data, error } = await client.rpc("join_with_code", {
-    p_code: code, p_display_name: name, p_chat_id: chatId,
-  });
-  await sayJoined(chatId, error
-    ? { ok: false, reason: humanError(error) }
-    : { ok: true, value: (data ?? []) as Array<{ org_name: string }> });
+  await join(chatId, code, profileId, name);
 }
 
 async function sayJoined(
