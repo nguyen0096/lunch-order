@@ -1437,7 +1437,9 @@ describe("the webhook registration", () => {
   const allowed: unknown = JSON.parse(read("supabase", "functions", "telegram", "allowed_updates.json"));
   const deploy = read(".github", "workflows", "deploy.yml");
 
-  it("asks for exactly the updates the bot reads", () => {
+  // handle() would also read edited_message, which is deliberately not
+  // requested, so an edited message is not acted on.
+  it("asks for message, callback_query and my_chat_member, each of which the bot reads", () => {
     expect(allowed).toEqual(["message", "callback_query", "my_chat_member"]);
     const bot = read("supabase", "functions", "telegram", "index.ts");
     const shared = read("src", "shared", "telegram.ts");
@@ -1449,8 +1451,9 @@ describe("the webhook registration", () => {
 
   it("is registered by deploy.yml from that file, as form fields", () => {
     expect(deploy).toContain("ALLOWED_UPDATES_FILE: supabase/functions/telegram/allowed_updates.json");
-    expect(deploy).toContain('-F "allowed_updates=$allowed"');
-    expect(deploy).toContain('-F "secret_token=$WEBHOOK_SECRET"');
+    expect(deploy).toContain('--form-string "allowed_updates=$allowed"');
+    expect(deploy).toContain('--form-string "secret_token=$WEBHOOK_SECRET"');
+    expect(deploy).not.toMatch(/\s-F\s/);
     expect(deploy).toMatch(/--slurpfile want "\$ALLOWED_UPDATES_FILE"/);
   });
 

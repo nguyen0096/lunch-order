@@ -12,6 +12,10 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash
+
 concurrency:
   group: production
   cancel-in-progress: false
@@ -105,6 +109,7 @@ jobs:
   register-webhook:
     needs: deploy-functions
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
@@ -133,27 +138,44 @@ jobs:
           URL: ${{ steps.creds.outputs.url }}
         run: |
           for _ in 1 2 3 4 5; do
-            status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL" \
+            status=$(curl -sS --max-time 30 -o /dev/null -w '%{http_code}' -X POST "$URL" \
               -H "X-Telegram-Bot-Api-Secret-Token: $WEBHOOK_SECRET" \
               -H 'Content-Type: application/json' --data '{}' || true)
             case "$status" in
               200) exit 0 ;;
-              401) echo "::error::TELEGRAM_WEBHOOK_SECRET in GitHub differs from the Supabase secret of the same name; the webhook was left as it was"; exit 1 ;;
+              401) echo "::error::TELEGRAM_WEBHOOK_SECRET is not accepted by the function (differs from GitHub's, or unset in Supabase); the webhook was left as it was"; exit 1 ;;
             esac
             sleep 5
           done
           echo "::error::the telegram function answered $status to an empty update; the webhook was left as it was"
           exit 1
+      # A token for another bot would move that bot's webhook onto this function.
+      - name: Check the token is the bot's
+        if: steps.creds.outputs.skip != 'true'
+        env:
+          WANT_BOT: ${{ vars.VITE_TELEGRAM_BOT }}
+        run: |
+          if [ -z "$WANT_BOT" ]; then
+            echo "::notice::VITE_TELEGRAM_BOT is not set, so the bot token's username was not checked"
+            exit 0
+          fi
+          me=$(curl -sS --max-time 30 "https://api.telegram.org/bot$BOT_TOKEN/getMe")
+          got=$(jq -r '.result.username // empty' 2>/dev/null <<<"$me" || true)
+          want=${WANT_BOT#@}
+          if [ -z "$got" ] || [ "${got,,}" != "${want,,}" ]; then
+            echo "::error::TELEGRAM_BOT_TOKEN belongs to '${got:-no bot}', not '$want'; the webhook was left as it was"
+            exit 1
+          fi
       - name: Register the webhook
         if: steps.creds.outputs.skip != 'true'
         env:
           URL: ${{ steps.creds.outputs.url }}
         run: |
           allowed=$(jq -c . "$ALLOWED_UPDATES_FILE")
-          response=$(curl -sS -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
-            -F "url=$URL" \
-            -F "secret_token=$WEBHOOK_SECRET" \
-            -F "allowed_updates=$allowed")
+          response=$(curl -sS --max-time 30 -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+            --form-string "url=$URL" \
+            --form-string "secret_token=$WEBHOOK_SECRET" \
+            --form-string "allowed_updates=$allowed")
           if ! jq -e '.ok == true' >/dev/null 2>&1 <<<"$response"; then
             echo "::error::setWebhook refused: $(jq -r '.description // "no description"' 2>/dev/null <<<"$response" || echo "$response")"
             exit 1
@@ -163,7 +185,7 @@ jobs:
         env:
           URL: ${{ steps.creds.outputs.url }}
         run: |
-          info=$(curl -sS "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")
+          info=$(curl -sS --max-time 30 "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")
           if ! jq -e --arg url "$URL" --slurpfile want "$ALLOWED_UPDATES_FILE" '
                 .ok == true
                 and .result.url == $url

@@ -50,14 +50,14 @@ npx supabase functions list --project-ref wvtbstticnactealupph
 
 Check `verify_jwt` matches `supabase/config.toml`: `false` for `telegram` and
 `sepay`, `true` for `outbox-drain` and `parse-assist`. A mismatch means something
-deployed outside the normal path.
-
-A hand deploy does not register the webhook. It does not need to unless
-`supabase/functions/telegram/allowed_updates.json` changed; if it did, use the
-emergency command in [Set up a deployment](set-up-a-deployment.md), step 7. For `sepay` it is the difference between
+deployed outside the normal path. For `sepay` it is the difference between
 working and silently dropping money: with the gate on, SePay's deliveries are
 refused before the function's per-office API key check runs, and after its
 retries give up nothing records the transfer.
+
+A hand deploy does not register the webhook. It does not need to unless
+`supabase/functions/telegram/allowed_updates.json` changed; if it did, use the
+emergency command in [Set up a deployment](set-up-a-deployment.md), step 7.
 
 ## Rolling back
 

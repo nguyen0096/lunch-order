@@ -112,25 +112,32 @@ Push to `main`. After the functions deploy, the `register-webhook` job in
 3. reads `getWebhookInfo` back and fails unless the URL and `allowed_updates`
    are what it sent.
 
+When the `VITE_TELEGRAM_BOT` variable is set, it first also checks with
+`getMe` that `TELEGRAM_BOT_TOKEN` belongs to that bot, so a token for another
+bot cannot move that bot's webhook.
+
 Without the two Telegram GitHub secrets the job warns and leaves the webhook as
 it is, and the rest of the deploy goes ahead. `drop_pending_updates` is never
 sent: updates queued while the bot was unreachable are people waiting for an
 answer.
 
 `allowed_updates.json` is the one list. Add an update type there when the bot
-starts reading one; Telegram keeps the previous list whenever the field is left
+starts reading one (`edited_message` is left out on purpose, although the bot
+would read one, so an edited message is not acted on); Telegram keeps the previous list whenever the field is left
 out, so an update the list omits never arrives. `my_chat_member` is how the bot
 learns it was added to a group, which is when it posts the group's chat ID
 there.
 
-Only in an emergency, with CI unavailable, register by hand. Form fields, so
-there is no JSON to quote, and the list is read from the same file:
+Only in an emergency, with CI unavailable, register by hand. Literal form
+fields (`--form-string`, which unlike `-F` never reads a value starting with `@`
+or `<` as a file), so there is no JSON to quote, and the list is read from the
+same file:
 
 ```bash
 curl -sX POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
-  -F "url=https://<ref>.supabase.co/functions/v1/telegram" \
-  -F "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
-  -F "allowed_updates=$(cat supabase/functions/telegram/allowed_updates.json)"
+  --form-string "url=https://<ref>.supabase.co/functions/v1/telegram" \
+  --form-string "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
+  --form-string "allowed_updates=$(cat supabase/functions/telegram/allowed_updates.json)"
 ```
 
 Order matters here too: registering before the function exists lands every
