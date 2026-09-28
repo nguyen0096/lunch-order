@@ -106,6 +106,11 @@ select 'B the service role can',
 insert into probe
 select 'B anon cannot join at all',
        has_function_privilege('anon', 'public.join_with_code(text, text, text)', 'execute')::text, 'false';
+insert into probe
+select 'B the browser''s join is the only join_with_code left',
+       (select string_agg(p.oid::regprocedure::text, ', ') from pg_proc p
+         where p.pronamespace = 'public'::regnamespace and p.proname = 'join_with_code'),
+       'join_with_code(text,text,text)';
 
 do $$
 begin
@@ -114,9 +119,12 @@ begin
   insert into probe values ('B control: the role really is authenticated',
     current_user::text, 'authenticated');
 
-  insert into probe values ('B the old signature refuses a chat named by the caller',
-    pg_temp.attempt($q$select * from public.join_with_code('RCBJXKNA', 'Moi Den', 777001::bigint, null)$q$),
-    '55000 Joining from Telegram is being updated. Try again in a few minutes.');
+  insert into probe values ('B a caller naming a chat finds no join that takes one',
+    left(pg_temp.attempt($q$select * from public.join_with_code('RCBJXKNA', 'Moi Den', 777001::bigint, null)$q$), 5),
+    '42883');
+  insert into probe values ('B nor by name',
+    left(pg_temp.attempt($q$select * from public.join_with_code(p_code => 'RCBJXKNA', p_display_name => 'Moi Den', p_chat_id => 777001)$q$), 5),
+    '42883');
   insert into probe values ('B so the chat was bound to nobody',
     (select count(*)::text from public.telegram_links where chat_id = 777001), '0');
   insert into probe values ('B and the caller did not join on the way',
@@ -127,8 +135,8 @@ begin
       $q$select * from private.join_office_with_code(%L::uuid, 'RCBJXKNA', 'Moi Den', null, 880005)$q$,
       pg_temp.c('new'))), 5), '42501');
 
-  insert into probe values ('B the old signature still joins without a chat, for bundles already loaded',
-    pg_temp.attempt($q$select * from public.join_with_code('RCBJXKNA', 'Moi Den', null::bigint, null)$q$),
+  insert into probe values ('B the browser joins with its three arguments',
+    pg_temp.attempt($q$select * from public.join_with_code('RCBJXKNA', 'Moi Den', null)$q$),
     'ok 1');
   insert into probe values ('B the browser join works and binds nothing',
     (select count(*)::text from public.telegram_links tl

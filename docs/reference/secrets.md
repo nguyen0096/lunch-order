@@ -3,15 +3,15 @@
 Every secret and deploy setting the app needs, and where each one lives. To put
 them in place, follow [Set up a deployment](../how-to/set-up-a-deployment.md).
 
-Five places hold them and none can read another's, so two values are
+Five places hold them and none can read another's, so some values are
 deliberately stored twice. `OUTBOX_DRAIN_SECRET` in particular lives in both the
 Edge Function environment and in Vault, because Postgres is the sender and the
 function is the receiver.
 
 | Value | Edge Function | Vault | Database table | GitHub | Telegram |
 | --- | --- | --- | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | yes | | | | issuer |
-| `TELEGRAM_WEBHOOK_SECRET` | yes | | | | yes |
+| `TELEGRAM_BOT_TOKEN` | yes | | | same value, secret | issuer |
+| `TELEGRAM_WEBHOOK_SECRET` | yes | | | same value, secret | yes |
 | `OUTBOX_DRAIN_SECRET` | yes | same value | | | |
 | `DEEPSEEK_API_KEY` | yes, optional | | | | |
 | `LUNCH_DB_POOL_URL` | yes, optional | | | | |
@@ -70,6 +70,12 @@ Under *Settings > Secrets and variables > Actions*.
   deploy workflow run `supabase functions deploy`.
 - **`CLOUDFLARE_API_TOKEN`** (secret): from the *Edit Cloudflare Workers* template.
 - **`CLOUDFLARE_ACCOUNT_ID`** (secret): from the Cloudflare dashboard.
+- **`TELEGRAM_BOT_TOKEN`**, **`TELEGRAM_WEBHOOK_SECRET`** (secrets): the same
+  values as the Edge Function secrets of those names. The deploy workflow calls
+  `setWebhook` with them after every functions deploy. It first checks the
+  function accepts this `TELEGRAM_WEBHOOK_SECRET` and fails if it does not,
+  because a mismatch is a 401 on every update. Without either one it warns and
+  leaves the webhook alone.
 - **`VITE_*`** (variables): repository **variables**, not secrets, on purpose.
   Vite inlines them into the bundle, so they are public the moment anyone loads
   the page, and masking them in a CI log would only give false assurance. They

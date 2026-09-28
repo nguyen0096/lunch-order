@@ -160,8 +160,23 @@ the SPA deploy after CI passes, minutes later. The old four-argument
 refuses any non-null chat, so the hole closes when the migration lands. The
 cost is that an old bot's Telegram joins fail with "Joining from Telegram is
 being updated" until the new bot is live. A new bot that lands first falls back
-to the old public call when the private function is missing. Drop the
-four-argument signature and the fallback once both are deployed.
+to the old public call when the private function is missing. Both were removed
+once both were deployed: 20261014100000 drops the four-argument signature, and
+the bot calls only `private.join_office_with_code`.
+
+**The deploy registers Telegram's webhook.** `setWebhook` was a manual step,
+and Telegram keeps the previous `allowed_updates` whenever the field is left
+out, so a new update type the bot handled stayed undelivered until somebody
+remembered. `deploy.yml` now calls it after every functions deploy with the list
+in `supabase/functions/telegram/allowed_updates.json`, and reads it back with
+`getWebhookInfo`. Before that it posts an empty update to the function with
+GitHub's copy of `TELEGRAM_WEBHOOK_SECRET` and fails on a 401: two copies of
+one secret that disagree take the bot down, and this is the one place both are
+in reach. Asking the function was chosen over comparing the digest `supabase
+secrets list` prints, because what that digest is computed from is not
+documented. The job gates the release, since a bot Telegram cannot reach is a
+failed deploy. Without the Telegram GitHub secrets it warns and leaves the
+webhook alone rather than failing a deploy that is otherwise fine.
 
 **Writing an invitation issues it again.** The app upserts on
 `(org_id, email)` and the upsert kept the row as it was, so re-inviting

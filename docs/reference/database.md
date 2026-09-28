@@ -78,8 +78,8 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   an update that passed the webhook secret. The browser's `join_with_code`
   takes no chat; `private.join_office_with_code`, which joins and binds in one
   transaction, is executable by the database owner and `service_role` only.
-  The old four-argument `join_with_code` refuses any non-null chat and is kept
-  only for bundles loaded before 20261013100000.
+  `join_with_code` has one signature; 20261014100000 dropped the
+  four-argument one that took a chat.
 - **Leaving and being removed are different rows.** Both set `status` to
   `inactive`; `memberships.removed_at` and `removed_by` say which, and only the
   `memberships_removal` trigger writes them: a member going inactive by their

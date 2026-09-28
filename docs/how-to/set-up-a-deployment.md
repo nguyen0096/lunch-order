@@ -12,7 +12,9 @@ Functions. When that passes on `main`, `.github/workflows/deploy.yml`:
 1. builds `dist/web` and uploads it to the `lunch-order` Worker as static assets;
 2. deploys all four Edge Functions (`outbox-drain`, `parse-assist`, `sepay`,
    `telegram`) with `supabase functions deploy`;
-3. publishes a GitHub release named for the date, listing the commits since the
+3. points Telegram's webhook at the `telegram` function with `setWebhook`, once
+   that function holds the same webhook secret as GitHub;
+4. publishes a GitHub release named for the date, listing the commits since the
    last one.
 
 Migrations are applied separately, by the Supabase GitHub integration.
@@ -70,6 +72,8 @@ select vault.create_secret('<OUTBOX_DRAIN_SECRET>',       'outbox_drain_secret')
 gh secret   set SUPABASE_ACCESS_TOKEN   --repo <owner>/lunch-order
 gh secret   set CLOUDFLARE_API_TOKEN    --repo <owner>/lunch-order
 gh secret   set CLOUDFLARE_ACCOUNT_ID   --repo <owner>/lunch-order
+gh secret   set TELEGRAM_BOT_TOKEN      --repo <owner>/lunch-order
+gh secret   set TELEGRAM_WEBHOOK_SECRET --repo <owner>/lunch-order
 gh variable set VITE_SUPABASE_URL       --repo <owner>/lunch-order --body 'https://<ref>.supabase.co'
 gh variable set VITE_SUPABASE_PUBLISHABLE_KEY --repo <owner>/lunch-order --body 'sb_publishable_...'
 gh variable set VITE_TELEGRAM_BOT       --repo <owner>/lunch-order --body '<bot username, no @>'
@@ -78,6 +82,10 @@ gh variable set VITE_TELEGRAM_BOT       --repo <owner>/lunch-order --body '<bot 
 The Cloudflare token comes from the *Edit Cloudflare Workers* template; the
 Supabase one from
 [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens).
+The two Telegram values are the ones from step 3, byte for byte. A
+`TELEGRAM_WEBHOOK_SECRET` that differs from the Supabase secret of the same name
+makes the function answer every update with 401; the deploy checks for that and
+fails before it registers anything.
 
 The `release` job needs to create tags. Under *Settings > Actions > General >
 Workflow permissions*, either choice works because the job asks for
@@ -91,28 +99,42 @@ URL from step 1 under *Authentication > URL Configuration > Redirect URLs*. Unti
 you do, sign-in completes at Google and then bounces to the project's default
 site URL.
 
-## 7. Deploy the functions, then point Telegram at them
+## 7. Push, and the deploy points Telegram at the function
 
-Order matters: registering the webhook before the function exists means every
-update Telegram sends lands on a 404. Push to `main`, or deploy by hand as in
-[Deploy the Edge Functions](deploy-edge-functions.md), then:
+Push to `main`. After the functions deploy, the `register-webhook` job in
+`deploy.yml`:
+
+1. posts an empty update to the `telegram` function with GitHub's
+   `TELEGRAM_WEBHOOK_SECRET`, and fails the deploy on a 401, because that
+   secret would take the bot down;
+2. calls `setWebhook` with the function's URL, the secret, and
+   `allowed_updates` from `supabase/functions/telegram/allowed_updates.json`;
+3. reads `getWebhookInfo` back and fails unless the URL and `allowed_updates`
+   are what it sent.
+
+Without the two Telegram GitHub secrets the job warns and leaves the webhook as
+it is, and the rest of the deploy goes ahead. `drop_pending_updates` is never
+sent: updates queued while the bot was unreachable are people waiting for an
+answer.
+
+`allowed_updates.json` is the one list. Add an update type there when the bot
+starts reading one; Telegram keeps the previous list whenever the field is left
+out, so an update the list omits never arrives. `my_chat_member` is how the bot
+learns it was added to a group, which is when it posts the group's chat ID
+there.
+
+Only in an emergency, with CI unavailable, register by hand. Form fields, so
+there is no JSON to quote, and the list is read from the same file:
 
 ```bash
 curl -sX POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://<ref>.supabase.co/functions/v1/telegram",
-       "secret_token":"<TELEGRAM_WEBHOOK_SECRET>",
-       "allowed_updates":["message","callback_query","my_chat_member"],
-       "drop_pending_updates":true}'
+  -F "url=https://<ref>.supabase.co/functions/v1/telegram" \
+  -F "secret_token=<TELEGRAM_WEBHOOK_SECRET>" \
+  -F "allowed_updates=$(cat supabase/functions/telegram/allowed_updates.json)"
 ```
 
-`my_chat_member` is how the bot learns it was added to a group, which is when
-it posts the group's chat ID there. Telegram keeps the previous
-`allowed_updates` whenever the field is left out, so a webhook registered with
-the old list keeps the old list until `setWebhook` is called again with this
-one. The bot still posts the ID on such a webhook, from the service message
-announcing the new member, but only once `my_chat_member` is in the list is
-one add sure to be one message.
+Order matters here too: registering before the function exists lands every
+update on a 404.
 
 ## 8. Per office
 

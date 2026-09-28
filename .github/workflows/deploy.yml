@@ -1,6 +1,7 @@
 # Deploys main once CI has passed on it: the SPA to Cloudflare, the Edge
-# Functions to Supabase, then a GitHub release for what went out. Migrations are
-# not here; the Supabase GitHub integration applies them.
+# Functions to Supabase, Telegram's webhook onto the telegram function, then a
+# GitHub release for what went out. Migrations are not here; the Supabase GitHub
+# integration applies them.
 name: Deploy
 on:
   workflow_run:
@@ -14,6 +15,9 @@ permissions:
 concurrency:
   group: production
   cancel-in-progress: false
+
+env:
+  SUPABASE_PROJECT_REF: wvtbstticnactealupph
 
 jobs:
   deploy:
@@ -89,22 +93,101 @@ jobs:
       - uses: supabase/setup-cli@v1
         with:
           version: 2.117.0
-      - run: supabase functions deploy --project-ref wvtbstticnactealupph
+      - run: supabase functions deploy --project-ref "$SUPABASE_PROJECT_REF"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+  # Telegram keeps whatever setWebhook was last given, so an update type the
+  # bot starts handling stays undelivered until somebody re-registers by hand.
+  # This registers on every deploy instead, from the one list in the repo.
+  # drop_pending_updates is never passed: updates queued while the bot was
+  # unreachable are people waiting for an answer.
+  register-webhook:
+    needs: deploy-functions
+    runs-on: ubuntu-latest
+    env:
+      BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      WEBHOOK_SECRET: ${{ secrets.TELEGRAM_WEBHOOK_SECRET }}
+      ALLOWED_UPDATES_FILE: supabase/functions/telegram/allowed_updates.json
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: Check the Telegram secrets are here
+        id: creds
+        run: |
+          if [ -z "$BOT_TOKEN" ] || [ -z "$WEBHOOK_SECRET" ]; then
+            echo "::warning::TELEGRAM_BOT_TOKEN or TELEGRAM_WEBHOOK_SECRET is not a GitHub secret, so the Telegram webhook was left as it was"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::add-mask::$BOT_TOKEN"
+          echo "::add-mask::$WEBHOOK_SECRET"
+          echo "url=https://$SUPABASE_PROJECT_REF.supabase.co/functions/v1/telegram" >> "$GITHUB_OUTPUT"
+      # A secret that differs from the function's own makes it answer every
+      # update with 401, which takes the bot down. So the function is asked
+      # first, with an empty update it ignores, before Telegram is told anything.
+      - name: Check the function holds the same webhook secret
+        if: steps.creds.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.creds.outputs.url }}
+        run: |
+          for _ in 1 2 3 4 5; do
+            status=$(curl -sS -o /dev/null -w '%{http_code}' -X POST "$URL" \
+              -H "X-Telegram-Bot-Api-Secret-Token: $WEBHOOK_SECRET" \
+              -H 'Content-Type: application/json' --data '{}' || true)
+            case "$status" in
+              200) exit 0 ;;
+              401) echo "::error::TELEGRAM_WEBHOOK_SECRET in GitHub differs from the Supabase secret of the same name; the webhook was left as it was"; exit 1 ;;
+            esac
+            sleep 5
+          done
+          echo "::error::the telegram function answered $status to an empty update; the webhook was left as it was"
+          exit 1
+      - name: Register the webhook
+        if: steps.creds.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.creds.outputs.url }}
+        run: |
+          allowed=$(jq -c . "$ALLOWED_UPDATES_FILE")
+          response=$(curl -sS -X POST "https://api.telegram.org/bot$BOT_TOKEN/setWebhook" \
+            -F "url=$URL" \
+            -F "secret_token=$WEBHOOK_SECRET" \
+            -F "allowed_updates=$allowed")
+          if ! jq -e '.ok == true' >/dev/null 2>&1 <<<"$response"; then
+            echo "::error::setWebhook refused: $(jq -r '.description // "no description"' 2>/dev/null <<<"$response" || echo "$response")"
+            exit 1
+          fi
+      - name: Confirm what Telegram holds
+        if: steps.creds.outputs.skip != 'true'
+        env:
+          URL: ${{ steps.creds.outputs.url }}
+        run: |
+          info=$(curl -sS "https://api.telegram.org/bot$BOT_TOKEN/getWebhookInfo")
+          if ! jq -e --arg url "$URL" --slurpfile want "$ALLOWED_UPDATES_FILE" '
+                .ok == true
+                and .result.url == $url
+                and ((.result.allowed_updates // []) | sort) == ($want[0] | sort)' \
+               >/dev/null 2>&1 <<<"$info"; then
+            echo "::error::getWebhookInfo does not match what was registered: $(jq -c '.result | {url, allowed_updates}' 2>/dev/null <<<"$info" || echo "$info")"
+            exit 1
+          fi
+          echo "Webhook: $(jq -c '.result | {url, allowed_updates, pending_update_count}' <<<"$info")"
 
   # One release per successful deploy, so the Releases list is the deploy
   # history. Versions are UTC dates (v2026.09.28, then v2026.09.28.2 for a
   # second deploy that day) because commits here are prose, not Conventional
   # Commits, and nothing could derive a semantic version from them.
   release:
-    needs: [deploy, deploy-functions]
+    # The webhook gates the release too: a function Telegram cannot reach is a
+    # bot that is down, however green the deploy.
+    needs: [deploy, deploy-functions, register-webhook]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      # The commit CI passed and both deploys shipped. Tagging anything later
+      # The commit CI passed and the deploys shipped. Tagging anything later
       # would attach the release to a commit nobody tested.
       SHA: ${{ github.event.workflow_run.head_sha }}
       REPO_URL: ${{ github.server_url }}/${{ github.repository }}
