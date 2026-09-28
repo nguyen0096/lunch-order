@@ -261,7 +261,7 @@ export async function fetchBillLines(args: {
       .order("id", { ascending: true }),
     supabase
       .from("memberships")
-      .select("profile_id, short_code, display_name, profiles ( full_name )")
+      .select("profile_id, short_code, display_name, profiles!memberships_profile_id_fkey ( full_name )")
       .eq("org_id", args.orgId),
   ]);
 
@@ -431,7 +431,7 @@ export async function fetchPayments(args: {
       .limit(limit),
     supabase
       .from("memberships")
-      .select("profile_id, short_code, display_name, payment_ref, status, profiles ( full_name )")
+      .select("profile_id, short_code, display_name, payment_ref, status, profiles!memberships_profile_id_fkey ( full_name )")
       .eq("org_id", args.orgId),
     supabase
       .from("v_account_balance")

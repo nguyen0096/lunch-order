@@ -202,7 +202,7 @@ export async function fetchBoard(args: {
       .lte("service_date", args.to),
     supabase
       .from("memberships")
-      .select(`profile_id, short_code, display_name, profiles ( full_name )`)
+      .select(`profile_id, short_code, display_name, profiles!memberships_profile_id_fkey ( full_name )`)
       .eq("org_id", args.orgId)
       .eq("status", "active"),
     supabase
@@ -400,7 +400,7 @@ export async function fetchTransfers(args: {
       .order("service_date"),
     supabase
       .from("memberships")
-      .select(`profile_id, short_code, display_name, profiles ( full_name )`)
+      .select(`profile_id, short_code, display_name, profiles!memberships_profile_id_fkey ( full_name )`)
       .eq("org_id", args.orgId)
       .eq("status", "active"),
   ]);

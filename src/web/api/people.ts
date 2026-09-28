@@ -110,7 +110,7 @@ export async function fetchOrgMembers(args: {
   const { data, error } = await supabase
     .from("memberships")
     .select(`id, profile_id, role, status, removed_at, short_code, display_name, created_at,
-             profiles ( email, full_name )`)
+             profiles!memberships_profile_id_fkey ( email, full_name )`)
     .eq("org_id", args.orgId);
   if (error) throw error;
 
