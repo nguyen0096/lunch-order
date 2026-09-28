@@ -93,6 +93,38 @@ to `memberships (id, org_id)` makes the office the membership's; column grants
 leave a browser only `chat_id` and `linked_at`; a trigger lets a browser clear
 `chat_id` and never set it.
 
+**A link token is its owner's alone, even from an admin.** Admins read every
+`telegram_links` row in their office, which the Messages screen needs to count
+who is connected, and that included `link_token`. The bot binds whichever chat
+redeems a token to the membership it names, so an admin who opened a
+colleague's deep link became that colleague in the bot. RLS filters rows, not
+columns, so the column went instead: no browser role may select it, and a
+member reads their own through `my_telegram_link` and mints it through
+`create_my_telegram_link`. Admins keep link status and lose nothing the web
+app used.
+
+**Nobody writes the outbox from a browser, owners included.** `outbox_admin`
+was `for all`, so an admin could queue any body to any `chat_id`, rewrite a
+queued row, or delete one, and outbox-drain sends what the queue says. Every
+message a person may cause already goes through a SECURITY DEFINER function
+that checks for an admin or owner and takes the chats from the office's own
+links, so the write grants went and the policy reads only. It keeps the bug
+report rule: an admin who is not an owner reads no `bug_report` row.
+
+**An invitation says where it leads before it is accepted.** The preview
+answers with the office's name, the role, the expiry and a state, for whoever
+holds the token and is signed in. The token is the credential, and pressing
+Accept already reveals as much, so this opens nothing new. Invitation tokens
+are `gen_random_uuid()` v4 uuids, 122 random bits: enumeration is not a
+threat worth a rate limit.
+
+**A removed member is told so.** `my_org_ids()` sees active memberships only,
+so a removed member got the new-user screen, hedged to cover both. Now
+`my_removed_offices` names the live offices where their own membership is
+inactive, and nothing else. Leaving through `leave_office` also leaves the row
+inactive and the row does not record which happened; the sentence is written
+for the person who did not leave, because the one who did already knows.
+
 **A join code grants membership and nothing else, on every path.** It hardcoded
 `'member'` on insert but the reactivation branch touched `status` alone, so a
 deactivated admin returned as an admin by sending a string every remaining

@@ -239,7 +239,7 @@ describe("the Telegram connection", () => {
     expect(createTelegramLink).not.toHaveBeenCalled();
 
     await userEvent.click(screen.getByRole("button", { name: /Connect Telegram/ }));
-    await waitFor(() => expect(createTelegramLink).toHaveBeenCalledWith(7, "me"));
+    await waitFor(() => expect(createTelegramLink).toHaveBeenCalledWith(7));
 
     // No VITE_TELEGRAM_BOT, so there is no link to tap -- but the command works.
     expect(await screen.findByText("/start tok-1")).toBeInTheDocument();
