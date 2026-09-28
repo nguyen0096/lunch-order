@@ -112,7 +112,8 @@ Each office has settings that stay empty until an admin fills them, and each
 empty one quietly disables a feature:
 
 - **Where the money goes.** Until `payment_config` is set, no bill shows a QR.
-  See [Set up where the money goes](set-up-payment.md).
+  A bank account can belong to only one live office, and the database says
+  which office holds it. See [Set up where the money goes](set-up-payment.md).
 - **Bank transfers that record themselves.** Needs a SePay account and the
   office's own webhook key in `public.org_webhook_secrets`. See
   [Connect SePay](connect-sepay.md).

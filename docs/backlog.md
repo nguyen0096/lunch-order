@@ -130,14 +130,14 @@ Creating an office from the app sends only a name and a slug, so
 `create_organization` applies its defaults: `Asia/Ho_Chi_Minh`, `VND`, `vi-VN`,
 and a 21:00 cutoff. Every one of those is right for the office this was built
 for and wrong for anybody else, and **no screen can change the first three
-afterwards** — only the cutoff reached a control.
+afterwards**: only the cutoff reached a control.
 
 The timezone is the one that actually breaks things rather than merely reading
 oddly: it decides what "today" is, when a menu may be published, and when
 ordering closes, so an office in the wrong zone gets a board that turns over at
-the wrong hour. Settings names the zone read-only today, which was deliberate —
+the wrong hour. Settings names the zone read-only today, which was deliberate:
 stating the thing that gives a time its meaning without pretending it is
-editable — and that sentence is the line to change.
+editable, and that sentence is the line to change.
 
 Either ask on the create form or add a control to Settings. Ask on the form only
 if the answer can be defaulted from the browser, because a founder who does not
@@ -167,15 +167,15 @@ below, and a delivery from the real SePay rather than from a test.
 
 **The multi-tenant question has an answer, and it is Bank Hub.** It exists for
 "software platforms with user bases": each office's admin authorises *their own*
-bank account through a hosted link — a WebView embedded as an iframe or through
-a JS SDK — authenticating with their bank directly, without handing us
+bank account through a hosted link (a WebView embedded as an iframe or through
+a JS SDK), authenticating with their bank directly, without handing us
 credentials. We then receive that account's transactions. So one integration
 serves every office, which is the thing that decides whether this is a feature
 everybody gets. Terms are not published: "liên hệ SePay" for approval, contract
 and fees.
 
-Its limit is the bank list. Bank Hub names about ten — VPBank, TPBank,
-VietinBank, ACB, BIDV, MBBank, OCB, KienLongBank, MSB, Sacombank — against the
+Its limit is the bank list. Bank Hub names about ten (VPBank, TPBank,
+VietinBank, ACB, BIDV, MBBank, OCB, KienLongBank, MSB, Sacombank) against the
 36 in `src/shared/banks.ts`. An office banking elsewhere can still be *paid* by
 QR; it just cannot be reconciled automatically.
 
@@ -212,13 +212,13 @@ allowlist. The official Laravel package checks `Authorization: Bearer Apikey
 Two settings on the **bank account** in SePay, which is a different place from
 the webhook and does a different job:
 
-- **Lọc giao dịch theo từ khóa** — sync only transactions whose content carries
+- **Lọc giao dịch theo từ khóa**: sync only transactions whose content carries
   the keyword. Set it to `LUNCH`. This is a *sync* filter: a transaction it
   excludes never enters SePay at all, so it cannot reach this app and cannot
   appear in "Money that matched nobody". The webhook-side option ("Chỉ gửi khi
-  có mã thanh toán") is weaker — it only decides what is *delivered*; SePay has
+  có mã thanh toán") is weaker: it only decides what is *delivered*; SePay has
   still received and stored the rest.
-- **Đồng bộ giao dịch tiền ra** — off. Money leaving is never a payment to the
+- **Đồng bộ giao dịch tiền ra**: off. Money leaving is never a payment to the
   office.
 
 This is why `payment_ref` begins with `LUNCH`. The old `L39NGUY` could not be a
@@ -227,7 +227,7 @@ filter at all.
 
 Unconfirmed, and worth one question to SePay: whether an unsynced transaction
 also escapes the monthly quota. The quota is defined as "tổng số lượng giao dịch
-tiền vào" and SePay can only count what it holds, so it should — but the two are
+tiền vào" and SePay can only count what it holds, so it should, but the two are
 documented in different places and never connected. The owner's position is that
 the overage is small enough not to design around, so this is a curiosity rather
 than a blocker.
@@ -250,7 +250,7 @@ Sources: <https://developer.sepay.vn/vi/bankhub/tong-quan>,
 
 ## Vietnamese interface
 
-The content is already Vietnamese — dish names, member names — and the typeface
+The content is already Vietnamese (dish names, member names), and the typeface
 was chosen for it (see [decisions](decisions.md)). The interface around it is
 English with no translation layer at all: every string is inline in the
 component that shows it.
@@ -267,7 +267,7 @@ guess.
 
 [decisions](decisions.md) records why there is no RBAC library: the browser
 talks straight to Postgres through PostgREST, so there is no server tier for a
-policy engine to sit in, and one shipped in the bundle would be advisory —
+policy engine to sit in, and one shipped in the bundle would be advisory:
 anyone can open devtools and skip it. Enforcement is RLS policies, column grants
 and triggers.
 
@@ -275,7 +275,7 @@ That reasoning still holds, so revisiting it honestly means revisiting the
 premise rather than shopping for a library: adopting one implies introducing a
 server tier the app does not currently have, or generating policies from a
 single declarative source instead of writing them by hand. The complaint worth
-acting on is real — the rules are spread across policies, grants and triggers,
+acting on is real: the rules are spread across policies, grants and triggers,
 and only tests tie them together. Start by writing down what specifically has
 been buggy or hard to scale, because that decides which of the two directions
 helps.

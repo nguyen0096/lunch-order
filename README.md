@@ -22,7 +22,7 @@ Live at <https://lunch-order.nexus-9c9.workers.dev>.
   the database enforces.
 - **Weekly bills** with a VietQR code and a personal transfer reference.
 - **Payments that record themselves** through a SePay bank webhook, with
-  unmatched money left for an admin to assign.
+  unmatched money left for an admin to assign and every correction on the record.
 - **A Telegram bot** that joins members by code, takes orders and sends reminders.
 - **Tenant isolation** by row-level security, proven by a SQL test.
 

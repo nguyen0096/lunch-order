@@ -49,7 +49,7 @@ list, and pick a day is asking them to re-enter what the screen in front of them
 is already showing. Passing a meal is now an action on the cell, and an incoming
 offer appears on the cell too.
 
-The admin version was worse: one `<select>` containing every `person — date —
+The admin version was worse: one `<select>` containing every `person / date /
 dish` in the org, flattened. The grid replaces it entirely.
 
 **Preferences** mixed money with setup. Splitting it gave Bill a clear job and a

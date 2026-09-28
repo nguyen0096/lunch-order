@@ -15,10 +15,10 @@ Those settings now live in `supabase/config.toml`, which both paths read.
 git push origin main
 ```
 
-`.github/workflows/ci.yml` runs typecheck and tests, then deploys all four
-functions (`telegram`, `outbox-drain`, `parse-assist`, `sepay`) with
-`supabase functions deploy`. Nothing else is required, and this is
-the path that should be used.
+`.github/workflows/ci.yml` runs typecheck and tests. When it passes on `main`,
+`.github/workflows/deploy.yml` deploys all four functions (`telegram`,
+`outbox-drain`, `parse-assist`, `sepay`) with `supabase functions deploy`.
+Nothing else is required, and this is the path that should be used.
 
 ## Deploying by hand
 

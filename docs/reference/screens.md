@@ -53,7 +53,7 @@ in the toast.
 
 **Job.** Cross between two offices without leaving the page you were reading.
 
-The office name is the control, and **only above one office** — somebody in a
+The office name is the control, and **only above one office**: somebody in a
 single office keeps a plain heading rather than gaining a menu that does
 nothing, which is almost everybody.
 
@@ -298,7 +298,7 @@ same words.
 ## Payments (admin)
 
 **Job.** Answer "who still owes", "record what arrived" and "what do we pay the
-caterer" — and catch the money that arrived and matched nobody.
+caterer", and catch the money that arrived and matched nobody.
 
 **Unmatched payments lead the screen**, above the week and outside it, because a
 payment whose memo matched no reference belongs to nobody's account, changes
