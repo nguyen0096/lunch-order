@@ -1523,3 +1523,60 @@ describe("Board, a day ahead of its menu", () => {
     );
   });
 });
+
+describe("Board, long dish names", () => {
+  const LONG = "Cơm tấm sườn bì chả trứng ốp la kèm canh chua cá lóc và dưa leo";
+  // One word with no break in it, which only `overflow-wrap: anywhere` can wrap.
+  const WORD = "Bánhcanhcuaghẹtômthịtchảlụatrứngcútquẩyvàrauthơm";
+  const LONG_DISHES = [
+    { id: 5, name: LONG, priceMinor: 45_000 },
+    { id: 6, name: WORD, priceMinor: 50_000 },
+  ];
+  const CLIPS = /(^|\s)(truncate|line-clamp-\S+|text-ellipsis|text-clip|whitespace-nowrap|overflow-hidden)(\s|$)/;
+
+  /** The text is there whole, and nothing between it and its container clips it. */
+  function expectWhole(el: HTMLElement, name: string, stop: string) {
+    expect(el.textContent).toBe(name);
+    for (let at: HTMLElement | null = el; at !== null; at = at.parentElement) {
+      expect(at.className).not.toMatch(CLIPS);
+      if (at.matches(stop)) return;
+    }
+    throw new Error(`${name} is not inside ${stop}`);
+  }
+
+  it("shows a long dish name in full in every cell, the menu panel and the dialog", async () => {
+    const cells = myCell({ itemId: 5, dishName: LONG });
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 6,
+      dishName: WORD,
+      note: null,
+      amountMinor: 50_000,
+      transferredToName: null,
+    });
+    serve(makeBoard({ wed: menuDay({ dishes: LONG_DISHES }), cells }));
+    renderBoard();
+
+    const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: ${LONG}` });
+    expectWhole(within(mine).getByText(LONG), LONG, "td");
+    const theirs = screen.getByRole("button", {
+      name: `Tèo, ${formatDay(WED)}: eating ${WORD}. Hand a meal over`,
+    });
+    expectWhole(within(theirs).getByText(WORD), WORD, "td");
+
+    const panel = screen.getByRole("region", { name: `Menu for ${longDayLabel(WED)}` });
+    expectWhole(within(panel).getByText(LONG), LONG, "li");
+    expectWhole(within(panel).getByText(WORD), WORD, "li");
+
+    await user.click(mine);
+    const dialog = await screen.findByRole("dialog");
+    expectWhole(within(dialog).getByText(WORD), WORD, "[role=dialog]");
+    expectWhole(
+      within(within(dialog).getByRole("button", { name: new RegExp(LONG) })).getByText(LONG),
+      LONG,
+      "[role=dialog]",
+    );
+  });
+});

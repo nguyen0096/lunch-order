@@ -65,7 +65,7 @@ export function DishDialog(props: DishDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto wrap-anywhere">
         <DialogHeader>
           <DialogTitle>{formatDay(day.serviceDate)}</DialogTitle>
           <DialogDescription>{describe({ day, org, orderReason, ownDish, cell })}</DialogDescription>
@@ -83,13 +83,13 @@ export function DishDialog(props: DishDialogProps) {
                 variant="outline"
                 aria-pressed={picked}
                 className={cn(
-                  "h-auto w-full justify-between px-3 py-3 text-left",
+                  "h-auto w-full justify-between gap-4 px-3 py-3 text-left whitespace-normal",
                   picked && "border-accent bg-accent-subtle text-accent-subtle-fg",
                 )}
                 onClick={() => props.onPick(dish.id, clean)}
               >
-                <span className="truncate font-medium">{dish.name}</span>
-                <span className="tabular text-sm text-muted">
+                <span className="min-w-0 font-medium">{dish.name}</span>
+                <span className="shrink-0 tabular text-sm text-muted">
                   {formatPrice(dish.priceMinor, org.currency)}
                 </span>
               </Action>
@@ -101,12 +101,15 @@ export function DishDialog(props: DishDialogProps) {
           <label className="mt-1 flex flex-col gap-1.5 text-sm font-medium">
             How you want it
             <span className="flex gap-2">
+              {/* `w-0` because an input's intrinsic width (its `size`) is its
+                  min-content, which `min-w-0` does not lower: at 360px it
+                  pushed the dialog's grid column past the viewport. */}
               <input
                 value={note}
                 maxLength={NOTE_MAX}
                 placeholder="ít cơm, không trứng"
                 onChange={(e) => setNote(e.target.value)}
-                className="h-11 min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-3 text-base font-normal text-text placeholder:text-subtle"
+                className="h-11 w-0 min-w-0 flex-1 rounded-md border border-border bg-surface-raised px-3 text-base font-normal text-text placeholder:text-subtle"
               />
               <Action
                 reason={noteReason}
