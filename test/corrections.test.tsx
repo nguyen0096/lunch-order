@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fakeClockUser } from "./user.js";
 import { toast } from "sonner";
 import { CorrectionsScreen } from "../src/web/components/CorrectionsScreen.js";
 import * as api from "../src/web/api.js";
@@ -211,13 +211,13 @@ async function ready() {
   await screen.findByRole("heading", { name: "Wednesday 23 September" });
 }
 
-async function openDialog(user: ReturnType<typeof userEvent.setup>, name: string) {
+async function openDialog(user: ReturnType<typeof fakeClockUser>, name: string) {
   await user.click(screen.getByRole("button", { name }));
   return screen.findByRole("dialog");
 }
 
 /** Picks an option out of the day's dish list, which opens in a portal. */
-async function pick(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, label: string) {
+async function pick(user: ReturnType<typeof fakeClockUser>, dialog: HTMLElement, label: string) {
   await user.click(within(dialog).getByRole("combobox"));
   await user.click(await screen.findByRole("option", { name: label }));
 }
@@ -280,7 +280,7 @@ describe("Corrections, reading the day", () => {
   });
 
   it("renders the database's own sentence when the day does not load, and retries", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     fetchCorrectionsWeek.mockRejectedValueOnce(new Error("network is down"));
     renderScreen();
 
@@ -321,7 +321,7 @@ describe("A week that has been settled", () => {
   });
 
   it("offers nothing, and says why rather than greying the controls in silence", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve(settled());
     renderScreen();
     await ready();
@@ -343,7 +343,7 @@ describe("A week that has been settled", () => {
 
 describe("Recording a meal the app missed", () => {
   it("says what it would do to that person's money before it is saved", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -360,7 +360,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("sends the dish, the portions and the person, and reports the balance the database returns", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -386,7 +386,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("changes the dish somebody had and names the difference, not the whole meal", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -409,7 +409,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("takes a meal that did not happen off the record, saying whose bill loses what", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -431,7 +431,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("records a dish that was never on the menu from the same picker, with its own price", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -464,7 +464,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("will not save an off-menu dish with no price, and says so", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -482,7 +482,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("will not send a meal with no portions on it", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -502,7 +502,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("sends the portions somebody typed", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -524,7 +524,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("cannot be fired twice by a second click while the first is still going", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     correctMeal.mockReturnValue(new Promise(() => {}));
     renderScreen();
@@ -541,7 +541,7 @@ describe("Recording a meal the app missed", () => {
   });
 
   it("shows the database's refusal in the database's own words, and stays open", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     correctMeal.mockRejectedValue(
       new Error("ordering for 2026-09-23 is closed: that week was settled on 28/09"),
@@ -568,7 +568,7 @@ describe("Recording a meal the app missed", () => {
 
 describe("Why a correction was made", () => {
   it("sends the reason somebody typed", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -591,7 +591,7 @@ describe("Why a correction was made", () => {
   });
 
   it("sends nothing rather than an empty reason when the box is left alone", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -604,7 +604,7 @@ describe("Why a correction was made", () => {
   });
 
   it("never blocks the save on it", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -622,7 +622,7 @@ describe("Why a correction was made", () => {
 
 describe("Repricing a dish for one day", () => {
   it("names the people and the money moving in both directions before it writes", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -642,7 +642,7 @@ describe("Repricing a dish for one day", () => {
   });
 
   it("writes one price for the day and reports what the database touched", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -664,7 +664,7 @@ describe("Repricing a dish for one day", () => {
   });
 
   it("refuses a price the dish already carries, and says which", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderScreen();
     await ready();
@@ -736,7 +736,7 @@ describe("What has already been corrected", () => {
 
 describe("Corrections, answers that arrive out of order", () => {
   it("draws the week now shown when the week left behind answers last", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     const LAST_WED = "2026-09-16";
     const lastWeek = week({
       days: days().map((d) => ({ ...d, serviceDate: addDays(d.serviceDate, -7) })),
