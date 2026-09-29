@@ -60,7 +60,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
   const [members, setMembers] = useState<OrgMember[] | null>(null);
   const [code, setCode] = useState<JoinCode | null>(null);
   const [invitations, setInvitations] = useState<Invitation[] | null>(null);
-  const [links, setLinks] = useState<Map<number, string | null> | null>(null);
+  const [links, setLinks] = useState<TelegramLinks | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   // Captured with the data rather than read during render, so "3 minutes ago"
   // is measured from one instant and every row on the screen agrees.
@@ -73,7 +73,9 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
         fetchOrgMembers({ orgId: org.id, meProfileId: me.profileId }),
         fetchJoinCode(org.id),
         fetchInvitations(org.id),
-        fetchTelegramLinks(org.id),
+        // Who is on Telegram is one line of this screen, so a failed read of it
+        // costs that line and not the join code or the member controls.
+        fetchTelegramLinks(org.id).catch((): TelegramLinks => "unavailable"),
       ]);
       setMembers(nextMembers);
       setCode(nextCode);
@@ -180,7 +182,10 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
   const recent = [...members].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 6);
   const waiting = invitations.filter((i) => i.acceptedAt === null);
   const activeCount = members.filter((m) => m.status === "active").length;
-  const onTelegram = members.filter((m) => m.status === "active" && links.has(m.membershipId)).length;
+  const onTelegram =
+    links === "unavailable"
+      ? null
+      : members.filter((m) => m.status === "active" && links.has(m.membershipId)).length;
 
   return (
     <div className="flex flex-col gap-6 lg:grid lg:grid-cols-[minmax(0,1.7fr)_minmax(0,1fr)] lg:items-start">
@@ -221,7 +226,9 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
           Members
         </h2>
         <p className="mt-1 text-sm text-muted">
-          {`${onTelegram} of ${activeCount} on Telegram. Anybody not on it hears nothing the bot sends to people one by one, the weekly bill included.`}
+          {onTelegram === null
+            ? "Telegram status unavailable. Reload the page to try again."
+            : `${onTelegram} of ${activeCount} on Telegram. Anybody not on it hears nothing the bot sends to people one by one, the weekly bill included.`}
         </p>
         <p className="mt-1 text-sm text-muted">
           {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one; their past orders stay on the bill, because they ate the food. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
@@ -240,11 +247,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
               <MemberRow
                 key={member.membershipId}
                 member={member}
-                telegram={
-                  links.has(member.membershipId)
-                    ? { linkedAt: links.get(member.membershipId) ?? null }
-                    : null
-                }
+                telegram={telegramOf(links, member.membershipId)}
                 timeZone={org.timezone}
                 iAmOwner={iAmOwner}
                 busy={busy}
@@ -682,8 +685,7 @@ function MemberRow({
   onStatus,
 }: {
   member: OrgMember;
-  /** Null when they have not linked. `linkedAt` is null for a link older than its date. */
-  telegram: { linkedAt: string | null } | null;
+  telegram: Telegram;
   timeZone: string;
   iAmOwner: boolean;
   busy: boolean;
@@ -703,7 +705,10 @@ function MemberRow({
 
   return (
     <li className="flex flex-wrap items-center gap-x-4 gap-y-3 px-4 py-3">
-      <div className="min-w-0 flex-1">
+      {/* The basis is what lets the controls wrap below on a phone. With none,
+          flex-1 starts from zero, the buttons keep their width, and this column
+          is squeezed until its text breaks word by word. */}
+      <div className="min-w-0 flex-1 basis-56">
         <p className="flex flex-wrap items-baseline gap-x-2">
           <span className="truncate font-medium">{member.name}</span>
           {member.isMe && <span className="text-sm text-muted">(you)</span>}
@@ -717,20 +722,7 @@ function MemberRow({
           <span className="tabular">{member.shortCode}</span>
           {member.email !== "" && <span className="truncate">{member.email}</span>}
         </p>
-        <p className="mt-1 flex flex-wrap items-center gap-2 text-sm text-muted">
-          {telegram === null ? (
-            <Badge variant="neutral">Telegram: not linked</Badge>
-          ) : (
-            <>
-              <Badge variant="success">Telegram: linked</Badge>
-              {telegram.linkedAt !== null && (
-                <span title={absoluteLabel(telegram.linkedAt, timeZone)}>
-                  {`since ${linkedDate(telegram.linkedAt, timeZone)}`}
-                </span>
-              )}
-            </>
-          )}
-        </p>
+        <TelegramLine telegram={telegram} active={member.status === "active"} timeZone={timeZone} />
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -808,6 +800,64 @@ function statusReason({
       : "Only an owner can add an owner back.";
   }
   return null;
+}
+
+/**
+ * Keyed by membership id, the date each linked member linked, or null for a
+ * link older than the column that records it. "unavailable" when the read failed.
+ */
+type TelegramLinks = Map<number, string | null> | "unavailable";
+
+type Telegram =
+  | { kind: "unavailable" }
+  | { kind: "not-linked" }
+  | { kind: "linked"; linkedAt: string | null };
+
+function telegramOf(links: TelegramLinks, membershipId: number): Telegram {
+  if (links === "unavailable") return { kind: "unavailable" };
+  return links.has(membershipId)
+    ? { kind: "linked", linkedAt: links.get(membershipId) ?? null }
+    : { kind: "not-linked" };
+}
+
+/**
+ * Whether the bot can reach this person directly.
+ *
+ * Green only for somebody in the office. Removing or leaving keeps the link, so
+ * an inactive member can still be linked, and a green badge on their row would
+ * read as somebody the office is reaching.
+ */
+function TelegramLine({
+  telegram,
+  active,
+  timeZone,
+}: {
+  telegram: Telegram;
+  active: boolean;
+  timeZone: string;
+}) {
+  if (telegram.kind === "unavailable") return null;
+  return (
+    <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted">
+      {telegram.kind === "not-linked" ? (
+        <Badge variant="neutral">Telegram: not linked</Badge>
+      ) : (
+        <>
+          <Badge variant={active ? "success" : "neutral"}>
+            {active ? "Telegram: linked" : "Telegram: linked, not in the office"}
+          </Badge>
+          {telegram.linkedAt !== null && (
+            <span
+              className="whitespace-nowrap"
+              title={absoluteLabel(telegram.linkedAt, timeZone)}
+            >
+              {`since ${linkedDate(telegram.linkedAt, timeZone)}`}
+            </span>
+          )}
+        </>
+      )}
+    </p>
+  );
 }
 
 /** Why somebody is not active, which decides whether the join code works for them. */

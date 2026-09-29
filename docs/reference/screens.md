@@ -506,7 +506,10 @@ messages, the weekly bill included. Each row carries **Telegram: linked** with
 the date it happened, or **Telegram: not linked**. Linked means the member
 finished /start, so a link row with no chat yet counts as not linked. A link
 older than the column that records its date shows no date rather than a made-up
-one. The read is `telegram_links` filtered to rows with a chat, selecting
+one. Removing or leaving keeps the link, so an inactive member who linked reads
+**Telegram: linked, not in the office**, in grey rather than green. If the read
+fails, the count reads "Telegram status unavailable" and the rows carry no
+Telegram line; the rest of the screen still works. The read is `telegram_links` filtered to rows with a chat, selecting
 `membership_id` and `linked_at` alone: the chat id never reaches the browser,
 and `link_token` is not selectable by any browser role.
 
@@ -518,6 +521,7 @@ and `link_token` is not selectable by any browser role.
 | removed | toast, "Removed Tèo"; the row stays, marked removed |
 | added back | toast, "Added Tèo back" |
 | nobody linked | "0 of 12 on Telegram", every row not linked |
+| Telegram read failed | "Telegram status unavailable", no Telegram line on any row |
 
 ## Messages (admin)
 

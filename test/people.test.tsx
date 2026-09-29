@@ -640,6 +640,41 @@ describe("People, who is on Telegram", () => {
     expect(sep.queryByText(/^since /)).not.toBeInTheDocument();
   });
 
+  it("does not mark a removed member green, though their link is kept", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    const dinh = within(memberRow("Dinh"));
+    const badge = dinh.getByText("Telegram: linked, not in the office");
+    expect(badge.className).not.toMatch(/success/);
+    expect(dinh.queryByText("Telegram: linked")).not.toBeInTheDocument();
+    expect(within(memberRow("Neyu")).getByText("Telegram: linked").className).toMatch(/success/);
+  });
+
+  it("keeps the date on one line, so a phone never breaks it word by word", async () => {
+    serve({ links: LINKS });
+    renderPeople();
+    await settled();
+
+    expect(within(memberRow("Neyu")).getByText("since 3 Sept 2026")).toHaveClass("whitespace-nowrap");
+  });
+
+  it("says Telegram status is unavailable when that read fails, and keeps the rest", async () => {
+    serve();
+    fetchTelegramLinks.mockRejectedValue({ message: "permission denied for table telegram_links" });
+    renderPeople();
+    await settled();
+
+    expect(screen.getByText(/^Telegram status unavailable\./)).toBeInTheDocument();
+    expect(screen.queryByText(/on Telegram\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Telegram: /)).not.toBeInTheDocument();
+    // The screen itself still works: the code and the member controls are there.
+    expect(screen.getByText(CODE)).toBeInTheDocument();
+    expect(control("Tèo", "Remove")).toBeInTheDocument();
+    expect(screen.queryByText("The people screen did not load")).not.toBeInTheDocument();
+  });
+
   it("says nobody is on Telegram when nobody linked", async () => {
     serve();
     renderPeople();
