@@ -17,40 +17,19 @@ import {
 const REQ: BankAppLinkRequest = {
   platform: "android",
   appId: "acb",
-  bankBin: "970416",
-  accountNumber: "0123456789",
   owedMinor: 180_000,
   currency: VND,
-  paymentRef: "TEST LUNCH NEYU",
 };
 
 describe("bankAppLink", () => {
-  it("builds the dl.vietqr.io link VietQR documents", () => {
-    expect(bankAppLink(REQ)).toBe(
-      "https://dl.vietqr.io/pay?app=acb&ba=0123456789@970416&am=180000&tn=TEST%20LUNCH%20NEYU",
-    );
+  it("names the app and nothing else", () => {
+    expect(bankAppLink(REQ)).toBe("https://dl.vietqr.io/pay?app=acb");
+    expect(bankAppLink({ ...REQ, platform: "ios", appId: "mb" })).toBe("https://dl.vietqr.io/pay?app=mb");
   });
 
-  it("carries the memo exactly, spaces as %20 and never as +", () => {
-    const link = bankAppLink(REQ)!;
-    const tn = new URL(link).search.match(/[?&]tn=([^&]*)/)![1]!;
-    expect(tn).not.toContain("+");
-    expect(decodeURIComponent(tn)).toBe("TEST LUNCH NEYU");
-  });
-
-  it("carries the amount as whole dong digits", () => {
-    expect(new URL(bankAppLink({ ...REQ, owedMinor: 45_000 })!).searchParams.get("am")).toBe("45000");
-  });
-
-  it("trims what an admin may have typed around the account", () => {
-    expect(bankAppLink({ ...REQ, accountNumber: " 0123456789 " })).toContain("ba=0123456789@970416");
-  });
-
-  it("refuses an account a bank would not accept rather than encoding it", () => {
-    expect(bankAppLink({ ...REQ, accountNumber: "0123 456" })).toBeNull();
-    expect(bankAppLink({ ...REQ, accountNumber: "01&am=1" })).toBeNull();
-    expect(bankAppLink({ ...REQ, bankBin: "97041" })).toBeNull();
-    expect(bankAppLink({ ...REQ, paymentRef: "  " })).toBeNull();
+  it("sends no account, amount or memo, whatever is owed", () => {
+    const params = new URL(bankAppLink({ ...REQ, owedMinor: 45_000 })!).searchParams;
+    expect([...params.keys()]).toEqual(["app"]);
   });
 
   it("offers nothing to somebody settled or in credit", () => {
