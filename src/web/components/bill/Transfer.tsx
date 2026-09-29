@@ -87,8 +87,6 @@ export function Transfer({
       {platform !== null && account !== null && payload !== null && (
         <OpenBankApp
           platform={platform}
-          bankBin={account.bankBin}
-          accountNumber={account.accountNumber}
           owedMinor={owedMinor}
           currency={currency}
           paymentRef={paymentRef}

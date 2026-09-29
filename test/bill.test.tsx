@@ -1075,12 +1075,11 @@ describe("Bill, paying from the phone", () => {
     await user.type(within(picker).getByLabelText("Find your bank"), "a chau");
     await user.click(within(picker).getByRole("button", { name: "ACB One, Ngân hàng TMCP Á Châu" }));
 
-    await waitFor(() =>
-      expect(openUrl).toHaveBeenCalledWith(
-        "https://dl.vietqr.io/pay?app=acb&ba=113366668888@970415&am=180000&tn=TEST%20LUNCH%20NEYU",
-        "android",
-      ),
-    );
+    await waitFor(() => expect(openUrl).toHaveBeenCalledWith("https://dl.vietqr.io/pay?app=acb", "android"));
+    const sent = openUrl.mock.calls[0]![0];
+    for (const bill of ["113366668888", "970415", "180000", "TEST", "LUNCH"]) {
+      expect(sent).not.toContain(bill);
+    }
     expect(await navigator.clipboard.readText()).toBe(REF);
     expect(success).toHaveBeenCalledWith("Reference copied. Paste it into the transfer message.");
     expect(screen.getByRole("status")).toHaveTextContent(
@@ -1110,7 +1109,7 @@ describe("Bill, paying from the phone", () => {
       .spyOn(navigator.clipboard, "writeText")
       .mockImplementation(() => new Promise<void>(() => {}));
     await user.click(button);
-    expect(openUrl).toHaveBeenCalledWith(expect.stringContaining("app=mb&"), "ios");
+    expect(openUrl).toHaveBeenCalledWith("https://dl.vietqr.io/pay?app=mb", "ios");
     writeText.mockRestore();
   });
 

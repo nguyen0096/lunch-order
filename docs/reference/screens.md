@@ -331,7 +331,8 @@ office's account makes a valid code. Nobody settled or in credit sees it.
 | after that | **Open &lt;app&gt;**, one tap, and **Other bank app** to change it |
 
 The tap copies the reference and goes to
-`https://dl.vietqr.io/pay?app=<appId>&ba=<account>@<bin>&am=<owed>&tn=<reference>`.
+`https://dl.vietqr.io/pay?app=<appId>`, which names the app and carries no
+account, amount or reference.
 On iOS that opens in a new tab, in the tap's own tick: the redirector there is a
 page that tries the app and, if it still has focus a few seconds later, moves on
 to the App Store, which in the bill's own tab would take the bill with it. On
@@ -340,8 +341,9 @@ leaves the page alone. Either way the bill then says, in a line that stays, that
 the reference is copied and to paste it, or that it could not be copied and to
 type it.
 The app opens on its own home screen: VietQR's redirector drops the account,
-amount and memo for every app as of 2026-09-28, so the line under the button
-says the transfer will not be filled in. The app list is vendored and the link
+amount and memo for every app as of 2026-09-28, which is why the link does not
+send them, and the line under the button says the transfer will not be filled
+in. The app list is vendored and the link
 depends on `dl.vietqr.io`; see
 [Refresh the bank app list](../how-to/refresh-bank-app-list.md).
 

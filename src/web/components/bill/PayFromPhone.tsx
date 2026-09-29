@@ -128,22 +128,21 @@ export function SaveQr({
  * A button that opens the payer's banking app, on a phone, when something is
  * owed in dong.
  *
- * It opens the app and nothing more: the redirector drops the account, amount
- * and memo (see shared/bankApps.ts), so the button copies the reference on
- * the way out, that being the field whose loss is unrecoverable. The copy
- * under it says so rather than letting the name imply a filled-in transfer.
+ * It opens the app and nothing more: the link carries only the app id, since
+ * the redirector would drop the account, amount and memo anyway (see
+ * shared/bankApps.ts). So the button copies the reference on the way out,
+ * that being the field whose loss is unrecoverable. The copy under it says so
+ * rather than letting the name imply a filled-in transfer.
+ *
+ * The caller renders it only for an account that makes a valid code.
  */
 export function OpenBankApp({
   platform,
-  bankBin,
-  accountNumber,
   owedMinor,
   currency,
   paymentRef,
 }: {
   platform: BankAppPlatform;
-  bankBin: string;
-  accountNumber: string;
   owedMinor: number;
   currency: Currency;
   paymentRef: string;
@@ -156,7 +155,7 @@ export function OpenBankApp({
   const [picking, setPicking] = useState(false);
 
   const linkFor = (app: BankApp) =>
-    bankAppLink({ platform, appId: app.appId, bankBin, accountNumber, owedMinor, currency, paymentRef });
+    bankAppLink({ platform, appId: app.appId, owedMinor, currency });
 
   /**
    * Said on the bill as well as in a toast: on iOS the app opens over a new

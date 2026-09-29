@@ -11,16 +11,19 @@ not VietQR is up.
 | --- | --- |
 | Drawing the bill, the QR, **Share QR** / **Download QR** | No. The QR payload is built in the browser (`src/shared/vietqr.ts`) and the image is drawn from it |
 | The list in the picker | No. It is the vendored snapshot |
-| Tapping **Open &lt;app&gt;** | Yes. The link is `https://dl.vietqr.io/pay?app=<appId>&ba=<account>@<bin>&am=<amount>&tn=<reference>`, and `dl.vietqr.io` answers with the app's own scheme. If it is down, the tap lands on an error page and nothing else on the bill is affected |
+| Tapping **Open &lt;app&gt;** | Yes. The link is `https://dl.vietqr.io/pay?app=<appId>`, and `dl.vietqr.io` answers with the app's own scheme. If it is down, the tap lands on an error page and nothing else on the bill is affected |
 
-The tap sends the office's account number, the amount owed and the member's
-reference to `dl.vietqr.io`, once, when the member asks. Nothing is sent to
-VietQR while the bill merely renders.
+The tap sends only the app id to `dl.vietqr.io`, once, when the member asks:
+not the office's account, the amount owed or the member's reference. Nothing is
+sent to VietQR while the bill merely renders.
 
-On 2026-09-28 the redirector dropped `ba`, `am` and `tn` for every app, on both
-platforms, including the five the lists mark `autofill: 1` (VietinBank iPay,
-BIDV SmartBanking, OCB OMNI, ACB One, MB Bank). The app opens on its home
-screen. See [Decisions](../decisions.md), under Interface.
+VietQR documents `ba`, `am` and `tn` for the account, amount and memo, but on
+2026-09-28 the redirector dropped all three for every app, on both platforms,
+including the five the lists mark `autofill: 1` (VietinBank iPay, BIDV
+SmartBanking, OCB OMNI, ACB One, MB Bank), and on 2026-09-29 it answered
+`?app=<appId>` alone exactly as it answered the full form. The app opens on its
+home screen either way, so the link leaves them out. See
+[Decisions](../decisions.md), under Interface.
 
 ## Refresh it
 
@@ -50,7 +53,11 @@ curl -s -A "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/6
   "https://dl.vietqr.io/pay?app=acb&ba=0123456789@970416&am=12345&tn=TEST" | grep DEEPLINK
 ```
 
-If the target carries the account, amount or memo, the copy under the button in
+The check asks with all three parameters because the app's own link carries
+none. If the target carries the account, amount or memo, prefill works, and the
+change is to add `ba`, `am` and `tn` back to `bankAppLink` in
+`src/shared/bankApps.ts` (`ba=<account>@<bin>`, `am` in whole dong, `tn` with
+spaces as `%20`, not `+`). Then the copy under the button in
 `src/web/components/bill/PayFromPhone.tsx` and the Bill section of
 [Screens](../reference/screens.md) are the two places that say it does not.
 

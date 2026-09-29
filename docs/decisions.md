@@ -511,8 +511,13 @@ for, on both platforms, resolved to the bare scheme (`acbone://`,
 "Open ACB One", not "Pay in ACB One", it copies the reference on the way out
 because that is the field whose loss cannot be put right, and the saved QR image
 is the real shortcut: every one of those apps scans from the photo library. The
-link still carries the three parameters, so an app that starts honouring them
-needs no change here. The app list is a vendored snapshot, text only: the logos
+link carries `app` and nothing else. Sending `ba`, `am` and `tn` changed nothing
+the redirector answered (checked again on 2026-09-29 with phone user agents:
+the same `intent://` on Android, the same page on iOS), so all it did was hand
+the office's account, the amount and the member's memo to a third party, which
+is the leak the QR is built locally to avoid. If VietQR ever fills the transfer
+in, adding the three back is the change; the how-to on refreshing the bank app
+list has the check. The app list is a vendored snapshot, text only: the logos
 are Play Store and App Store URLs, and loading them would tell Google and Apple
 who opened a bill.
 
