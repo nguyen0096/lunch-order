@@ -1078,10 +1078,14 @@ describe("Bill, paying from the phone", () => {
     await waitFor(() =>
       expect(openUrl).toHaveBeenCalledWith(
         "https://dl.vietqr.io/pay?app=acb&ba=113366668888@970415&am=180000&tn=TEST%20LUNCH%20NEYU",
+        "android",
       ),
     );
     expect(await navigator.clipboard.readText()).toBe(REF);
     expect(success).toHaveBeenCalledWith("Reference copied. Paste it into the transfer message.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      `${REF} is copied. Paste it into the transfer message.`,
+    );
     expect(localStorage.getItem(phone.BANK_APP_KEY)).toBe("acb");
     unmount();
 
@@ -1091,6 +1095,89 @@ describe("Bill, paying from the phone", () => {
     await user.click(await screen.findByRole("button", { name: "Open ACB One" }));
     await waitFor(() => expect(openUrl).toHaveBeenCalledTimes(1));
     expect(screen.getByRole("button", { name: "Other bank app" })).toBeInTheDocument();
+  });
+
+  it("opens iOS in the tap's own tick, and says on the bill what was copied", async () => {
+    const user = userEvent.setup();
+    onDevice(IPHONE);
+    localStorage.setItem(phone.BANK_APP_KEY, "mb");
+    serve({ weeks: [week()] });
+    renderBill();
+
+    const button = await screen.findByRole("button", { name: "Open MB Bank" });
+    // Blocked while the copy is still pending, so the open cannot wait for it.
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockImplementation(() => new Promise<void>(() => {}));
+    await user.click(button);
+    expect(openUrl).toHaveBeenCalledWith(expect.stringContaining("app=mb&"), "ios");
+    writeText.mockRestore();
+  });
+
+  it("says so on the bill when the reference could not be copied", async () => {
+    const user = userEvent.setup();
+    onDevice(IPHONE);
+    localStorage.setItem(phone.BANK_APP_KEY, "mb");
+    serve({ weeks: [week()] });
+    renderBill();
+
+    const button = await screen.findByRole("button", { name: "Open MB Bank" });
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValueOnce(new Error("denied"));
+    await user.click(button);
+
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      `The reference could not be copied. Type ${REF} into the transfer message.`,
+    );
+    expect(openUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not raise the keyboard over the picker on a touch screen", async () => {
+    const user = userEvent.setup();
+    onDevice(ANDROID);
+    const matchMedia = vi.fn((query: string) => ({ matches: query === "(pointer: coarse)" }));
+    Object.defineProperty(window, "matchMedia", { value: matchMedia, configurable: true });
+    try {
+      serve({ weeks: [week()] });
+      renderBill();
+
+      await user.click(await screen.findByRole("button", { name: "Open your bank app" }));
+      const picker = await screen.findByRole("dialog", { name: "Which bank app do you pay with?" });
+      expect(within(picker).getByLabelText("Find your bank")).not.toHaveFocus();
+      expect(picker).toContainElement(document.activeElement as HTMLElement);
+    } finally {
+      Reflect.deleteProperty(window, "matchMedia");
+    }
+  });
+
+  it("focuses the filter where there is a keyboard anyway", async () => {
+    const user = userEvent.setup();
+    onDevice(ANDROID);
+    serve({ weeks: [week()] });
+    renderBill();
+
+    await user.click(await screen.findByRole("button", { name: "Open your bank app" }));
+    const picker = await screen.findByRole("dialog", { name: "Which bank app do you pay with?" });
+    await waitFor(() => expect(within(picker).getByLabelText("Find your bank")).toHaveFocus());
+  });
+
+  it("draws no code for an office that does not bill in dong, and says why", async () => {
+    serve({ weeks: [week()] });
+    render(
+      <BillScreen
+        me={ME}
+        org={{ ...ORG, currency: { code: "USD", minorUnits: 2, locale: "en-US" } }}
+        role="member"
+      />,
+    );
+
+    expect(
+      await screen.findByText(/A VietQR code can only ask for dong, and this office bills in USD/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /VietQR code/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /QR$/ })).not.toBeInTheDocument();
+    // The details still say how to pay.
+    expect(screen.getByText("113366668888")).toBeInTheDocument();
+    expect(screen.getByText(REF)).toBeInTheDocument();
   });
 
   it("does not promise a filled-in transfer", async () => {

@@ -13,6 +13,8 @@
  * value is itself a list of fields nests the same shape.
  */
 
+import type { Currency } from "./money.js";
+
 /** NAPAS, the acquirer switch every Vietnamese bank sits behind. */
 const NAPAS_GUID = "A000000727";
 /** Account-to-account transfer. The other services are card and e-wallet. */
@@ -24,6 +26,15 @@ const COUNTRY_VN = "VN";
 /** Static: the payer types the amount. Dynamic: the code carries it. */
 const POINT_OF_INITIATION_STATIC = "11";
 const POINT_OF_INITIATION_DYNAMIC = "12";
+
+/**
+ * Whether an office's money can go in a VietQR code at all. The payload's
+ * currency is always 704 and its amount whole dong, so a code for any other
+ * currency would ask for the right digits in the wrong money.
+ */
+export function vietQrAccepts(currency: Currency): boolean {
+  return currency.code === "VND" && currency.minorUnits === 0;
+}
 
 export type VietQrRequest = {
   /** NAPAS six-digit bank identification number, e.g. "970415". */

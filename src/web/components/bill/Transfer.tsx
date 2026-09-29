@@ -7,7 +7,7 @@
 import { QRCodeSVG } from "qrcode.react";
 import { CopyIcon } from "lucide-react";
 import { Action, useAction } from "@/ui";
-import { vietQrPayload } from "../../../shared/vietqr.js";
+import { vietQrAccepts, vietQrPayload } from "../../../shared/vietqr.js";
 import { bankByBin } from "../../../shared/banks.js";
 import { formatMoney, plainAmount, type Currency } from "../../../shared/money.js";
 import type { PaymentConfig } from "../../../shared/payment.js";
@@ -48,7 +48,8 @@ export function Transfer({
   payment: PaymentConfig;
 }) {
   const account = payment.vietqr;
-  const payload = account
+  const inDong = vietQrAccepts(currency);
+  const payload = account && inDong
     ? vietQrPayload({
         bankBin: account.bankBin,
         accountNumber: account.accountNumber,
@@ -95,7 +96,11 @@ export function Transfer({
       )}
 
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
-        {account === null ? null : payload === null ? (
+        {account === null ? null : !inDong ? (
+          <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
+            {`A VietQR code can only ask for dong, and this office bills in ${currency.code}, so there is no code. Use the details here.`}
+          </p>
+        ) : payload === null ? (
           <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
             The bank details saved for this office are not a valid account, so the code
             cannot be built. Ask an admin to check them.

@@ -266,6 +266,10 @@ more thing to get wrong.
 | Account | always, with the account holder's name under it |
 | Bank | always |
 
+**No code outside dong.** A VietQR payload always says VND and whole dong, so
+an office billing in anything else gets the reference, account and bank with no
+code, no Share or Download, and one line saying why.
+
 **Under the code, Share QR or Download QR.** The code as a PNG, black on
 white whatever the theme, with the amount, the reference and the payee printed
 under it, named `lunch-<reference>-<yyyy-mm-dd>.png`. Where the browser can
@@ -287,8 +291,15 @@ office's account makes a valid code. Nobody settled or in credit sees it.
 | first time on this device | **Open your bank app** opens a picker of that platform's apps, text only, with a filter that ignores case and diacritics. Picking one remembers it (`localStorage`, `lunch.bankApp`) and opens it |
 | after that | **Open &lt;app&gt;**, one tap, and **Other bank app** to change it |
 
-The tap copies the reference, says so, and then leaves for
+The tap copies the reference and goes to
 `https://dl.vietqr.io/pay?app=<appId>&ba=<account>@<bin>&am=<owed>&tn=<reference>`.
+On iOS that opens in a new tab, in the tap's own tick: the redirector there is a
+page that tries the app and, if it still has focus a few seconds later, moves on
+to the App Store, which in the bill's own tab would take the bill with it. On
+Android it is the same tab, because the redirect is an `intent://` hand-off that
+leaves the page alone. Either way the bill then says, in a line that stays, that
+the reference is copied and to paste it, or that it could not be copied and to
+type it.
 The app opens on its own home screen: VietQR's redirector drops the account,
 amount and memo for every app as of 2026-09-28, so the line under the button
 says the transfer will not be filled in. The app list is vendored and the link

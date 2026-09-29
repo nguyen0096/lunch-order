@@ -12,6 +12,12 @@ const SOURCES = {
 
 const out = resolve(dirname(fileURLToPath(import.meta.url)), "../src/shared/bankApps.snapshot.json");
 
+const FORMAT_MARKS = /[​-‏‪-‮⁦-⁩﻿]/g;
+
+function clean(s) {
+  return String(s).replace(FORMAT_MARKS, "").normalize("NFC").trim();
+}
+
 async function list(url) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} answered ${res.status}`);
@@ -23,9 +29,10 @@ async function list(url) {
     }
     return {
       appId: a.appId,
-      // The iOS list prefixes every App Store name with U+200E.
-      appName: String(a.appName).replace(/[‎‏]/g, "").trim(),
-      bankName: String(a.bankName).trim(),
+      // Store names arrive wrapped in bidi and zero-width marks (U+200E on
+      // every iOS name, U+202A on CAKE's), which break search and matching.
+      appName: clean(a.appName),
+      bankName: clean(a.bankName),
       autofill: a.autofill === 1,
     };
   });

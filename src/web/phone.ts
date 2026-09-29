@@ -42,7 +42,29 @@ export function rememberBankApp(appId: string): void {
   }
 }
 
-/** Leaves the page. A module function so a test can stand in for it. */
-export function openUrl(url: string): void {
-  window.location.assign(url);
+/**
+ * Sends the phone to a bank app link. A module function so a test can stand
+ * in for it.
+ *
+ * On iOS the redirector is a page that tries the app's scheme and, if the
+ * page still has focus a few seconds later, moves on to the App Store; in
+ * this tab that would take the bill with it. A new tab keeps the bill where
+ * the member left it. Android's redirector is a 301 to an `intent://` URL,
+ * which hands off to the app and leaves the tab alone.
+ *
+ * Must be called in the tap's own tick: Safari blocks a `window.open` that
+ * comes after an await.
+ */
+export function openUrl(url: string, platform: BankAppPlatform): void {
+  if (platform === "ios") window.open(url, "_blank", "noopener");
+  else window.location.assign(url);
+}
+
+/** Whether a tap on this device is a finger. */
+export function coarsePointer(): boolean {
+  try {
+    return window.matchMedia("(pointer: coarse)").matches;
+  } catch {
+    return false;
+  }
 }

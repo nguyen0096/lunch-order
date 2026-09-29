@@ -21,7 +21,7 @@ import {
 } from "../../../shared/bankApps.js";
 import type { Currency } from "../../../shared/money.js";
 import { now } from "../../../shared/clock.js";
-import { openUrl, rememberBankApp, rememberedBankApp } from "../../phone.js";
+import { coarsePointer, openUrl, rememberBankApp, rememberedBankApp } from "../../phone.js";
 import { composeQrPng, qrFilename, saveMode, shareOrDownload } from "./shareQr.js";
 
 const INPUT =
@@ -158,35 +158,27 @@ export function OpenBankApp({
   const linkFor = (app: BankApp) =>
     bankAppLink({ platform, appId: app.appId, bankBin, accountNumber, owedMinor, currency, paymentRef });
 
-  const open = useAction(
-    async (app: BankApp, link: string) => {
-      let copied = false;
-      const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
-      if (clipboard) {
-        try {
-          await clipboard.writeText(paymentRef);
-          copied = true;
-        } catch {
-          // Opening the app matters more than the copy; the reference is on screen.
-        }
-      }
-      openUrl(link);
-      return { app, copied };
-    },
-    {
-      success: ({ app, copied }) =>
-        copied
-          ? "Reference copied. Paste it into the transfer message."
-          : `Opening ${app.appName}`,
-    },
-  );
+  /**
+   * Said on the bill as well as in a toast: on iOS the app opens over a new
+   * tab, and the member comes back to this one to find out what to paste.
+   */
+  const [copy, setCopy] = useState<"copied" | "failed" | null>(null);
 
   const first = apps[0];
   if (!first || linkFor(first) === null) return null;
 
   const go = (app: BankApp) => {
     const link = linkFor(app);
-    if (link !== null) void open.run(app, link);
+    if (link === null) return;
+    // Started before the open, awaited by nobody on iOS: Safari allows a
+    // window.open only in the tap's own tick.
+    const copying = copyText(paymentRef);
+    void copying.then((ok) => {
+      setCopy(ok ? "copied" : "failed");
+      if (ok) toast.success("Reference copied. Paste it into the transfer message.");
+    });
+    if (platform === "ios") openUrl(link, platform);
+    else void copying.then(() => openUrl(link, platform));
   };
 
   return (
@@ -194,10 +186,10 @@ export function OpenBankApp({
       <div className="flex flex-wrap items-center gap-2">
         {chosen ? (
           <>
-            <Action reason={null} pending={open.pending} onClick={() => go(chosen)}>
+            <Button onClick={() => go(chosen)}>
               <ExternalLinkIcon />
               {`Open ${chosen.appName}`}
-            </Action>
+            </Button>
             <Button variant="ghost" size="sm" onClick={() => setPicking(true)}>
               Other bank app
             </Button>
@@ -212,6 +204,13 @@ export function OpenBankApp({
       <p className="max-w-prose text-sm text-muted">
         Your bank app opens on its own home screen and will not fill the transfer in.
         The reference is copied as you go, so paste it into the message.
+      </p>
+      <p role="status" className="max-w-prose text-sm font-medium text-text empty:hidden">
+        {copy === "copied"
+          ? `${paymentRef} is copied. Paste it into the transfer message.`
+          : copy === "failed"
+            ? `The reference could not be copied. Type ${paymentRef} into the transfer message.`
+            : ""}
       </p>
 
       <BankAppPicker
@@ -242,6 +241,7 @@ function BankAppPicker({
 }) {
   const [query, setQuery] = useState("");
   const filterId = useId();
+  const content = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) setQuery("");
   }, [open]);
@@ -257,7 +257,17 @@ function BankAppPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85dvh] grid-rows-[auto_auto_minmax(0,1fr)]">
+      <DialogContent
+        className="max-h-[85dvh] grid-rows-[auto_auto_minmax(0,1fr)]"
+        onOpenAutoFocus={(e) => {
+          // Focusing the filter on a phone raises the keyboard over the list
+          // most people pick from without typing. Focus stays in the dialog.
+          if (!coarsePointer()) return;
+          e.preventDefault();
+          content.current?.focus();
+        }}
+        ref={content}
+      >
         <DialogHeader>
           <DialogTitle>Which bank app do you pay with?</DialogTitle>
           <DialogDescription>This phone remembers it for next time.</DialogDescription>
@@ -298,6 +308,20 @@ function BankAppPicker({
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Never rejects: a refused clipboard is an answer, not a failure to open the app. */
+function copyText(text: string): Promise<boolean> {
+  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard;
+  if (!clipboard) return Promise.resolve(false);
+  try {
+    return clipboard.writeText(text).then(
+      () => true,
+      () => false,
+    );
+  } catch {
+    return Promise.resolve(false);
+  }
 }
 
 /** Case and diacritics off, so "vietin" finds "VietinBank" and "a chau" finds "Á Châu". */

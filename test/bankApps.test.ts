@@ -8,6 +8,7 @@ import {
 import { VND } from "../src/shared/money.js";
 import {
   BANK_APP_KEY,
+  openUrl,
   phonePlatform,
   rememberBankApp,
   rememberedBankApp,
@@ -74,8 +75,11 @@ describe("the vendored app lists", () => {
     expect(new Set(ids).size).toBe(ids.length);
     for (const a of apps) {
       expect(a.appId).toMatch(/^[a-z0-9-]+$/);
-      expect(a.appName).not.toMatch(/[‎‏]/);
-      expect(a.appName.trim()).not.toBe("");
+      for (const name of [a.appName, a.bankName]) {
+        expect(name).not.toMatch(/[​-‏‪-‮⁦-⁩﻿]/);
+        expect(name).toBe(name.normalize("NFC"));
+        expect(name.trim()).not.toBe("");
+      }
     }
   });
 
@@ -111,6 +115,30 @@ describe("phonePlatform", () => {
   it("is null on a desktop, touch screen or not", () => {
     expect(phonePlatform(nav("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120", 10))).toBeNull();
     expect(phonePlatform(undefined)).toBeNull();
+  });
+});
+
+describe("openUrl", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("opens iOS in a new tab, so the redirector's App Store fallback cannot take the bill", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    openUrl("https://dl.vietqr.io/pay?app=acb", "ios");
+    expect(open).toHaveBeenCalledWith("https://dl.vietqr.io/pay?app=acb", "_blank", "noopener");
+  });
+
+  it("stays in the tab on Android, where the redirect is an intent", () => {
+    const open = vi.spyOn(window, "open").mockReturnValue(null);
+    const assign = vi.fn();
+    const location = window.location;
+    Object.defineProperty(window, "location", { value: { ...location, assign }, configurable: true });
+    try {
+      openUrl("https://dl.vietqr.io/pay?app=acb", "android");
+      expect(assign).toHaveBeenCalledWith("https://dl.vietqr.io/pay?app=acb");
+      expect(open).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "location", { value: location, configurable: true });
+    }
   });
 });
 
