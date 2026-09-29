@@ -42,51 +42,30 @@ export async function fetchMenu(orgId: number, serviceDate: string): Promise<Men
 }
 
 /**
- * Place or update today's order. Prices are never sent: the database snapshots
- * them from menu_items, and the column grant means a browser could not write
- * one even if this code tried. The note is the third column a member may
- * write, and it hangs off the dish rather than the order because that is how
- * it is read out to the caterer.
+ * Place or update today's order, in one call to `set_my_order`, which is one
+ * transaction: it takes up or creates the order, deletes its dish line and
+ * writes a fresh one. As separate requests, two taps or a tap and an admin's
+ * correction interleaved and left two dishes on one order.
+ *
+ * The order is always the caller's own: the function takes the profile from
+ * the session, so `orgId`, `serviceDate`, `profileId` and `existing` describe
+ * the cell and are not sent. Prices are never sent either: the snapshot
+ * trigger copies them from menu_items. The note hangs off the dish rather than
+ * the order because that is how it is read out to the caterer.
  */
 export async function setOrder(args: {
   orgId: number; menuId: number; serviceDate: string; profileId: string;
   itemId: number | null; note?: string | null; existing: MyOrder | null;
 }): Promise<void> {
-  let orderId = args.existing?.id;
-
-  if (!orderId) {
-    const { data, error } = await supabase
-      .from("orders")
-      .insert({
-        org_id: args.orgId, menu_id: args.menuId, service_date: args.serviceDate,
-        profile_id: args.profileId, created_by: args.profileId, source: "member",
-      })
-      .select("id").single();
-    if (error) throw error;
-    orderId = data.id;
-  } else if (args.existing?.status === "cancelled") {
-    const { error } = await supabase
-      .from("orders").update({ status: "placed", cancelled_at: null }).eq("id", orderId);
-    if (error) throw error;
-  }
-
-  const { error: del } = await supabase.from("order_items").delete().eq("order_id", orderId);
-  if (del) throw del;
-
-  if (args.itemId !== null) {
-    const note = args.note?.trim();
-    const { error } = await supabase.from("order_items").insert({
-      order_id: orderId, org_id: args.orgId, profile_id: args.profileId,
-      menu_id: args.menuId, menu_item_id: args.itemId,
-      // The constraint takes null or 1 to 120 trimmed characters, so a field
-      // somebody emptied has to arrive as null rather than as "".
-      note: note ? note.slice(0, 120) : null,
-      // Overwritten unconditionally by the snapshot trigger; sent only because
-      // the columns are NOT NULL.
-      item_name_snapshot: "", unit_price_minor: 0,
-    });
-    if (error) throw error;
-  }
+  const note = args.note?.trim();
+  const { error } = await supabase.rpc("set_my_order", {
+    p_menu_id: args.menuId,
+    p_menu_item_id: args.itemId,
+    // The constraint takes null or 1 to 120 trimmed characters, so a field
+    // somebody emptied has to arrive as null rather than as "".
+    p_note: note ? note.slice(0, 120) : null,
+  });
+  if (error) throw error;
 }
 
 export async function cancelOrder(orderId: number): Promise<void> {

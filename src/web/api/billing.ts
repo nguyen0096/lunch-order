@@ -1164,9 +1164,8 @@ export type PriceApplication = {
   /**
    * `SettlementDish.unpricedMenuItemIds`, never `menuItemIds`. The exemption
    * covers a price going from NULL to a value and nothing else, so a row that
-   * already carries a price raises on a locked menu -- and because each dish
-   * is its own statement, that would leave the dishes before it priced and the
-   * rest not.
+   * already carries a price is refused on a locked menu, and one refused row
+   * refuses the whole week's prices.
    */
   menuItemIds: number[];
 };
@@ -1179,70 +1178,39 @@ export type AppliedPrices = {
 };
 
 /**
- * Write the caterer's prices onto the week, and onto the orders already placed.
+ * Write the caterer's prices onto the week, and onto the orders already placed,
+ * in one call to `apply_caterer_prices`, which is one transaction.
  *
  * Every menu of the week being settled is `locked` by then -- the hourly tick
  * locks a menu the moment its cutoff passes -- and that is the ordinary case,
- * not an obstacle. `enforce_menu_item_frozen` exempts exactly one change
- * there: `price_minor` going from NULL to a value with the name, menu,
- * position and availability all unchanged. Both writes below stay inside it.
+ * not an obstacle. The one change allowed there is `price_minor` going from
+ * NULL to a value, which is why only unpriced rows are sent.
  *
  * Two writes per dish, and the second is the one that is easy to leave out.
  * `menu_items.price_minor` is only what the dish costs from now on; every
  * `order_items` row snapshotted its price when the dish was chosen, and those
  * snapshots are what billing reads. A week priced without the second write
- * bills exactly nothing.
- *
- * The re-snapshot is `update order_items set menu_item_id = menu_item_id`.
- * `order_items_snapshot` is `BEFORE INSERT OR UPDATE **OF menu_item_id**`, so
- * naming that column in the SET list re-fires it and `snapshot_order_item`
- * copies the new price across. Touching any other column does nothing at all,
- * verified both ways. PostgREST sends a value rather than a column reference,
- * so this runs one id at a time: the value written and the row filtered are
- * then the same number, which is what makes it a no-op to the data.
- *
- * No new grant is needed. `authenticated` holds UPDATE on
- * `menu_items.price_minor` and on `order_items.menu_item_id`, and
- * `menu_items_admin_all` and `order_items_admin_all` cover the rows. The
- * trigger deliberately does not repeat that check: policies answer who, it
- * answers whether the change is a legal one.
+ * bills exactly nothing. The function does both, for every order on the dish
+ * whoever placed it. Sent from the browser as separate requests, the second
+ * write was refused on a locked menu for every member's and standing order,
+ * and a refusal part way left some dishes priced and the rest not.
  */
 export async function applyCatererPrices(args: {
   orgId: number;
   prices: PriceApplication[];
 }): Promise<AppliedPrices> {
-  let dishes = 0;
-  let menuItems = 0;
-  let orderItems = 0;
+  const prices = args.prices.filter((p) => p.menuItemIds.length > 0);
+  if (prices.length === 0) return { dishes: 0, menuItems: 0, orderItems: 0 };
 
-  for (const p of args.prices) {
-    if (p.menuItemIds.length === 0) continue;
+  const { data, error } = await supabase.rpc("apply_caterer_prices", {
+    p_org_id: args.orgId,
+    p_prices: prices.map((p) => ({ price_minor: p.priceMinor, menu_item_ids: p.menuItemIds })),
+  });
+  if (error) throw error;
 
-    const priced = await supabase
-      .from("menu_items")
-      .update({ price_minor: p.priceMinor })
-      .in("id", p.menuItemIds)
-      // RLS is a permission, not a filter: an admin of two offices would
-      // otherwise be trusting the caller's id list alone.
-      .eq("org_id", args.orgId)
-      .select("id");
-    if (priced.error) throw priced.error;
-    menuItems += priced.data?.length ?? 0;
-    dishes += 1;
-
-    for (const id of p.menuItemIds) {
-      const resnapshot = await supabase
-        .from("order_items")
-        .update({ menu_item_id: id })
-        .eq("menu_item_id", id)
-        .eq("org_id", args.orgId)
-        .select("id");
-      if (resnapshot.error) throw resnapshot.error;
-      orderItems += resnapshot.data?.length ?? 0;
-    }
-  }
-
-  return { dishes, menuItems, orderItems };
+  const row = (data as Array<{ dishes: number; menu_items: number; order_items: number }> | null)?.[0];
+  if (!row) throw new Error("The prices were not written. Reload the screen and try again.");
+  return { dishes: row.dishes, menuItems: row.menu_items, orderItems: row.order_items };
 }
 
 export type SettledPeriod = {

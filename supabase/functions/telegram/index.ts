@@ -1579,53 +1579,36 @@ type Written =
   | { refusal: null; order: OrderRow | null };
 
 /**
- * The same sequence setOrder() runs in the web app, as one statement each.
+ * The same call setOrder() makes in the web app: `set_my_order`, which takes
+ * up or creates the order, deletes its dish line and writes a fresh one under
+ * the order's and the menu's locks. Written here as three statements, a tap in
+ * the bot and a tap on the Board interleaved and left two dishes on one order,
+ * and an order in flight was missed by lunch being called off.
  *
- * Prices are never sent: the snapshot trigger fills them, and the column grant
- * means this connection could not write one even as `authenticated`. The
- * returning-nothing case is the menu being invisible or gone, which RLS and the
- * FK would both have refused a moment later anyway.
+ * It runs as the member, so auth.uid() is theirs and the order can only be
+ * their own. Prices are never sent: the snapshot trigger fills them, and what
+ * comes back is the line as the caterer has it, spelled and priced, which is
+ * the redraw's copy of the order and the name the callback answer confirms.
+ * It answers exactly one row or raises, and a refusal reaches attempt() as a
+ * database error like any trigger's.
  */
 async function placeOrder(
   tx: Tx, link: Link, menuId: number, itemId: number,
 ): Promise<Written> {
-  // Insert-from-select so org_id and service_date cannot disagree with the
-  // menu, and ON CONFLICT so re-picking a dish is one statement rather than a
-  // read followed by a write that races it.
-  const [order] = await tx<Array<{ id: number; org_id: number; menu_id: number }>>`
-    insert into public.orders (org_id, menu_id, service_date, profile_id, created_by, source)
-    select m.org_id, m.id, m.service_date, ${link.profileId}::uuid, ${link.profileId}::uuid, 'member'
-      from public.menus m where m.id = ${menuId}
-    on conflict (menu_id, profile_id) do update
-       set status = 'placed', cancelled_at = null
-    returning id, org_id, menu_id`;
-  if (!order) return { refusal: "That menu is gone." };
-
-  await tx`delete from public.order_items where order_id = ${order.id}`;
-  const [item] = await tx<Array<{
-    item_name_snapshot: string; line_total_minor: number | null;
+  const [row] = await tx<Array<{
+    order_id: number; item_name_snapshot: string | null; line_total_minor: number | null;
   }>>`
-    insert into public.order_items
-      (order_id, org_id, profile_id, menu_id, menu_item_id,
-       item_name_snapshot, unit_price_minor)
-    values (${order.id}, ${order.org_id}, ${link.profileId}::uuid, ${order.menu_id}, ${itemId},
-            -- Overwritten unconditionally by the snapshot trigger; sent only
-            -- because the columns are NOT NULL.
-            '', 0)
-    -- order_items_snapshot is BEFORE INSERT and line_total_minor is generated
-    -- from what it writes, so these come back spelled and priced as the caterer
-    -- has them. That is the redraw's copy of the order and the name the
-    -- callback answer confirms, without a second read of the row.
-    returning item_name_snapshot, line_total_minor`;
+    select order_id, item_name_snapshot, line_total_minor
+      from public.set_my_order(${menuId}, ${itemId}, null)`;
 
   return {
     refusal: null,
     order: {
-      id: order.id,
+      id: row.order_id,
       status: "placed",
       menu_item_id: itemId,
-      item_name_snapshot: item?.item_name_snapshot ?? null,
-      line_total_minor: item?.line_total_minor ?? null,
+      item_name_snapshot: row.item_name_snapshot,
+      line_total_minor: row.line_total_minor,
     },
   };
 }

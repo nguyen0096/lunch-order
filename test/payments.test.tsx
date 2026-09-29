@@ -1725,51 +1725,35 @@ function dishRow(name: string): HTMLElement {
 }
 
 describe("Applying the caterer's prices, the writes that reach the database", () => {
-  it("prices every menu row, then re-fires the snapshot onto the orders", async () => {
-    db.results.push(
-      { data: [{ id: 101 }, { id: 111 }], error: null },
-      { data: [{ id: 5001 }], error: null },
-      { data: [{ id: 5002 }, { id: 5003 }], error: null },
-    );
+  it("sends every dish in one call, so the week is priced whole or not at all", async () => {
+    db.results.push({ data: [{ dishes: 2, menu_items: 3, order_items: 7 }], error: null });
     const { applyCatererPrices: apply } = await realApi();
 
     const applied = await apply({
       orgId: 7,
-      prices: [{ name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101, 111] }],
+      prices: [
+        { name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101, 111] },
+        { name: "Phở", priceMinor: 45_000, menuItemIds: [102] },
+      ],
     });
 
-    expect(applied).toEqual({ dishes: 1, menuItems: 2, orderItems: 3 });
-
-    const [priced, first, second] = db.calls;
-    expect(priced).toMatchObject({
-      table: "menu_items",
-      op: "update",
-      payload: { price_minor: 50_000 },
-    });
-    expect(priced?.filters).toContainEqual(["org_id", 7]);
-
-    // The re-snapshot, and the whole reason pricing the menu is not enough.
-    // `order_items_snapshot` is BEFORE UPDATE **OF menu_item_id**, so naming
-    // that column is what re-fires it; writing the id back over itself is what
-    // makes the write a no-op to the data.
-    expect(first).toMatchObject({
-      table: "order_items",
-      op: "update",
-      payload: { menu_item_id: 101 },
-    });
-    expect(first?.filters).toContainEqual(["menu_item_id", 101]);
-    expect(second).toMatchObject({
-      table: "order_items",
-      op: "update",
-      payload: { menu_item_id: 111 },
-    });
-    expect(second?.filters).toContainEqual(["menu_item_id", 111]);
+    expect(applied).toEqual({ dishes: 2, menuItems: 3, orderItems: 7 });
+    // One transaction, not a request per dish and per menu row: a refusal part
+    // way used to leave some dishes priced and the rest not.
+    expect(db.calls).toEqual([]);
+    expect(db.rpcCalls).toEqual([{
+      fn: "apply_caterer_prices",
+      args: {
+        p_org_id: 7,
+        p_prices: [
+          { price_minor: 50_000, menu_item_ids: [101, 111] },
+          { price_minor: 45_000, menu_item_ids: [102] },
+        ],
+      },
+    }]);
   });
 
-  it("does not re-snapshot when the price could not be written", async () => {
-    // A locked menu is exactly this: `menu_items_frozen` refuses the dish
-    // change. Going on to touch the orders would claim a price that is not
-    // there.
+  it("passes the database's refusal on, having written nothing itself", async () => {
     db.results.push({
       data: null,
       error: { message: "the menu is locked; dishes can no longer be changed" },
@@ -1780,7 +1764,17 @@ describe("Applying the caterer's prices, the writes that reach the database", ()
       apply({ orgId: 7, prices: [{ name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [101] }] }),
     ).rejects.toMatchObject({ message: /the menu is locked/ });
 
-    expect(db.calls.map((c) => c.table)).toEqual(["menu_items"]);
+    expect(db.calls).toEqual([]);
+    expect(db.rpcCalls.map((c) => c.fn)).toEqual(["apply_caterer_prices"]);
+  });
+
+  it("makes no call when there is nothing unpriced to write", async () => {
+    const { applyCatererPrices: apply } = await realApi();
+
+    expect(
+      await apply({ orgId: 7, prices: [{ name: "Cơm tấm", priceMinor: 50_000, menuItemIds: [] }] }),
+    ).toEqual({ dishes: 0, menuItems: 0, orderItems: 0 });
+    expect(db.rpcCalls).toEqual([]);
   });
 
   it("bills the week through settle_period, the only way in from a browser", async () => {

@@ -25,123 +25,51 @@ export type PublishResult = {
 };
 
 /**
- * Create or replace a day's menu, then publish it.
+ * Create or replace a day's menu, then publish it, in one call to
+ * `publish_menu`, which is one transaction. As a dozen requests, a refusal part
+ * way left a published menu with some of its dishes changed.
  *
  * Publishing is what materializes standing orders, so it happens last and only
  * once the admin has reviewed the parse. The raw pasted text is stored beside
  * the result: the parser will be wrong sometimes and that text is the evidence.
+ *
+ * The dishes are reconciled in place, not deleted and reinserted: a dish keeps
+ * its row, and so every order on it keeps the price it snapshotted. Removing a
+ * dish somebody ordered is refused by order_items' foreign key, which is right:
+ * the alternative is losing an order silently.
+ *
+ * `standingOrders` is the difference the publish made, not the total:
+ * republishing a menu materializes nothing, and a toast claiming otherwise
+ * would be a lie.
  */
 export async function publishMenu(args: {
   orgId: number; profileId: string; serviceDate: string;
   cutoffAt: string; dishes: DraftDish[]; sourceText: string;
   parseMeta: Record<string, unknown>;
 }): Promise<PublishResult> {
-  const existing = await supabase
-    .from("menus").select("id, status")
-    .eq("org_id", args.orgId).eq("service_date", args.serviceDate).maybeSingle();
-  if (existing.error) throw existing.error;
+  const { data, error } = await supabase.rpc("publish_menu", {
+    p_org_id: args.orgId,
+    p_service_date: args.serviceDate,
+    p_cutoff_at: args.cutoffAt,
+    p_dishes: args.dishes.map((d) => ({
+      id: d.id ?? null, name: d.name, price_minor: d.priceMinor,
+    })),
+    p_source_text: args.sourceText,
+    p_parse_meta: args.parseMeta,
+  });
+  if (error) throw error;
 
-  let menuId: number | undefined = existing.data?.id;
-  let standingBefore = 0;
-
-  if (menuId === undefined) {
-    const ins = await supabase.from("menus").insert({
-      org_id: args.orgId, service_date: args.serviceDate,
-      order_cutoff_at: args.cutoffAt, created_by: args.profileId,
-      source_text: args.sourceText, parse_meta: args.parseMeta,
-    }).select("id").single();
-    if (ins.error) throw ins.error;
-    menuId = ins.data.id as number;
-  } else {
-    standingBefore = await countStandingOrders(menuId);
-    const upd = await supabase.from("menus").update({
-      order_cutoff_at: args.cutoffAt,
-      source_text: args.sourceText,
-      parse_meta: args.parseMeta,
-    }).eq("id", menuId);
-    if (upd.error) throw upd.error;
-  }
-
-  await reconcileDishes(menuId, args.orgId, args.dishes);
-
-  const pub = await supabase.from("menus").update({ status: "published" }).eq("id", menuId);
-  if (pub.error) throw pub.error;
-
-  // Standing orders materialize from a trigger on the status change, not from
-  // here. The client used to call materialize_standing_orders by RPC, which
-  // failed on a missing EXECUTE grant -- and granting it would have let any
-  // signed-in user trigger materialization in another org.
-  //
-  // Read back what the publish actually produced. An admin cannot otherwise
-  // tell whether it worked, and the standing-order count is the part they have
-  // no other way to see. The difference, not the total: republishing a menu
-  // materializes nothing, and a toast claiming otherwise would be a lie.
-  const standingAfter = await countStandingOrders(menuId);
+  const row = (data as Array<{
+    menu_id: number; standing_orders: number; was_update: boolean;
+  }> | null)?.[0];
+  if (!row) throw new Error("The menu was not published. Reload the screen and try again.");
 
   return {
-    menuId,
+    menuId: row.menu_id,
     dishes: args.dishes.length,
-    standingOrders: Math.max(0, standingAfter - standingBefore),
-    wasUpdate: existing.data !== null,
+    standingOrders: row.standing_orders,
+    wasUpdate: row.was_update,
   };
-}
-
-async function countStandingOrders(menuId: number): Promise<number> {
-  const { count, error } = await supabase
-    .from("orders")
-    .select("id", { count: "exact", head: true })
-    .eq("menu_id", menuId)
-    .eq("source", "standing")
-    .eq("status", "placed");
-  if (error) throw error;
-  return count ?? 0;
-}
-
-/**
- * Bring a menu's dishes in line with the draft, in place.
- *
- * Deliberately not delete-then-reinsert. order_items references menu_items ON
- * DELETE RESTRICT, so wiping the list is refused the moment anyone has chosen a
- * dish -- and that is exactly the state in which an admin still has to be able
- * to correct a price. Updating the row in place keeps its id, and every order
- * already placed keeps the price it snapshotted, so no bill moves.
- *
- * Removing a dish somebody ordered is still refused, by the same FK. That one
- * is right: the alternative is losing an order silently.
- */
-async function reconcileDishes(menuId: number, orgId: number, dishes: DraftDish[]): Promise<void> {
-  const current = await supabase.from("menu_items").select("id").eq("menu_id", menuId);
-  if (current.error) throw current.error;
-
-  const live = new Set((current.data ?? []).map((r) => r.id as number));
-  const keep = new Set(dishes.flatMap((d) => (d.id !== undefined && live.has(d.id) ? [d.id] : [])));
-  const gone = [...live].filter((id) => !keep.has(id));
-
-  // Removals first: a rename that reuses a departing dish's name would
-  // otherwise collide with the unique index on (menu_id, lower(btrim(name))).
-  if (gone.length > 0) {
-    const del = await supabase.from("menu_items").delete().in("id", gone);
-    if (del.error) throw del.error;
-  }
-
-  for (const [i, d] of dishes.entries()) {
-    if (d.id === undefined || !keep.has(d.id)) continue;
-    const upd = await supabase
-      .from("menu_items")
-      .update({ name: d.name, price_minor: d.priceMinor, position: i })
-      .eq("id", d.id);
-    if (upd.error) throw upd.error;
-  }
-
-  const added = dishes.flatMap((d, i) =>
-    d.id !== undefined && keep.has(d.id)
-      ? []
-      : [{ menu_id: menuId, org_id: orgId, name: d.name, price_minor: d.priceMinor, position: i }],
-  );
-  if (added.length > 0) {
-    const ins = await supabase.from("menu_items").insert(added);
-    if (ins.error) throw ins.error;
-  }
 }
 
 export async function fetchMenuForEdit(orgId: number, serviceDate: string) {
