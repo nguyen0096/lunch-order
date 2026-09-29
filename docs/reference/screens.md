@@ -500,6 +500,19 @@ on an inactive one, and adding back is the way in for a removed member (a new
 invitation is the other). A row of grey controls
 with no explanation is what made this screen look broken while it was working.
 
+Who is on Telegram heads the list, "9 of 12 on Telegram", counting active
+members only, because somebody who never linked hears none of the bot's direct
+messages, the weekly bill included. Each row carries **Telegram: linked** with
+the date it happened, or **Telegram: not linked**. Linked means the member
+finished /start, so a link row with no chat yet counts as not linked. A link
+older than the column that records its date shows no date rather than a made-up
+one. Removing or leaving keeps the link, so an inactive member who linked reads
+**Telegram: linked, not in the office**, in grey rather than green. If the read
+fails, the count reads "Telegram status unavailable" and the rows carry no
+Telegram line; the rest of the screen still works. The read is `telegram_links` filtered to rows with a chat, selecting
+`membership_id` and `linked_at` alone: the chat id never reaches the browser,
+and `link_token` is not selectable by any browser role.
+
 | State | |
 | --- | --- |
 | only you | the code, and "Share this to add your first colleague" |
@@ -507,6 +520,8 @@ with no explanation is what made this screen look broken while it was working.
 | role changed | toast, "Now an admin" |
 | removed | toast, "Removed Tèo"; the row stays, marked removed |
 | added back | toast, "Added Tèo back" |
+| nobody linked | "0 of 12 on Telegram", every row not linked |
+| Telegram read failed | "Telegram status unavailable", no Telegram line on any row |
 
 ## Messages (admin)
 
