@@ -11,9 +11,11 @@ import {
   passOnReason,
   pickDish,
   planMessage,
+  planRefusal,
   planState,
   planToggle,
   visibleDays,
+  weekFromParam,
   weekRangeLabel,
 } from "../src/web/components/boardModel.js";
 
@@ -385,5 +387,31 @@ describe("planState, a day ahead of its menu", () => {
 
   it("names the day in the toast", () => {
     expect(planMessage("skipped", THU)).toMatch(/^Skipped Thu 24 Sept?$/);
+  });
+
+  it("says why an Undo cannot land, in the database's order of reasons", () => {
+    expect(planRefusal({ serviceDate: TODAY, today: TODAY, hasOrderRow: true })).toMatch(
+      /is today or already past/,
+    );
+    expect(planRefusal({ serviceDate: THU, today: TODAY, hasOrderRow: true })).toMatch(
+      /^You already have an order on/,
+    );
+    expect(planRefusal({ serviceDate: THU, today: TODAY, hasOrderRow: false })).toMatch(
+      /^The menu for Thu 24 Sept? is out, so order or cancel that day instead$/,
+    );
+  });
+});
+
+describe("weekFromParam", () => {
+  it("reads a real date as the start of its week", () => {
+    expect(weekFromParam("2026-10-08", 1)).toBe("2026-10-05");
+    expect(weekFromParam("9998-06-15", 1)).not.toBeNull();
+  });
+
+  it("refuses what it cannot draw or does not name a date", () => {
+    for (const asked of [null, "", "tomorrow", "2026-2-3", "2026-02-31", "2026-13-01",
+                         "1999-12-31", "9999-12-31", "0000-01-01"]) {
+      expect(weekFromParam(asked, 1)).toBeNull();
+    }
   });
 });

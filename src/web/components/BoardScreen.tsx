@@ -50,9 +50,11 @@ import {
   passOnReason,
   pickDish,
   planMessage,
+  planRefusal,
   planState,
   planToggle,
   visibleDays,
+  weekFromParam,
   weekRangeLabel,
   type Dish,
   type Mark,
@@ -89,12 +91,9 @@ export function BoardScreen({ me, org }: ScreenProps) {
   const thisWeek = weekStart(today, org.billingWeekStartsOn);
 
   // `?week=` is how Settings links to the week of a skipped day.
-  const [weekOf, setWeekOf] = useState(() => {
-    const asked = allParams().get("week");
-    return asked !== null && /^\d{4}-\d{2}-\d{2}$/.test(asked)
-      ? weekStart(asked, org.billingWeekStartsOn)
-      : thisWeek;
-  });
+  const [weekOf, setWeekOf] = useState(
+    () => weekFromParam(allParams().get("week"), org.billingWeekStartsOn) ?? thisWeek,
+  );
   const [board, setBoard] = useState<Board | null>(null);
   const [transfers, setTransfers] = useState<Transfers | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -376,14 +375,14 @@ export function BoardScreen({ me, org }: ScreenProps) {
         orderCutoffAt: null,
         dishes: [],
       };
-      const state = planState({
-        day,
-        today,
-        hasOrderRow: b.cells.has(cellKey(me.profileId, serviceDate)),
-        weekdays: b.weekdays,
-        exception: action,
-      });
-      if (state === null) return;
+      const hasOrderRow = b.cells.has(cellKey(me.profileId, serviceDate));
+      const state = planState({ day, today, hasOrderRow, weekdays: b.weekdays, exception: action });
+      if (state === null) {
+        // Reached only by an Undo whose day has moved on since, typically
+        // because its menu was published in the meantime.
+        toast.error(planRefusal({ serviceDate, today, hasOrderRow }));
+        return;
+      }
 
       const put = (x: StandingException | null) =>
         setBoard((cur) => {

@@ -219,10 +219,16 @@ describe("standing days", () => {
   });
 
   it("says a single day is skipped on the Board, and counts none when there are none", async () => {
+    fetchStandingOrders.mockResolvedValue(new Set([2]));
     await renderSettings("member");
     const section = card("Standing days");
     expect(within(section).getByText(/Skip single days by tapping them on the Board\./)).toBeInTheDocument();
     expect(within(section).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("says nothing about skipping when there is no standing day to skip", async () => {
+    await renderSettings("member");
+    expect(within(card("Standing days")).queryByText(/Skip single days/)).not.toBeInTheDocument();
   });
 
   it("counts the upcoming skips the rule still covers, and links to the first one's week", async () => {

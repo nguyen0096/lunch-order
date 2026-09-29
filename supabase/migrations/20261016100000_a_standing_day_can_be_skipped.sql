@@ -57,7 +57,10 @@ begin
   end if;
 
   select o.timezone into v_tz from public.organizations o where o.id = p_org_id;
-  if p_service_date is null or p_service_date <= private.today_in(v_tz) then
+  if p_service_date is null then
+    raise exception 'A date is needed.' using errcode = 'invalid_parameter_value';
+  end if;
+  if p_service_date <= private.today_in(v_tz) then
     raise exception '% is today or already past, so it can no longer be planned ahead',
       to_char(p_service_date, 'DD/MM')
       using errcode = 'object_not_in_prerequisite_state';

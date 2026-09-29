@@ -331,7 +331,8 @@ dropped and added back, and "yes on 14/10" stays true if the rule covers it for
 a while and then stops. Deleting them as redundant would be trivially safe for
 the database and wrong for the person the moment the rule changed back. A
 redundant one costs a row and changes nothing, so they stay. Settings counts only
-the skips the rule still covers, since those are the ones skipping something.
+the skips the rule still covers, on dates with no order row of mine, since those
+are the ones the Board draws as skipped.
 
 **No horizon.** A member may skip or plan any date after today, however far
 ahead, and the Board pages forward without limit. The projection is a pure

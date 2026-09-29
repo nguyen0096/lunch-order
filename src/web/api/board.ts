@@ -143,17 +143,31 @@ export async function setStandingException(args: {
   if (error) throw error;
 }
 
-/** MY skips on dates after `after`, soonest first. */
+/**
+ * MY skips on dates after `after`, soonest first, leaving out any date I hold
+ * an order row on. The Board shows such a day as the order, cancelled
+ * included, so the skip there no longer reads as one.
+ */
 export async function fetchUpcomingSkips(args: {
   orgId: number; profileId: string; after: string;
 }): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("standing_order_exceptions").select("service_date")
-    .eq("org_id", args.orgId).eq("profile_id", args.profileId)
-    .eq("action", "skip").gt("service_date", args.after)
-    .order("service_date");
-  if (error) throw error;
-  return (data ?? []).map((r) => r.service_date as string);
+  const [skipsRes, ordersRes] = await Promise.all([
+    supabase
+      .from("standing_order_exceptions").select("service_date")
+      .eq("org_id", args.orgId).eq("profile_id", args.profileId)
+      .eq("action", "skip").gt("service_date", args.after)
+      .order("service_date"),
+    supabase
+      .from("orders").select("service_date")
+      .eq("org_id", args.orgId).eq("profile_id", args.profileId)
+      .gt("service_date", args.after),
+  ]);
+  if (skipsRes.error) throw skipsRes.error;
+  if (ordersRes.error) throw ordersRes.error;
+  const ordered = new Set((ordersRes.data ?? []).map((r) => r.service_date as string));
+  return (skipsRes.data ?? [])
+    .map((r) => r.service_date as string)
+    .filter((d) => !ordered.has(d));
 }
 
 /* ---------------------------------------------------------------- the board */

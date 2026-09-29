@@ -308,8 +308,8 @@ begin
   insert into probe values ('S5 an action that is neither is refused',
     left(pg_temp.set_exc('org_a', 'draft', 'maybe'), 5), '22023');
   insert into probe values ('S5 no date at all is refused',
-    left(pg_temp.attempt(format('select public.set_standing_exception(%s, null, %L)',
-      pg_temp.c('org_a'), 'skip')), 5), '55000');
+    pg_temp.attempt(format('select public.set_standing_exception(%s, null, %L)',
+      pg_temp.c('org_a'), 'skip')), '22023 A date is needed.');
 
   perform pg_temp.act_as(pg_temp.c('adm'));
   update public.menus set status = 'cancelled' where id = v_menu;

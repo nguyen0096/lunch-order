@@ -1,6 +1,7 @@
 import { fetchMe, joinWithCode } from "../src/web/api/core.js";
 import { fetchTelegramLinks, previewInvitation } from "../src/web/api/people.js";
 import { createTelegramLink, fetchTelegramLink } from "../src/web/api/settings.js";
+import { fetchUpcomingSkips, setStandingException } from "../src/web/api/board.js";
 
 // The reads that answer for the caller alone go through functions, because
 // the rows behind them are closed to a browser. What is under test is that the
@@ -180,5 +181,44 @@ describe("joining with a code from the browser", () => {
       p_code: "KGSD4582", p_display_name: "Neyu", p_short_code: null,
     });
     expect(client.rpc.mock.calls[0]?.[1]).not.toHaveProperty("p_chat_id");
+  });
+});
+
+describe("standing exceptions", () => {
+  it("are written through set_standing_exception, never the table", async () => {
+    client.rpc.mockResolvedValue({ data: "skip", error: null });
+    await setStandingException({ orgId: 7, serviceDate: "2026-10-08", action: "skip" });
+    expect(client.rpc).toHaveBeenCalledWith("set_standing_exception", {
+      p_org_id: 7, p_service_date: "2026-10-08", p_action: "skip",
+    });
+    expect(client.from).not.toHaveBeenCalled();
+  });
+
+  it("count no skip on a date I hold an order row on, cancelled or not", async () => {
+    const steps: Record<string, Array<[string, unknown[]]>> = {};
+    client.from.mockImplementation((table: string) => {
+      const q: Record<string, unknown> = {};
+      const mine: Array<[string, unknown[]]> = [];
+      steps[table] = mine;
+      for (const step of ["select", "eq", "gt", "order"]) {
+        q[step] = (...args: unknown[]) => {
+          mine.push([step, args]);
+          return q;
+        };
+      }
+      const data =
+        table === "standing_order_exceptions"
+          ? [{ service_date: "2026-10-08" }, { service_date: "2026-10-15" }]
+          : [{ service_date: "2026-10-15" }];
+      q.then = (resolve: (v: unknown) => unknown) => resolve({ data, error: null });
+      return q;
+    });
+
+    await expect(
+      fetchUpcomingSkips({ orgId: 7, profileId: "me", after: "2026-09-29" }),
+    ).resolves.toEqual(["2026-10-08"]);
+    // No status filter: a cancelled row still makes the day an order cell.
+    expect(steps.orders).toContainEqual(["eq", ["profile_id", "me"]]);
+    expect(steps.orders?.some(([s, a]) => s === "eq" && a[0] === "status")).toBe(false);
   });
 });

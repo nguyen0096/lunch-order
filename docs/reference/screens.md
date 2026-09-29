@@ -183,7 +183,9 @@ Every one is dashed or bare because it is still a prediction: the accent fill
 stays with real orders. The cell flips at once and the toast says what it now is,
 `Skipped Thu 24 Sept`, with **Undo**, which puts back whatever exception was
 there before (a plan on a day the rule later came to cover, for instance). The
-Undo's own toast has no Undo. A refusal puts that one day back and shows the
+Undo's own toast has no Undo. An Undo on a day that has moved on since, most
+often because its menu was published meanwhile, writes nothing and says so:
+`The menu for Thu 24 Sept is out, so order or cancel that day instead`. A refusal puts that one day back and shows the
 database's sentence, e.g. `the menu for 24/09 is already out, so order or cancel
 that day instead`.
 
@@ -679,10 +681,13 @@ Standing days as a row of weekday toggles, the Telegram connection with its deep
 link or its connected state, display name, short code, sign out. Not a tab: it
 would compete with the two things people do weekly, and lose.
 
-Under the standing days: `Skip single days by tapping them on the Board.` and,
-when there are any, `2 upcoming days skipped`, linking to the Board on the week
-of the first (`#/o/<slug>/board?week=<date>`). Only skips on weekdays the rule
-still covers are counted. Changing a weekday writes the rule and nothing else:
+Under the standing days, once at least one is on: `Skip single days by tapping
+them on the Board.` and, when there are any, `2 upcoming days skipped`, linking
+to the Board on the week of the first (`#/o/<slug>/board?week=<date>`). Only
+skips the Board would draw as `Skipped` are counted: on a weekday the rule
+still covers, and on a date with no order row of mine, cancelled included. The
+Board takes `week` only when it is a real date in the years 2000 to 9998, and
+otherwise opens on this week. Changing a weekday writes the rule and nothing else:
 skips and plans on single dates are kept.
 
 The **short code** says how many changes are left. A member has one after

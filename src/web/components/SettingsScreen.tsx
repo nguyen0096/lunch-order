@@ -301,21 +301,27 @@ function StandingDays({
           ? "No standing days. Tap a day above, or keep ordering day by day on the board."
           : "A published menu is what puts you on the board, and the cutoff still applies."}
       </p>
-      <p className="max-w-prose text-sm text-muted">
-        Skip single days by tapping them on the Board.
-        {first !== null && (
-          <>
-            {" "}
-            <a
-              className="font-medium text-text underline underline-offset-4"
-              href={`#/o/${orgSlug}/board?week=${weekStart(first, weekStartsOn)}`}
-              title={`The week of ${formatDay(first)}`}
-            >
-              {skipped.length === 1 ? "1 upcoming day skipped" : `${skipped.length} upcoming days skipped`}
-            </a>
-          </>
-        )}
-      </p>
+      {/* With no standing days there is nothing to skip, and every skip is
+          on a weekday the rule no longer covers, so none is counted either. */}
+      {enabled.size > 0 && (
+        <p className="max-w-prose text-sm text-muted">
+          Skip single days by tapping them on the Board.
+          {first !== null && (
+            <>
+              {" "}
+              <a
+                className="font-medium text-text underline underline-offset-4"
+                href={`#/o/${orgSlug}/board?week=${weekStart(first, weekStartsOn)}`}
+                title={`The week of ${formatDay(first)}`}
+              >
+                {skipped.length === 1
+                  ? "1 upcoming day skipped"
+                  : `${skipped.length} upcoming days skipped`}
+              </a>
+            </>
+          )}
+        </p>
+      )}
     </Section>
   );
 }

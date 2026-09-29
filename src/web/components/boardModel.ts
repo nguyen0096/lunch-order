@@ -8,7 +8,7 @@
  * is inert before anybody taps it.
  */
 import type { BoardCell, BoardDay, StandingException } from "../api.js";
-import { formatDay, isoWeekday } from "../../shared/dates.js";
+import { addDays, formatDay, isoWeekday, weekStart } from "../../shared/dates.js";
 import { dayStage, stageWord } from "../../shared/gating.js";
 import type { Org } from "../../shared/types.js";
 
@@ -271,6 +271,39 @@ export function planToggle(state: PlanState): StandingException | null {
     case "planned":
       return null;
   }
+}
+
+/**
+ * The week a `?week=` link asks for, or null when it names no real date.
+ *
+ * A date must survive a round trip, so 2026-02-31 is refused rather than read
+ * as 3 March. The year stops at 9998 because the week arrows add seven days,
+ * and past 9999 an ISO string gains a sign and six digits, which the Board
+ * cannot draw.
+ */
+export function weekFromParam(asked: string | null, weekStartsOn: number): string | null {
+  if (asked === null || !/^\d{4}-\d{2}-\d{2}$/.test(asked)) return null;
+  const year = Number(asked.slice(0, 4));
+  if (year < 2000 || year > 9998 || addDays(asked, 0) !== asked) return null;
+  return weekStart(asked, weekStartsOn);
+}
+
+/**
+ * Why a day is no longer one to plan ahead, in the words
+ * `set_standing_exception` would use. For the case the database never hears
+ * about: an Undo on a day `planState` has already turned down.
+ */
+export function planRefusal(args: {
+  serviceDate: string;
+  today: string;
+  hasOrderRow: boolean;
+}): string {
+  const day = formatDay(args.serviceDate);
+  if (args.serviceDate <= args.today) {
+    return `${day} is today or already past, so it can no longer be planned ahead`;
+  }
+  if (args.hasOrderRow) return `You already have an order on ${day}, so change that instead`;
+  return `The menu for ${day} is out, so order or cancel that day instead`;
 }
 
 /** The toast for a day that has just become `state`. */

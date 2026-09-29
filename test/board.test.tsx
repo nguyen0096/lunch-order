@@ -1452,6 +1452,48 @@ describe("Board, a day ahead of its menu", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens on this week when the link names a date it cannot draw", async () => {
+    serveRule([ISO_THU]);
+    for (const asked of ["9999-12-31", "2026-02-31", "1999-12-31"]) {
+      window.location.hash = `#/o/test-office/board?week=${asked}`;
+      try {
+        const view = renderBoard();
+        await screen.findByRole("button", { name: STANDING });
+        expect(fetchBoard).toHaveBeenLastCalledWith(
+          expect.objectContaining({ from: MONDAY, to: addDays(MONDAY, 6) }),
+        );
+        view.unmount();
+      } finally {
+        window.location.hash = "";
+      }
+    }
+  });
+
+  it("says why an Undo cannot land once the day's menu is out", async () => {
+    const db = serveRule([ISO_THU]);
+    renderBoard();
+    await screen.findByRole("button", { name: STANDING });
+
+    // The menu is published while the toast is still up.
+    fetchBoard.mockResolvedValue({
+      ...db.board,
+      days: db.board.days.map((d) =>
+        d.serviceDate === THU ? { ...menuDay({ dishes: [DISHES[0]!] }), serviceDate: THU } : d,
+      ),
+      projected: new Set(),
+    });
+    await userEvent.click(screen.getByRole("button", { name: STANDING }));
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
+    await screen.findByRole("button", { name: `${formatDay(THU)}: not eating. Order lunch` });
+
+    act(() => undoOnLastToast()());
+
+    expect(failure).toHaveBeenCalledWith(
+      `The menu for ${formatDay(THU)} is out, so order or cancel that day instead`,
+    );
+    expect(setStandingException).toHaveBeenCalledTimes(1);
+  });
+
   it("opens on the week Settings links to", async () => {
     serveRule([ISO_THU]);
     const target = addDays(MONDAY, 7 * 30 + 2);
