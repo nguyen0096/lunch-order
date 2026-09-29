@@ -26,6 +26,7 @@ and whether it rolls back. The ones to know first:
 | `hardening_follow_up.sql` | link tokens closed to admins, an outbox no browser writes, the invitation preview and the former-offices answer | no, rolls back |
 | `removal_and_chat_binding.sql` | only the bot binds a Telegram chat; a removed member stays out of the join code and old invitations, somebody who left does not; an admin or owner adds them back | no, rolls back |
 | `payment_notifications.sql` | money arriving tells the payer, an unmatched transfer tells that office's admins and owners, once, behind a switch, and nobody else | no, rolls back |
+| `standing_exceptions.sql` | a skip keeps publishing from ordering for you, a plan makes it order with no dish; only your own row, only in your office, only after today on a day with no published menu and no order of yours; exceptions survive rule changes | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -112,6 +113,11 @@ These are not style preferences. Breaking one corrupts money or leaks data.
 - **An invitee sees one invitation, by its token, and only where it leads.**
   `invitation_preview` returns the office's name, the role, the expiry and
   whether it is still valid; never the address, the sender or an id.
+- **A standing exception is written only by `set_standing_exception`**, for
+  the caller, in an office they are an active member of, on a date after today
+  whose menu is absent or a draft and on which they have no order row. No
+  browser role holds INSERT, UPDATE or DELETE on `standing_order_exceptions`.
+  Nothing deletes an exception when the weekday rule changes.
 - **Order prices are snapshotted** by trigger on write, and again into
   `billing_lines` at period close, so editing a menu can never rewrite a past bill.
 - **`VITE_`-prefixed variables are inlined into the browser bundle.** A secret

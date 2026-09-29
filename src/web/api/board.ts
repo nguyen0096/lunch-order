@@ -125,6 +125,51 @@ export async function setStandingOrder(args: {
   if (error) throw error;
 }
 
+/** What a member has said about one date, ahead of its menu. */
+export type StandingException = "skip" | "force";
+
+/**
+ * Skip a standing day, plan a day off the rule, or (with `null`) take either
+ * back. Always the caller's own row: the function takes no profile, and
+ * refuses a date that is not after today, has a published menu, or already
+ * has an order of theirs.
+ */
+export async function setStandingException(args: {
+  orgId: number; serviceDate: string; action: StandingException | null;
+}): Promise<void> {
+  const { error } = await supabase.rpc("set_standing_exception", {
+    p_org_id: args.orgId, p_service_date: args.serviceDate, p_action: args.action,
+  });
+  if (error) throw error;
+}
+
+/**
+ * MY skips on dates after `after`, soonest first, leaving out any date I hold
+ * an order row on. The Board shows such a day as the order, cancelled
+ * included, so the skip there no longer reads as one.
+ */
+export async function fetchUpcomingSkips(args: {
+  orgId: number; profileId: string; after: string;
+}): Promise<string[]> {
+  const [skipsRes, ordersRes] = await Promise.all([
+    supabase
+      .from("standing_order_exceptions").select("service_date")
+      .eq("org_id", args.orgId).eq("profile_id", args.profileId)
+      .eq("action", "skip").gt("service_date", args.after)
+      .order("service_date"),
+    supabase
+      .from("orders").select("service_date")
+      .eq("org_id", args.orgId).eq("profile_id", args.profileId)
+      .gt("service_date", args.after),
+  ]);
+  if (skipsRes.error) throw skipsRes.error;
+  if (ordersRes.error) throw ordersRes.error;
+  const ordered = new Set((ordersRes.data ?? []).map((r) => r.service_date as string));
+  return (skipsRes.data ?? [])
+    .map((r) => r.service_date as string)
+    .filter((d) => !ordered.has(d));
+}
+
 /* ---------------------------------------------------------------- the board */
 
 export type BoardMember = {
@@ -178,6 +223,10 @@ export type Board = {
    * speculation presented as fact.
    */
   projected: Set<string>;
+  /** MY enabled weekdays, ISO 1 = Monday, so a skip can be re-projected in place. */
+  weekdays: Set<number>;
+  /** MY exceptions in the range, by service date. */
+  exceptions: Map<string, StandingException>;
 };
 
 export const cellKey = (profileId: string, serviceDate: string) => `${profileId}|${serviceDate}`;
@@ -307,22 +356,35 @@ export async function fetchBoard(args: {
     });
   }
 
-  const projected = projectStandingDays({
-    days: days.map((d) => d.serviceDate),
-    today: args.today,
-    weekdays: new Set(
-      (rulesRes.data ?? []).filter((r) => r.is_enabled).map((r) => r.weekday),
-    ),
-    skips: new Set(
-      (excRes.data ?? []).filter((e) => e.action === "skip").map((e) => e.service_date),
-    ),
-    forces: new Set(
-      (excRes.data ?? []).filter((e) => e.action === "force").map((e) => e.service_date),
-    ),
-    hasOrder: (d) => cells.has(cellKey(args.meProfileId, d)),
-  });
+  const weekdays = new Set(
+    (rulesRes.data ?? []).filter((r) => r.is_enabled).map((r) => r.weekday),
+  );
+  const exceptions = new Map<string, StandingException>(
+    (excRes.data ?? []).map((e) => [e.service_date, e.action as StandingException]),
+  );
+  const projected = projectBoard({ days, cells, weekdays, exceptions }, args);
 
-  return { days, members, cells, projected };
+  return { days, members, cells, projected, weekdays, exceptions };
+}
+
+/**
+ * The projection for a board's own week, from its own rule and exceptions.
+ * Exported so an optimistic skip can re-project without a round trip.
+ */
+export function projectBoard(
+  board: Pick<Board, "days" | "cells" | "weekdays" | "exceptions">,
+  who: { meProfileId: string; today: string },
+): Set<string> {
+  const byAction = (a: StandingException) =>
+    new Set([...board.exceptions].filter(([, x]) => x === a).map(([d]) => d));
+  return projectStandingDays({
+    days: board.days.map((d) => d.serviceDate),
+    today: who.today,
+    weekdays: board.weekdays,
+    skips: byAction("skip"),
+    forces: byAction("force"),
+    hasOrder: (d) => board.cells.has(cellKey(who.meProfileId, d)),
+  });
 }
 
 function addDaysIso(iso: string, n: number): string {

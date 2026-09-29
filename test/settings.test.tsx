@@ -19,6 +19,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
   return {
     ...actual,
     fetchStandingOrders: vi.fn(),
+    fetchUpcomingSkips: vi.fn(),
     setStandingOrder: vi.fn(),
     fetchTelegramLink: vi.fn(),
     createTelegramLink: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
 
 const fetchStandingOrders = vi.mocked(api.fetchStandingOrders);
 const setStandingOrder = vi.mocked(api.setStandingOrder);
+const fetchUpcomingSkips = vi.mocked(api.fetchUpcomingSkips);
 const fetchTelegramLink = vi.mocked(api.fetchTelegramLink);
 const createTelegramLink = vi.mocked(api.createTelegramLink);
 const unlinkTelegram = vi.mocked(api.unlinkTelegram);
@@ -111,6 +113,7 @@ beforeEach(() => {
   deleteOffice.mockResolvedValue(undefined);
   setShortCode.mockImplementation(async (a) => a.shortCode.trim().toUpperCase());
   fetchStandingOrders.mockResolvedValue(new Set<number>());
+  fetchUpcomingSkips.mockResolvedValue([]);
   fetchTelegramLink.mockResolvedValue(null);
   fetchOrgSettings.mockResolvedValue({
     payment: EMPTY_PAYMENT_CONFIG,
@@ -213,6 +216,53 @@ describe("standing days", () => {
       }),
     );
     expect(success).toHaveBeenCalledWith("Monday removed");
+  });
+
+  it("says a single day is skipped on the Board, and counts none when there are none", async () => {
+    fetchStandingOrders.mockResolvedValue(new Set([2]));
+    await renderSettings("member");
+    const section = card("Standing days");
+    expect(within(section).getByText(/Skip single days by tapping them on the Board\./)).toBeInTheDocument();
+    expect(within(section).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("says nothing about skipping when there is no standing day to skip", async () => {
+    await renderSettings("member");
+    expect(within(card("Standing days")).queryByText(/Skip single days/)).not.toBeInTheDocument();
+  });
+
+  it("counts the upcoming skips the rule still covers, and links to the first one's week", async () => {
+    // Thu 8 Oct and Thu 15 Oct are Thursdays; Fri 9 Oct is not in the rule.
+    fetchStandingOrders.mockResolvedValue(new Set([4]));
+    fetchUpcomingSkips.mockResolvedValue(["2026-10-08", "2026-10-09", "2026-10-15"]);
+    await renderSettings("member");
+
+    const link = within(card("Standing days")).getByRole("link", { name: "2 upcoming days skipped" });
+    expect(link).toHaveAttribute("href", "#/o/test-office/board?week=2026-10-05");
+    expect(fetchUpcomingSkips).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: 7, profileId: "me" }),
+    );
+  });
+
+  it("keeps the skips when a weekday is turned off, and stops counting them", async () => {
+    fetchStandingOrders.mockResolvedValue(new Set([4]));
+    fetchUpcomingSkips.mockResolvedValue(["2026-10-08"]);
+    await renderSettings("member");
+    expect(
+      within(card("Standing days")).getByRole("link", { name: "1 upcoming day skipped" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Thursday" }));
+    await waitFor(() =>
+      expect(within(card("Standing days")).queryByRole("link")).not.toBeInTheDocument(),
+    );
+    // Turning a day off writes the rule and nothing else.
+    expect(setStandingOrder).toHaveBeenCalledTimes(1);
+
+    await userEvent.click(screen.getByRole("button", { name: "Thursday" }));
+    expect(
+      await within(card("Standing days")).findByRole("link", { name: "1 upcoming day skipped" }),
+    ).toBeInTheDocument();
   });
 
   it("says what to do when no day is set", async () => {

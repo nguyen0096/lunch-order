@@ -165,6 +165,45 @@ admin is the person who reads the list down the phone to the caterer.
 Cells are **optimistic**: they fill immediately and revert with the database's own
 sentence if refused, e.g. `ordering for 23/09 closed at 21:00 22/09`.
 
+### Skipping and planning a day ahead
+
+On your own row, a day **ahead of its menu** is one tap away from the other
+side of your standing days. That is a day after today, whose menu is absent or
+still a draft, on which you have no order row of any status. Only your own row,
+admin or not.
+
+| Cell | Means | Tap |
+| --- | --- | --- |
+| `Standing`, dashed strong edge | your weekday rule covers it | skip it: writes `skip` |
+| `Skipped`, struck through, dashed hairline, muted | a rule day you are off | take it back: removes the `skip` |
+| `+`, hairline | off the rule, nothing planned | plan it: writes `force` |
+| `Planned`, dashed strong edge | off the rule, you will eat | take it back: removes the `force` |
+
+Every one is dashed or bare because it is still a prediction: the accent fill
+stays with real orders. The cell flips at once and the toast says what it now is,
+`Skipped Thu 24 Sept`, with **Undo**, which puts back whatever exception was
+there before (a plan on a day the rule later came to cover, for instance). The
+Undo's own toast has no Undo. An Undo on a day that has moved on since, most
+often because its menu was published meanwhile, writes nothing and says so:
+`The menu for Thu 24 Sept is out, so order or cancel that day instead`. A refusal puts that one day back and shows the
+database's sentence, e.g. `the menu for 24/09 is already out, so order or cancel
+that day instead`.
+
+| Day | My cell |
+| --- | --- |
+| menu published and open | ordering, exactly as above |
+| today, or earlier, with no menu | inert, `No menu for Tue 22 Sept yet` on tap |
+| locked, closed, cancelled, served | inert, the stage's reason on tap |
+| an order row of mine exists, even cancelled | the order cell; skip does not apply, cancel as usual |
+
+There is **no horizon**. The week arrows page forward without limit, and a week
+with no menus and no orders still shows your projection and takes skips. A
+skipped weekend day keeps its column, so the skip can be taken back.
+
+When a menu is published for a skipped day, no standing order is created for
+you; for a planned day, one is, with no dish chosen. That is
+`materialize_standing_orders` as it always was.
+
 ### Passing a meal
 
 **You pass a meal by tapping the cell of the person you are giving it to.** The
@@ -641,6 +680,15 @@ places to change one setting disagree the first time somebody uses the other.
 Standing days as a row of weekday toggles, the Telegram connection with its deep
 link or its connected state, display name, short code, sign out. Not a tab: it
 would compete with the two things people do weekly, and lose.
+
+Under the standing days, once at least one is on: `Skip single days by tapping
+them on the Board.` and, when there are any, `2 upcoming days skipped`, linking
+to the Board on the week of the first (`#/o/<slug>/board?week=<date>`). Only
+skips the Board would draw as `Skipped` are counted: on a weekday the rule
+still covers, and on a date with no order row of mine, cancelled included. The
+Board takes `week` only when it is a real date in the years 2000 to 9998, and
+otherwise opens on this week. Changing a weekday writes the rule and nothing else:
+skips and plans on single dates are kept.
 
 The **short code** says how many changes are left. A member has one after
 joining; once it is used the field is disabled and Save carries "You have used
