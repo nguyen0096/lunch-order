@@ -92,19 +92,26 @@ export function Action({
     </Button>
   );
 
-  if (!unavailable) return button;
-
+  // The tooltip wraps the button even while there is no reason, so that the
+  // button is the same element on both sides of the change. Returning the bare
+  // button when available made React replace it the moment a reason cleared,
+  // which dropped the focus of whoever was on it.
   return (
     <>
-      <Tooltip open={showReason} onOpenChange={setShowReason}>
+      <Tooltip
+        open={unavailable && showReason}
+        onOpenChange={(open) => setShowReason(unavailable && open)}
+      >
         <TooltipTrigger asChild>{button}</TooltipTrigger>
-        <TooltipContent>{reason}</TooltipContent>
+        {unavailable && <TooltipContent>{reason}</TooltipContent>}
       </Tooltip>
-      {/* Rendered unconditionally rather than relying on the tooltip's own
-          aria-describedby, which exists only while the tooltip is open. */}
-      <span id={describedBy} className="sr-only">
-        {reason}
-      </span>
+      {/* Rendered whenever there is a reason rather than relying on the
+          tooltip's own aria-describedby, which exists only while it is open. */}
+      {unavailable && (
+        <span id={describedBy} className="sr-only">
+          {reason}
+        </span>
+      )}
     </>
   );
 }

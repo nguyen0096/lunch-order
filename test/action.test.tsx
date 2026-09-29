@@ -96,6 +96,31 @@ describe("Action, unavailable", () => {
   });
 });
 
+describe("Action, when its reason comes or goes", () => {
+  it("keeps the same button, and whoever is focused on it, once the reason clears", () => {
+    const { rerender } = render(<Action reason="The image is still being drawn.">Save</Action>);
+    const button = screen.getByRole("button", { name: "Save" });
+    button.focus();
+
+    rerender(<Action reason={null}>Save</Action>);
+
+    expect(button).toBeInTheDocument();
+    expect(button).toHaveFocus();
+    expect(button).not.toHaveAttribute("aria-disabled");
+    expect(button).not.toHaveAccessibleDescription();
+  });
+
+  it("keeps the same button when a reason arrives", () => {
+    const { rerender } = render(<Action reason={null}>Save</Action>);
+    const button = screen.getByRole("button", { name: "Save" });
+
+    rerender(<Action reason="Nothing to save">Save</Action>);
+
+    expect(button).toBeInTheDocument();
+    expect(button).toHaveAccessibleDescription("Nothing to save");
+  });
+});
+
 describe("Action, pending", () => {
   it("refuses a second click while the first is in flight", async () => {
     const onClick = vi.fn();

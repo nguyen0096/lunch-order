@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fakeClockUser } from "./user.js";
 import { toast } from "sonner";
 import { MenuScreen } from "../src/web/components/MenuScreen.js";
 import * as api from "../src/web/api.js";
@@ -84,7 +84,7 @@ const TODAY = todayIn(TZ);
  * than pinning the tests to a Monday keeps them honest whatever day they run.
  */
 async function pickDay(
-  user: ReturnType<typeof userEvent.setup>,
+  user: ReturnType<typeof fakeClockUser>,
   date: string,
   state = "no menu",
 ): Promise<void> {
@@ -188,8 +188,9 @@ beforeEach(() => {
   // DATE. Left on the real clock the suite reports the hour it ran at -- past
   // 21:00 that cutoff has elapsed, so the screen bumps the default it offers
   // and StatusActions stops offering Cancel lunch. The morning of TODAY puts
-  // the clock back where the fixtures assume it is. `shouldAdvanceTime` is
-  // what keeps user-event's own waits moving.
+  // the clock back where the fixtures assume it is. `shouldAdvanceTime` keeps
+  // the timers waitFor and React schedule moving; user-event moves its own
+  // through `fakeClockUser`.
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(zonedTimeToInstant(TODAY, "08:00", TZ));
   publishMenu.mockResolvedValue({ menuId: 11, dishes: 3, standingOrders: 3, wasUpdate: false });
@@ -214,7 +215,7 @@ describe("Menu, loading and failure", () => {
   });
 
   it("renders the database's own sentence and retries", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     fetchMenuCalendar.mockResolvedValue(new Map());
     fetchPublishImpact.mockResolvedValue(impact());
     fetchMenuEditor.mockRejectedValueOnce(new Error("network is down"));
@@ -259,7 +260,7 @@ describe("No menu for the date", () => {
   });
 
   it("refuses the click while it is unavailable", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -272,14 +273,14 @@ describe("No menu for the date", () => {
 /* ----------------------------------------------------------------- parsing */
 
 describe("Parsing the caterer's message", () => {
-  async function pasteAndParse(user: ReturnType<typeof userEvent.setup>, message = MESSAGE) {
+  async function pasteAndParse(user: ReturnType<typeof fakeClockUser>, message = MESSAGE) {
     await user.click(screen.getByLabelText("The caterer’s message"));
     await user.paste(message);
     await user.click(screen.getByRole("button", { name: "Parse" }));
   }
 
   it("fills the table from the offline parser, dish by dish", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -294,7 +295,7 @@ describe("Parsing the caterer's message", () => {
   });
 
   it("shows the parser's own uncertainty against the row it belongs to", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -309,7 +310,7 @@ describe("Parsing the caterer's message", () => {
   });
 
   it("keeps the lines that are not dishes instead of dropping them", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -321,7 +322,7 @@ describe("Parsing the caterer's message", () => {
   });
 
   it("offers a line it could not read as a manual row rather than dropping it", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -339,7 +340,7 @@ describe("Parsing the caterer's message", () => {
   });
 
   it("is never a dead end when the parse finds nothing", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -360,7 +361,7 @@ describe("Parsing the caterer's message", () => {
 
 describe("Checking the list", () => {
   it("re-reads the price as it is typed and shows what it took", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -375,7 +376,7 @@ describe("Checking the list", () => {
   });
 
   it("flags a comma read as a decimal point, which is the one ambiguous case", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -389,7 +390,7 @@ describe("Checking the list", () => {
   });
 
   it("blocks Publish, with the reason, when a price cannot be read", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -405,7 +406,7 @@ describe("Checking the list", () => {
   });
 
   it("publishes a dish the caterer has not priced yet", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -415,7 +416,7 @@ describe("Checking the list", () => {
   });
 
   it("blocks Publish, with the reason, when two rows share a name", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -431,7 +432,7 @@ describe("Checking the list", () => {
   });
 
   it("removes a row, and the row is gone from what would be published", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -463,7 +464,7 @@ describe("Changing the service date", () => {
   });
 
   it("loads that day's dishes but keeps the message somebody just pasted", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -505,7 +506,7 @@ describe("When orders close", () => {
   });
 
   it("follows the service date to the evening before that day", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -518,7 +519,7 @@ describe("When orders close", () => {
   });
 
   it("leaves a cutoff the admin set alone when the service date moves", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     renderMenu();
     await ready();
@@ -547,7 +548,7 @@ describe("When orders close", () => {
   });
 
   it("loads an existing menu's stored cutoff rather than deriving one", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     // 09:00 on the service day itself, which no default would produce.
     const stored = new Date(`${DATE}T02:00:00Z`).toISOString();
     serve({ menu: menu({ orderCutoffAt: stored }) });
@@ -574,7 +575,7 @@ describe("When orders close", () => {
     // this cutoff elapsed, Publish went unavailable and the test failed. It was
     // green all morning and red every afternoon: a test that reports the time
     // of day rather than the code.
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -688,7 +689,7 @@ describe("When orders close", () => {
 
 describe("Publishing", () => {
   it("confirms first, naming the date and how many people it notifies", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu(), impact: impact({ standing: 3 }) });
     renderMenu();
     await ready();
@@ -706,7 +707,7 @@ describe("Publishing", () => {
   });
 
   it("writes nothing when the confirmation is refused", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -720,7 +721,7 @@ describe("Publishing", () => {
   });
 
   it("sends the checked list, and the button that says Publish says Published", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -743,7 +744,7 @@ describe("Publishing", () => {
   });
 
   it("names a message with no standing orders honestly", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu(), impact: impact({ standing: 0 }) });
     renderMenu();
     await ready();
@@ -754,7 +755,7 @@ describe("Publishing", () => {
   });
 
   it("reports a refusal in the database's own words", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     publishMenu.mockRejectedValue(new Error("cannot publish a menu with no available dishes"));
     renderMenu();
@@ -851,7 +852,7 @@ describe("Where a row's messages appear", () => {
   }
 
   it("puts a message about the name under the name box", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "draft" }) });
     renderMenu();
     await ready();
@@ -866,7 +867,7 @@ describe("Where a row's messages appear", () => {
   });
 
   it("puts a message about the price under the price box", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "draft" }) });
     renderMenu();
     await ready();
@@ -910,7 +911,7 @@ describe("The order for the caterer", () => {
   });
 
   it("copies the message rather than a prettified version of it", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText }, configurable: true,
@@ -975,7 +976,7 @@ describe("Who is having each dish", () => {
   });
 
   it("refuses to remove a dish somebody chose, and says whose it is", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({
       menu: menu({ status: "published" }),
       takers: new Map([[101, ["Tèo"]]]),
@@ -1070,7 +1071,7 @@ describe("Changing the menu's status", () => {
   /* ------------------------------------------------------------- cancelling */
 
   it("will not cancel until the day is typed, because nothing leaves cancelled", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "published" }), impact: impact({ orders: 2 }) });
     renderMenu();
     await ready();
@@ -1094,7 +1095,7 @@ describe("Changing the menu's status", () => {
   });
 
   it("refuses a near miss on the typed day", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "published" }) });
     renderMenu();
     await ready();
@@ -1111,7 +1112,7 @@ describe("Changing the menu's status", () => {
   });
 
   it("says that cancelling takes the orders with it", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "published" }), impact: impact({ orders: 3 }) });
     renderMenu();
     await ready();
@@ -1139,7 +1140,7 @@ describe("Changing the menu's status", () => {
   });
 
   it("cancels a day that is still open, and the badge says Cancelled", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serveChange(menu({ status: "published" }), menu({ status: "cancelled" }));
     renderMenu();
     await ready();
@@ -1157,7 +1158,7 @@ describe("Changing the menu's status", () => {
   });
 
   it("forgets a half-typed day when the dialog is dismissed", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu({ status: "published" }) });
     renderMenu();
     await ready();
@@ -1238,7 +1239,7 @@ describe("Changing the menu's status", () => {
 
 describe("Read with AI", () => {
   it("lands in the same editable table, still writing nothing", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     assistParse.mockResolvedValue({
       serviceDate: null,
@@ -1263,7 +1264,7 @@ describe("Read with AI", () => {
   });
 
   it("surfaces the function's own message when it fails", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve();
     assistParse.mockRejectedValue(new Error("DEEPSEEK_API_KEY is not set"));
     renderMenu();
@@ -1281,7 +1282,7 @@ describe("Read with AI", () => {
 
 describe("Leaving a price to the caterer", () => {
   /** Publish and confirm, returning the dialog so the sentence can be read. */
-  async function openConfirm(user: ReturnType<typeof userEvent.setup>) {
+  async function openConfirm(user: ReturnType<typeof fakeClockUser>) {
     await user.click(publishButton());
     return await screen.findByRole("dialog");
   }
@@ -1297,7 +1298,7 @@ describe("Leaving a price to the caterer", () => {
   });
 
   it("does not call an empty box a mistake", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -1310,7 +1311,7 @@ describe("Leaving a price to the caterer", () => {
   });
 
   it("publishes a whole menu nobody has priced yet, and says what that costs", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -1334,7 +1335,7 @@ describe("Leaving a price to the caterer", () => {
   });
 
   it("publishes a half-priced menu and counts only what is unpriced", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -1353,7 +1354,7 @@ describe("Leaving a price to the caterer", () => {
   });
 
   it("says nothing about prices when the caterer has priced everything", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     renderMenu();
     await ready();
@@ -1403,7 +1404,7 @@ describe("Leaving a price to the caterer", () => {
 
 describe("Menu, keeping what is on screen", () => {
   it("keeps an edited dish when the office is refetched with the same currency", async () => {
-    const user = userEvent.setup();
+    const user = fakeClockUser();
     serve({ menu: menu() });
     const view = renderMenu();
     await ready();
