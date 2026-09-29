@@ -472,6 +472,19 @@ reference from this screen into their bank. The amount copies as plain digits:
 `45.000 ₫` in a banking app's amount field fails, and on VND a grouping dot
 read as a decimal point turns 45.000 into forty-five dong.
 
+**On a phone the bill opens the bank app, and says it will not fill it in.**
+VietQR's redirector (`dl.vietqr.io/pay`) documents `ba`, `am` and `tn` and its
+app lists mark five apps `autofill: 1`, but on 2026-09-28 every app it was asked
+for, on both platforms, resolved to the bare scheme (`acbone://`,
+`intent://#Intent;scheme=acbone;...`) with all three dropped. So the button is
+"Open ACB One", not "Pay in ACB One", it copies the reference on the way out
+because that is the field whose loss cannot be put right, and the saved QR image
+is the real shortcut: every one of those apps scans from the photo library. The
+link still carries the three parameters, so an app that starts honouring them
+needs no change here. The app list is a vendored snapshot, text only: the logos
+are Play Store and App Store URLs, and loading them would tell Google and Apple
+who opened a bill.
+
 **Dish names are sentence-cased where a parse produces them.** Caterers write
 in chat and chat is lower case. Not title case: `Cơm Gà` is not how Vietnamese
 is written. Names are NFC-normalised wherever they are typed, too, which is not

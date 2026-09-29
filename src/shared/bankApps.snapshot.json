@@ -1,0 +1,455 @@
+{
+  "fetchedOn": "2026-09-29",
+  "sources": {
+    "android": "https://api.vietqr.io/v2/android-app-deeplinks",
+    "ios": "https://api.vietqr.io/v2/ios-app-deeplinks"
+  },
+  "android": [
+    {
+      "appId": "icb",
+      "appName": "VietinBank iPay",
+      "bankName": "Ngân hàng TMCP Công thương Việt Nam",
+      "autofill": true
+    },
+    {
+      "appId": "bidv",
+      "appName": "BIDV SmartBanking",
+      "bankName": "Ngân hàng TMCP Đầu tư và Phát triển Việt Nam",
+      "autofill": true
+    },
+    {
+      "appId": "ocb",
+      "appName": "OCB OMNI - Digital Bank",
+      "bankName": "Ngân hàng TMCP Phương Đông",
+      "autofill": true
+    },
+    {
+      "appId": "acb",
+      "appName": "ACB One",
+      "bankName": "Ngân hàng TMCP Á Châu",
+      "autofill": true
+    },
+    {
+      "appId": "mb",
+      "appName": "MB Bank",
+      "bankName": "Ngân hàng TMCP Quân đội",
+      "autofill": true
+    },
+    {
+      "appId": "vcb",
+      "appName": "Vietcombank",
+      "bankName": "Ngân hàng TMCP Ngoại Thương Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "tcb",
+      "appName": "Techcombank Mobile",
+      "bankName": "Ngân hàng TMCP Kỹ thương Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "vpb",
+      "appName": "VPBank NEO",
+      "bankName": "Ngân hàng TMCP Việt Nam Thịnh Vượng",
+      "autofill": false
+    },
+    {
+      "appId": "vib-2",
+      "appName": "MyVIB 2.0",
+      "bankName": "Ngân hàng TMCP Quốc tế Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "shb",
+      "appName": "SHB SAHA",
+      "bankName": "Ngân hàng TMCP Sài Gòn - Hà Nội",
+      "autofill": false
+    },
+    {
+      "appId": "lpb",
+      "appName": "Liên Việt 24h",
+      "bankName": "Ngân hàng TMCP Bưu Điện Liên Việt",
+      "autofill": false
+    },
+    {
+      "appId": "seab",
+      "appName": "SeAMobile",
+      "bankName": "Ngân hàng TMCP Đông Nam Á",
+      "autofill": false
+    },
+    {
+      "appId": "scb",
+      "appName": "SCB Mobile Banking",
+      "bankName": "Ngân hàng TMCP Sài Gòn",
+      "autofill": false
+    },
+    {
+      "appId": "vietbank",
+      "appName": "Vietbank Digital",
+      "bankName": "Ngân hàng TMCP Việt Nam Thương Tín",
+      "autofill": false
+    },
+    {
+      "appId": "cake",
+      "appName": "CAKE - Digital Banking",
+      "bankName": "TMCP Việt Nam Thịnh Vượng - Ngân hàng số CAKE by VPBank",
+      "autofill": false
+    },
+    {
+      "appId": "hdb",
+      "appName": "HDBank",
+      "bankName": "Ngân hàng TMCP Phát triển Thành phố Hồ Chí Minh",
+      "autofill": false
+    },
+    {
+      "appId": "vba",
+      "appName": "Agribank E-Mobile Banking",
+      "bankName": "Ngân hàng Nông nghiệp và Phát triển Nông thôn Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "tpb",
+      "appName": "TPBank Mobile",
+      "bankName": "Ngân hàng TMCP Tiên Phong",
+      "autofill": false
+    },
+    {
+      "appId": "timo",
+      "appName": "Timo Digital Bank",
+      "bankName": "Ngân hàng TMCP Bản Việt",
+      "autofill": false
+    },
+    {
+      "appId": "vib",
+      "appName": "MyVIB",
+      "bankName": "Ngân hàng TMCP Quốc tế Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "shbvn",
+      "appName": "Shinhan Bank Vietnam SOL",
+      "bankName": "Ngân hàng TNHH MTV Shinhan Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "nab",
+      "appName": "Nam A Bank - Open Banking",
+      "bankName": "Ngân hàng TMCP Nam Á",
+      "autofill": false
+    },
+    {
+      "appId": "abb",
+      "appName": "ABBank",
+      "bankName": "Ngân hàng TMCP An Bình",
+      "autofill": false
+    },
+    {
+      "appId": "eib",
+      "appName": "Eximbank EDigi",
+      "bankName": "Ngân hàng TMCP Xuất Nhập khẩu Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "coopbank",
+      "appName": "Co-opBank Mobile Banking",
+      "bankName": "Ngân hàng Hợp tác xã Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "pvcb",
+      "appName": "PVConnect",
+      "bankName": "Ngân hàng TMCP Đại Chúng Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "wvn",
+      "appName": "Woori WON Vietnam",
+      "bankName": "Ngân hàng TNHH MTV Woori Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "klb",
+      "appName": "KienlongBank Plus",
+      "bankName": "Ngân hàng TMCP Kiên Long",
+      "autofill": false
+    },
+    {
+      "appId": "bvb",
+      "appName": "BAOVIET Smart",
+      "bankName": "Ngân hàng TMCP Bảo Việt",
+      "autofill": false
+    },
+    {
+      "appId": "vab",
+      "appName": "Vietbank Digital Plus",
+      "bankName": "Ngân hàng TMCP Việt Á",
+      "autofill": false
+    },
+    {
+      "appId": "tpb-pay",
+      "appName": "TPBank QuickPay",
+      "bankName": "Ngân hàng TMCP Tiên Phong",
+      "autofill": false
+    },
+    {
+      "appId": "ncb",
+      "appName": "NCB iziMobile",
+      "bankName": "Ngân hàng TMCP Quốc Dân",
+      "autofill": false
+    },
+    {
+      "appId": "acb-biz",
+      "appName": "ACB One Biz",
+      "bankName": "Ngân hàng TMCP Á Châu",
+      "autofill": false
+    },
+    {
+      "appId": "oceanbank",
+      "appName": "OceanBank",
+      "bankName": "Ngân hàng Thương mại TNHH MTV Đại Dương",
+      "autofill": false
+    },
+    {
+      "appId": "pbvn",
+      "appName": "PB engage VN",
+      "bankName": "Ngân hàng TNHH MTV Public Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "sgicb",
+      "appName": "SAIGONBANK Smart Banking",
+      "bankName": "Ngân hàng TMCP Sài Gòn Công Thương",
+      "autofill": false
+    },
+    {
+      "appId": "cimb",
+      "appName": "OCTO by CIMB",
+      "bankName": "Ngân hàng TNHH MTV CIMB Việt Nam",
+      "autofill": false
+    }
+  ],
+  "ios": [
+    {
+      "appId": "icb",
+      "appName": "VietinBank iPay",
+      "bankName": "Ngân hàng TMCP Công thương Việt Nam",
+      "autofill": true
+    },
+    {
+      "appId": "bidv",
+      "appName": "SmartBanking",
+      "bankName": "Ngân hàng TMCP Đầu tư và Phát triển Việt Nam",
+      "autofill": true
+    },
+    {
+      "appId": "ocb",
+      "appName": "OCB OMNI",
+      "bankName": "Ngân hàng TMCP Phương Đông",
+      "autofill": true
+    },
+    {
+      "appId": "acb",
+      "appName": "ACB One",
+      "bankName": "Ngân hàng TMCP Á Châu",
+      "autofill": true
+    },
+    {
+      "appId": "mb",
+      "appName": "MB Bank",
+      "bankName": "Ngân hàng TMCP Quân đội",
+      "autofill": true
+    },
+    {
+      "appId": "vcb",
+      "appName": "Vietcombank",
+      "bankName": "Ngân hàng TMCP Ngoại Thương Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "tcb",
+      "appName": "Techcombank Mobile",
+      "bankName": "Ngân hàng TMCP Kỹ thương Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "vpb",
+      "appName": "VPBank NEO",
+      "bankName": "Ngân hàng TMCP Việt Nam Thịnh Vượng",
+      "autofill": false
+    },
+    {
+      "appId": "vib-2",
+      "appName": "MyVIB 2.0",
+      "bankName": "Ngân hàng TMCP Quốc tế Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "shb",
+      "appName": "SHB SAHA",
+      "bankName": "Ngân hàng TMCP Sài Gòn - Hà Nội",
+      "autofill": false
+    },
+    {
+      "appId": "lpb",
+      "appName": "Liên Việt 24h",
+      "bankName": "Ngân hàng TMCP Bưu Điện Liên Việt",
+      "autofill": false
+    },
+    {
+      "appId": "seab",
+      "appName": "SeAMobile",
+      "bankName": "Ngân hàng TMCP Đông Nam Á",
+      "autofill": false
+    },
+    {
+      "appId": "scb",
+      "appName": "SCB Mobile Banking",
+      "bankName": "Ngân hàng TMCP Sài Gòn",
+      "autofill": false
+    },
+    {
+      "appId": "vietbank",
+      "appName": "Vietbank Digital",
+      "bankName": "Ngân hàng TMCP Việt Nam Thương Tín",
+      "autofill": false
+    },
+    {
+      "appId": "cake",
+      "appName": "CAKE - Digital Banking",
+      "bankName": "TMCP Việt Nam Thịnh Vượng - Ngân hàng số CAKE by VPBank",
+      "autofill": false
+    },
+    {
+      "appId": "hdb",
+      "appName": "HDBank",
+      "bankName": "Ngân hàng TMCP Phát triển Thành phố Hồ Chí Minh",
+      "autofill": false
+    },
+    {
+      "appId": "vba",
+      "appName": "Agribank E-Mobile Banking",
+      "bankName": "Ngân hàng Nông nghiệp và Phát triển Nông thôn Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "tpb",
+      "appName": "TPBank Mobile",
+      "bankName": "Ngân hàng TMCP Tiên Phong",
+      "autofill": false
+    },
+    {
+      "appId": "timo",
+      "appName": "Timo Digital Bank",
+      "bankName": "Ngân hàng TMCP Bản Việt",
+      "autofill": false
+    },
+    {
+      "appId": "vib",
+      "appName": "MyVIB",
+      "bankName": "Ngân hàng TMCP Quốc tế Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "shbvn",
+      "appName": "Shinhan Bank Vietnam SOL",
+      "bankName": "Ngân hàng TNHH MTV Shinhan Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "abb",
+      "appName": "ABBank",
+      "bankName": "Ngân hàng TMCP An Bình",
+      "autofill": false
+    },
+    {
+      "appId": "eib",
+      "appName": "Eximbank EDigi",
+      "bankName": "Ngân hàng TMCP Xuất Nhập khẩu Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "pvcb",
+      "appName": "PVConnect",
+      "bankName": "Ngân hàng TMCP Đại Chúng Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "vab",
+      "appName": "Vietbank Digital Plus",
+      "bankName": "Ngân hàng TMCP Việt Á",
+      "autofill": false
+    },
+    {
+      "appId": "coopbank",
+      "appName": "Co-opBank Mobile Banking",
+      "bankName": "Ngân hàng Hợp tác xã Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "pbvn",
+      "appName": "PB engage VN",
+      "bankName": "Ngân hàng TNHH MTV Public Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "klb",
+      "appName": "KienlongBank Plus",
+      "bankName": "Ngân hàng TMCP Kiên Long",
+      "autofill": false
+    },
+    {
+      "appId": "acb-biz",
+      "appName": "ACB One Biz",
+      "bankName": "Ngân hàng TMCP Á Châu",
+      "autofill": false
+    },
+    {
+      "appId": "bvb",
+      "appName": "BAOVIET Smart",
+      "bankName": "Ngân hàng TMCP Bảo Việt",
+      "autofill": false
+    },
+    {
+      "appId": "sgicb",
+      "appName": "SAIGONBANK Smart Banking",
+      "bankName": "Ngân hàng TMCP Sài Gòn Công Thương",
+      "autofill": false
+    },
+    {
+      "appId": "oceanbank",
+      "appName": "OceanBank",
+      "bankName": "Ngân hàng Thương mại TNHH MTV Đại Dương",
+      "autofill": false
+    },
+    {
+      "appId": "ncb",
+      "appName": "NCB iziMobile",
+      "bankName": "Ngân hàng TMCP Quốc Dân",
+      "autofill": false
+    },
+    {
+      "appId": "cimb",
+      "appName": "OCTO by CIMB Vietnam",
+      "bankName": "Ngân hàng TNHH MTV CIMB Việt Nam",
+      "autofill": false
+    },
+    {
+      "appId": "tpb-pay",
+      "appName": "TPBank QuickPay",
+      "bankName": "Ngân hàng TMCP Tiên Phong",
+      "autofill": false
+    },
+    {
+      "appId": "nab",
+      "appName": "NAM A MOBILE BANKING",
+      "bankName": "Ngân hàng TMCP Nam Á",
+      "autofill": false
+    },
+    {
+      "appId": "wvn",
+      "appName": "Woori WON Vietnam",
+      "bankName": "Ngân hàng TNHH MTV Woori Việt Nam",
+      "autofill": false
+    }
+  ]
+}

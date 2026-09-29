@@ -7,10 +7,12 @@
 import { QRCodeSVG } from "qrcode.react";
 import { CopyIcon } from "lucide-react";
 import { Action, useAction } from "@/ui";
-import { vietQrPayload } from "../../../shared/vietqr.js";
+import { vietQrAccepts, vietQrPayload } from "../../../shared/vietqr.js";
 import { bankByBin } from "../../../shared/banks.js";
 import { formatMoney, plainAmount, type Currency } from "../../../shared/money.js";
 import type { PaymentConfig } from "../../../shared/payment.js";
+import { phonePlatform } from "../../phone.js";
+import { OpenBankApp, SaveQr } from "./PayFromPhone.js";
 
 /**
  * One transfer, in one block, in every state.
@@ -46,7 +48,8 @@ export function Transfer({
   payment: PaymentConfig;
 }) {
   const account = payment.vietqr;
-  const payload = account
+  const inDong = vietQrAccepts(currency);
+  const payload = account && inDong
     ? vietQrPayload({
         bankBin: account.bankBin,
         accountNumber: account.accountNumber,
@@ -58,6 +61,17 @@ export function Transfer({
     : null;
 
   const owing = owedMinor > 0;
+  const platform = phonePlatform();
+  const payee = account ? account.accountName || account.accountNumber : "";
+  const bank = account ? bankName(account.bankBin) : "";
+  const caption = owing
+    ? [formatMoney(owedMinor, currency), paymentRef, `${payee}, ${bank}`]
+    : [paymentRef, `${payee}, ${bank}`];
+  const summary = account
+    ? `${owing ? `Pay ${formatMoney(owedMinor, currency)}` : "Transfer"} to ${payee}, ${bank} ${
+        account.accountNumber
+      }. Reference: ${paymentRef}`
+    : "";
 
   return (
     <div className="flex flex-col gap-4">
@@ -70,8 +84,23 @@ export function Transfer({
         )}
       </div>
 
+      {platform !== null && account !== null && payload !== null && (
+        <OpenBankApp
+          platform={platform}
+          bankBin={account.bankBin}
+          accountNumber={account.accountNumber}
+          owedMinor={owedMinor}
+          currency={currency}
+          paymentRef={paymentRef}
+        />
+      )}
+
       <div className="flex flex-col gap-6 sm:flex-row sm:items-start sm:gap-8">
-        {account === null ? null : payload === null ? (
+        {account === null ? null : !inDong ? (
+          <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
+            {`A VietQR code can only ask for dong, and this office bills in ${currency.code}, so there is no code. Use the details here.`}
+          </p>
+        ) : payload === null ? (
           <p className="max-w-prose text-sm text-muted sm:w-52 sm:shrink-0">
             The bank details saved for this office are not a valid account, so the code
             cannot be built. Ask an admin to check them.
@@ -81,32 +110,35 @@ export function Transfer({
              is the polarity every scanner assumes. Inheriting `surface` would
              invert the code after dark, and an inverted QR is one a banking app
              may simply refuse to read. */
-          <div className="w-fit shrink-0 rounded-lg bg-accent-subtle p-3 text-accent-subtle-fg dark:bg-accent dark:text-accent-fg">
-            <QRCodeSVG
-              value={payload}
-              // The specification's four-module quiet zone. The library defaults
-              // to none, which produces a code that reads on a phone held still
-              // and fails on one held at an angle.
-              marginSize={4}
-              // M survives a fingerprint on the screen; H would push the code to
-              // a denser version for no benefit at this size.
-              level="M"
-              size={168}
-              bgColor="transparent"
-              fgColor="currentColor"
-              title={
-                owedMinor > 0
-                  ? `VietQR code for ${formatMoney(owedMinor, currency)} to ${
-                      account.accountName || account.accountNumber
-                    }, reference ${paymentRef}`
-                  : `VietQR code to ${
-                      account.accountName || account.accountNumber
-                    }, reference ${paymentRef}, amount up to you`
-              }
-              // `size` is the intrinsic geometry of the drawing, not a layout
-              // choice; the class is what keeps it inside a 390px screen.
-              className="h-auto max-w-full"
-            />
+          <div className="flex w-fit shrink-0 flex-col items-start gap-3">
+            <div className="w-fit shrink-0 rounded-lg bg-accent-subtle p-3 text-accent-subtle-fg dark:bg-accent dark:text-accent-fg">
+              <QRCodeSVG
+                value={payload}
+                // The specification's four-module quiet zone. The library defaults
+                // to none, which produces a code that reads on a phone held still
+                // and fails on one held at an angle.
+                marginSize={4}
+                // M survives a fingerprint on the screen; H would push the code to
+                // a denser version for no benefit at this size.
+                level="M"
+                size={168}
+                bgColor="transparent"
+                fgColor="currentColor"
+                title={
+                  owedMinor > 0
+                    ? `VietQR code for ${formatMoney(owedMinor, currency)} to ${
+                        account.accountName || account.accountNumber
+                      }, reference ${paymentRef}`
+                    : `VietQR code to ${
+                        account.accountName || account.accountNumber
+                      }, reference ${paymentRef}, amount up to you`
+                }
+                // `size` is the intrinsic geometry of the drawing, not a layout
+                // choice; the class is what keeps it inside a 390px screen.
+                className="h-auto max-w-full"
+              />
+            </div>
+            <SaveQr payload={payload} paymentRef={paymentRef} caption={caption} summary={summary} />
           </div>
         )}
 

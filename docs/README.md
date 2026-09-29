@@ -17,6 +17,7 @@ mixing them is what makes documentation that nobody finds anything in.
 - [Rotate the Telegram join code](how-to/rotate-the-join-code.md)
 - [Set up where the money goes](how-to/set-up-payment.md)
 - [Connect SePay so bank transfers record themselves](how-to/connect-sepay.md)
+- [Refresh the bank app list](how-to/refresh-bank-app-list.md): the phone's "Open your bank app" list, and what depends on dl.vietqr.io
 - [Lọc giao dịch SePay theo từ khóa](how-to/loc-giao-dich-sepay.md): in Vietnamese, because its reader does this in SePay's Vietnamese interface
 
 ## Reference

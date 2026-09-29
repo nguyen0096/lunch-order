@@ -17,6 +17,11 @@ if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = function scrollIntoView() {};
 }
 
+// jsdom has no canvas and says so on the console every time one is asked for
+// a context. Null is what a browser without canvas answers, which the bill
+// already handles.
+HTMLCanvasElement.prototype.getContext = (() => null) as typeof HTMLCanvasElement.prototype.getContext;
+
 if (!("DOMRect" in globalThis)) {
   globalThis.DOMRect = class {
     constructor(
