@@ -26,6 +26,7 @@ mixing them is what makes documentation that nobody finds anything in.
 - [Database](reference/database.md): migrations, tests, and the invariants no change may break
 - [Design system](reference/design-system.md): tokens, type, the six non-negotiables
 - [Screens](reference/screens.md): what each screen is for, contains, and does in every state
+- [Ordering rules](reference/ordering-rules.md): what happens to a day, a menu and an order, when, and who may do it
 
 ## Explanation
 

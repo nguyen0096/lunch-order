@@ -296,19 +296,8 @@ an admin to the same end of day.
 Every screen that shows a day shows its stage, and they all derive it the same
 way, from `dayStage` in `shared/gating.ts` mirroring `private.day_stage`.
 
-| Stage | When | A member can | An admin can |
-| --- | --- | --- | --- |
-| `No menu` | nothing published | nothing | publish one, for a past day too |
-| `Open` | published, cutoff ahead | order, change, cancel, pass a meal | the same |
-| `Closed` | the cutoff passed | pass a meal | correct the record, never on the Board |
-| `Cooking` | the office's start of day | pass a meal | correct the record |
-| `Served` | the office's end of day | nothing | correct the record, record a pass |
-| `Cancelled` | lunch is off | nothing | nothing; no status leaves cancelled |
-
-`Cooking` and `Served` come from `business_day_starts_at` and
-`business_day_ends_at` on the office, 08:30 and 17:30 by default. They are
-computed on every read rather than stored: a stored stage would need the hourly
-tick to advance it, and an hour is long enough to pass on a meal already eaten.
+What each stage allows, and who, is in
+[Ordering rules](ordering-rules.md#day-stages).
 
 ## Bill
 
@@ -544,6 +533,8 @@ confirmation says how many of those there are.
 
 The affected member is told by the database. The screen says so once, above the
 day, rather than on every control.
+What a correction may change is in
+[Ordering rules](ordering-rules.md#orders).
 
 | State | |
 | --- | --- |
@@ -586,6 +577,8 @@ it silently. The default itself is set once in Settings.
 
 Publishing is the highest-consequence action in the app, so it confirms, naming
 the date and how many people it will notify.
+What publishing, editing and cancelling do is in
+[Ordering rules](ordering-rules.md#menu-lifecycle).
 
 | State | |
 | --- | --- |
