@@ -50,7 +50,10 @@ insert into expected (name, anon_may) values
   ('my_telegram_link',        false),
   ('create_my_telegram_link', false),
   ('invitation_preview',      false),
-  ('my_former_offices',       false);
+  ('my_former_offices',       false),
+  -- The Board's skip and plan on a day with no menu yet. Always the caller's
+  -- own row: there is no profile parameter to name anybody else.
+  ('set_standing_exception',  false);
 
 create temp table found as
 select p.proname::text as name,

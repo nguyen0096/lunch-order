@@ -88,6 +88,12 @@ recipient's name, and *nothing* is an empty cell inside a hairline. Size is the
 weakest channel there is, and the five sizes of dot this replaces could not be
 told apart while scanning a week.
 
+A day of mine ahead of its menu is a prediction, so it never takes a fill.
+`Standing` and `Planned` sit under a dashed `border-strong` edge, `Skipped` under
+a dashed hairline in `text-subtle` and struck through, and an unplanned day is the
+plain hairline with a `+`. The dash says "not an order yet"; the strike says
+"not this one".
+
 **The theme is a choice, not only a preference.** The tokens follow
 `prefers-color-scheme` by default, and `System / Light / Dark` in the account menu
 overrides it by putting `.light` or `.dark` on the document element. System means

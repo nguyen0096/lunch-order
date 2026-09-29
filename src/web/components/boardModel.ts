@@ -7,7 +7,7 @@
  * What lives here is only the part the UI needs in order to say *why* a cell
  * is inert before anybody taps it.
  */
-import type { BoardCell, BoardDay } from "../api.js";
+import type { BoardCell, BoardDay, StandingException } from "../api.js";
 import { formatDay, isoWeekday } from "../../shared/dates.js";
 import { dayStage, stageWord } from "../../shared/gating.js";
 import type { Org } from "../../shared/types.js";
@@ -227,6 +227,65 @@ export function lunchIsOver(args: {
 /** The trigger's refusal, said before anybody taps. */
 export function lunchOverReason(serviceDate: string): string {
   return `Lunch on ${formatDay(serviceDate)} is over, so it can no longer be passed on`;
+}
+
+/**
+ * What my own cell says about a day whose menu is not out yet, or null when
+ * the day is not one to plan ahead: today or earlier, a menu already
+ * published, locked or cancelled, or an order row of mine on it in any
+ * status. The same three conditions `set_standing_exception` checks.
+ *
+ * A draft counts as not out. Publishing is when standing orders are made, so
+ * until then an exception still decides what publishing does.
+ */
+export type PlanState = "standing" | "skipped" | "planned" | "empty";
+
+export function planState(args: {
+  day: BoardDay;
+  today: string;
+  /** Any order row of mine on this day, cancelled included. */
+  hasOrderRow: boolean;
+  weekdays: Set<number>;
+  exception: StandingException | null;
+}): PlanState | null {
+  const { day, today, hasOrderRow, weekdays, exception } = args;
+  if (day.serviceDate <= today || hasOrderRow) return null;
+  if (day.menuId !== null && day.status !== "draft") return null;
+  const byRule = weekdays.has(isoWeekday(day.serviceDate));
+  if (byRule) return exception === "skip" ? "skipped" : "standing";
+  return exception === "force" ? "planned" : "empty";
+}
+
+/**
+ * The exception a tap writes. It takes the day to the other side of the rule:
+ * a standing day is skipped, a skip is taken back, an empty day is planned
+ * and a plan is taken back.
+ */
+export function planToggle(state: PlanState): StandingException | null {
+  switch (state) {
+    case "standing":
+      return "skip";
+    case "empty":
+      return "force";
+    case "skipped":
+    case "planned":
+      return null;
+  }
+}
+
+/** The toast for a day that has just become `state`. */
+export function planMessage(state: PlanState, serviceDate: string): string {
+  const day = formatDay(serviceDate);
+  switch (state) {
+    case "skipped":
+      return `Skipped ${day}`;
+    case "planned":
+      return `Planned ${day}`;
+    case "standing":
+      return `Standing again ${day}`;
+    case "empty":
+      return `Nothing planned ${day}`;
+  }
 }
 
 export type Mark = "ordered" | "eating" | "passed" | "projected" | "none";

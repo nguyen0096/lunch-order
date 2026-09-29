@@ -12,6 +12,7 @@ import {
   fetchOrgSettings,
   fetchStandingOrders,
   fetchTelegramLink,
+  fetchUpcomingSkips,
   humanError,
   setDisplayName,
   setShortCode,
@@ -24,6 +25,8 @@ import {
 } from "../api.js";
 import { botDeepLink } from "../../shared/telegram.js";
 import { isAdmin } from "../../shared/types.js";
+import { formatDay, isoWeekday, todayIn, weekStart } from "../../shared/dates.js";
+import { now as appNow } from "../../shared/clock.js";
 
 /** ISO weekday, as standing_orders stores it: 1 = Monday .. 7 = Sunday. */
 const WEEKDAYS: ReadonlyArray<{ iso: number; short: string; long: string }> = [
@@ -38,6 +41,8 @@ const WEEKDAYS: ReadonlyArray<{ iso: number; short: string; long: string }> = [
 
 type Loaded = {
   standing: Set<number>;
+  /** My skips after today, soonest first. */
+  skips: string[];
   link: TelegramLink | null;
   /** Null for a member: there is nothing on the office half for them to see. */
   office: OrgSettings | null;
@@ -95,19 +100,24 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
 
   const load = useCallback(async () => {
     try {
-      const [standing, link, office] = await Promise.all([
+      const [standing, skips, link, office] = await Promise.all([
         fetchStandingOrders(org.id, me.profileId),
+        fetchUpcomingSkips({
+          orgId: org.id,
+          profileId: me.profileId,
+          after: todayIn(org.timezone, appNow()),
+        }),
         fetchTelegramLink(org.id),
         admin ? fetchOrgSettings(org.id) : Promise.resolve(null),
       ]);
-      setData({ standing, link, office });
+      setData({ standing, skips, link, office });
       setLoadError(null);
     } catch (e) {
       // useAction covers every write. A read has no toast to fire and nothing
       // to revert, so its failure is a state this screen renders instead.
       setLoadError(humanError(e));
     }
-  }, [admin, org.id, me.profileId]);
+  }, [admin, org.id, org.timezone, me.profileId]);
 
   useEffect(() => {
     void load();
@@ -159,8 +169,11 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
         </h2>
         <StandingDays
           orgId={org.id}
+          orgSlug={org.slug}
+          weekStartsOn={org.billingWeekStartsOn}
           profileId={me.profileId}
           enabled={data.standing}
+          skips={data.skips}
           onChange={(next) => setData((d) => (d ? { ...d, standing: next } : d))}
         />
         <Telegram
@@ -220,15 +233,25 @@ export function SettingsScreen({ me, org, role, onGone = startOver }: SettingsSc
 
 function StandingDays({
   orgId,
+  orgSlug,
+  weekStartsOn,
   profileId,
   enabled,
+  skips,
   onChange,
 }: {
   orgId: number;
+  orgSlug: string;
+  weekStartsOn: number;
   profileId: string;
   enabled: Set<number>;
+  skips: string[];
   onChange: (next: Set<number>) => void;
 }) {
+  // A skip on a weekday no longer in the rule skips nothing, so it is not
+  // counted, though it is kept in case the weekday comes back.
+  const skipped = skips.filter((d) => enabled.has(isoWeekday(d)));
+  const first = skipped[0] ?? null;
   const toggle = useAction(
     async (a: { weekday: number; enabled: boolean; long: string }) => {
       await setStandingOrder({ orgId, profileId, weekday: a.weekday, enabled: a.enabled });
@@ -277,6 +300,21 @@ function StandingDays({
         {enabled.size === 0
           ? "No standing days. Tap a day above, or keep ordering day by day on the board."
           : "A published menu is what puts you on the board, and the cutoff still applies."}
+      </p>
+      <p className="max-w-prose text-sm text-muted">
+        Skip single days by tapping them on the Board.
+        {first !== null && (
+          <>
+            {" "}
+            <a
+              className="font-medium text-text underline underline-offset-4"
+              href={`#/o/${orgSlug}/board?week=${weekStart(first, weekStartsOn)}`}
+              title={`The week of ${formatDay(first)}`}
+            >
+              {skipped.length === 1 ? "1 upcoming day skipped" : `${skipped.length} upcoming days skipped`}
+            </a>
+          </>
+        )}
       </p>
     </Section>
   );

@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { BoardScreen } from "../src/web/components/BoardScreen.js";
@@ -32,6 +32,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     cancelOrder: vi.fn(),
     createTransfer: vi.fn(),
     decideTransfer: vi.fn(),
+    setStandingException: vi.fn(),
   };
 });
 
@@ -41,6 +42,7 @@ const setOrder = vi.mocked(api.setOrder);
 const cancelOrder = vi.mocked(api.cancelOrder);
 const createTransfer = vi.mocked(api.createTransfer);
 const decideTransfer = vi.mocked(api.decideTransfer);
+const setStandingException = vi.mocked(api.setStandingException);
 const success = vi.mocked(toast.success);
 const failure = vi.mocked(toast.error);
 
@@ -122,6 +124,8 @@ function makeBoard(over: { wed?: BoardDay | null; members?: Board["members"]; ce
     members: over.members ?? MEMBERS,
     cells: over.cells ?? new Map(),
     projected: new Set<string>(),
+    weekdays: new Set<number>(),
+    exceptions: new Map(),
   };
 }
 
@@ -405,12 +409,13 @@ describe("Board, unavailable cells", () => {
     expect(cell).toHaveAccessibleDescription(/^Ordering closed at \d{2}:\d{2} \d{2}\/\d{2}$/);
   });
 
-  it("says a day has no menu instead of leaving the cell mute", async () => {
+  it("says today has no menu instead of leaving the cell mute", async () => {
     serve(makeBoard({ wed: null }));
     renderBoard();
 
-    const cell = await screen.findByRole("button", { name: EMPTY_LABEL });
-    expect(cell).toHaveAccessibleDescription(`No menu for ${formatDay(WED)} yet`);
+    // Today, because a later day with no menu is one to plan ahead instead.
+    const cell = await screen.findByRole("button", { name: `${formatDay(TODAY)}: not eating` });
+    expect(cell).toHaveAccessibleDescription(`No menu for ${formatDay(TODAY)} yet`);
   });
 
   it("holds an admin to the cutoff too, because this board is theirs to eat from", async () => {
@@ -1234,6 +1239,242 @@ describe("Board, week navigation", () => {
       expect(fetchBoard).toHaveBeenLastCalledWith(
         expect.objectContaining({ from: addDays(MONDAY, -7), to: addDays(MONDAY, -1) }),
       ),
+    );
+  });
+});
+
+describe("Board, a day ahead of its menu", () => {
+  // Tuesday is today, so Thursday is ahead and has no menu in `makeBoard`.
+  const ISO_THU = 4;
+  const STANDING = `${formatDay(THU)}: from your standing order. Skip this day`;
+  const SKIPPED = `${formatDay(THU)}: skipped. Take the skip back`;
+  const PLAN = `${formatDay(THU)}: not eating. Plan to eat`;
+  const PLANNED = `${formatDay(THU)}: planned. Take the plan back`;
+
+  /** The fake database, now holding exceptions too, so a reload tells the truth. */
+  function serveRule(weekdays: number[], exceptions: Array<[string, "skip" | "force"]> = []) {
+    const base = makeBoard({ wed: null });
+    const db = serve({ ...base, weekdays: new Set(weekdays), exceptions: new Map(exceptions) });
+    let current = db.board;
+    const reproject = (b: Board): Board => ({
+      ...b,
+      projected: api.projectBoard(b, { meProfileId: "me", today: TODAY }),
+    });
+    current = reproject(current);
+    fetchBoard.mockImplementation(async (args) => {
+      if (args.from === MONDAY) return current;
+      // Any other week is a week of nothing yet, however far ahead.
+      const days = Array.from({ length: 7 }, (_, i): BoardDay => ({
+        serviceDate: addDays(args.from, i),
+        menuId: null, status: null, orderCutoffAt: null, dishes: [],
+      }));
+      return reproject({ ...current, days, cells: new Map(), exceptions: new Map(
+        [...current.exceptions].filter(([d]) => d >= args.from && d <= args.to),
+      ) });
+    });
+    setStandingException.mockImplementation(async (args) => {
+      const exceptions = new Map(current.exceptions);
+      if (args.action === null) exceptions.delete(args.serviceDate);
+      else exceptions.set(args.serviceDate, args.action);
+      current = reproject({ ...current, exceptions });
+    });
+    return {
+      get board() {
+        return current;
+      },
+    };
+  }
+
+  /** The Undo on the last success toast. */
+  function undoOnLastToast(): () => void {
+    const opts = success.mock.calls.at(-1)?.[1] as
+      | { action?: { label: string; onClick: () => void } }
+      | undefined;
+    expect(opts?.action?.label).toBe("Undo");
+    return opts!.action!.onClick;
+  }
+
+  it("skips a standing day in one tap, and takes the skip back in another", async () => {
+    serveRule([ISO_THU]);
+    renderBoard();
+
+    await userEvent.click(await screen.findByRole("button", { name: STANDING }));
+
+    // Drawn before the database answers.
+    const skipped = await screen.findByRole("button", { name: SKIPPED });
+    expect(within(skipped).getByText("Skipped")).toHaveClass("line-through");
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenCalledWith({ orgId: 7, serviceDate: THU, action: "skip" }),
+    );
+    expect(success).toHaveBeenLastCalledWith(`Skipped ${formatDay(THU)}`, expect.anything());
+
+    await userEvent.click(skipped);
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenLastCalledWith({
+        orgId: 7, serviceDate: THU, action: null,
+      }),
+    );
+    expect(await screen.findByRole("button", { name: STANDING })).toBeInTheDocument();
+    expect(success).toHaveBeenLastCalledWith(`Standing again ${formatDay(THU)}`, expect.anything());
+  });
+
+  it("plans an empty day, and takes the plan back", async () => {
+    serveRule([]);
+    renderBoard();
+
+    await userEvent.click(await screen.findByRole("button", { name: PLAN }));
+    expect(await screen.findByRole("button", { name: PLANNED })).toHaveTextContent("Planned");
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenCalledWith({ orgId: 7, serviceDate: THU, action: "force" }),
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: PLANNED }));
+    expect(await screen.findByRole("button", { name: PLAN })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenLastCalledWith({
+        orgId: 7, serviceDate: THU, action: null,
+      }),
+    );
+  });
+
+  it("undoes from the toast, back to what was there before, and offers no second undo", async () => {
+    // A plan on a day the rule now covers reads as Standing, and undoing its
+    // skip has to put the plan back rather than nothing.
+    serveRule([ISO_THU], [[THU, "force"]]);
+    renderBoard();
+
+    await userEvent.click(await screen.findByRole("button", { name: STANDING }));
+    await waitFor(() => expect(setStandingException).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(1));
+
+    act(() => undoOnLastToast()());
+
+    expect(await screen.findByRole("button", { name: STANDING })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenLastCalledWith({
+        orgId: 7, serviceDate: THU, action: "force",
+      }),
+    );
+    await waitFor(() => expect(success).toHaveBeenCalledTimes(2));
+    expect(success.mock.calls[1]).toEqual([`Standing again ${formatDay(THU)}`]);
+  });
+
+  it("puts the day back and shows the database's sentence when it is refused", async () => {
+    serveRule([ISO_THU]);
+    setStandingException.mockRejectedValueOnce({
+      message: "the menu for 24/09 is already out, so order or cancel that day instead",
+    });
+    renderBoard();
+
+    await userEvent.click(await screen.findByRole("button", { name: STANDING }));
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        "the menu for 24/09 is already out, so order or cancel that day instead",
+      ),
+    );
+    expect(await screen.findByRole("button", { name: STANDING })).toBeInTheDocument();
+    expect(success).not.toHaveBeenCalled();
+  });
+
+  it("keeps today's behaviour on a day whose menu is out", async () => {
+    const base = makeBoard({ wed: menuDay({ dishes: [DISHES[0]!] }) });
+    serve({ ...base, weekdays: new Set([3]) });
+    renderBoard();
+
+    await userEvent.click(await screen.findByRole("button", { name: ORDER_LABEL }));
+    await waitFor(() => expect(setOrder).toHaveBeenCalledTimes(1));
+    expect(setStandingException).not.toHaveBeenCalled();
+  });
+
+  it("is inert today and before, with the reason on tap", async () => {
+    serveRule([2]);
+    renderBoard();
+
+    const cell = await screen.findByRole("button", { name: `${formatDay(TODAY)}: not eating` });
+    expect(cell).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(cell);
+    expect(setStandingException).not.toHaveBeenCalled();
+  });
+
+  it("is not a skip on a day I already have an order row on, even a cancelled one", async () => {
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("me", THU), {
+      orderId: 51, status: "cancelled", source: "standing", itemId: null,
+      dishName: null, note: null, amountMinor: null, transferredToName: null,
+    });
+    const base = makeBoard({ wed: null, cells });
+    serve({ ...base, weekdays: new Set([ISO_THU]) });
+    renderBoard();
+
+    await screen.findByRole("table");
+    expect(screen.queryByRole("button", { name: STANDING })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: PLAN })).not.toBeInTheDocument();
+  });
+
+  it("pages to a week years ahead and skips a day in it", { timeout: 30_000 }, async () => {
+    serveRule([ISO_THU]);
+    renderBoard();
+    await screen.findByRole("button", { name: STANDING });
+
+    // A hundred weeks on, with no menus and no orders anywhere near it.
+    const next = screen.getByRole("button", { name: "Next week" });
+    for (let i = 0; i < 100; i++) fireEvent.click(next);
+    const monday = addDays(MONDAY, 700);
+    const thursday = addDays(monday, 3);
+    await waitFor(() =>
+      expect(fetchBoard).toHaveBeenLastCalledWith(
+        expect.objectContaining({ from: monday, to: addDays(monday, 6) }),
+      ),
+    );
+
+    const far = await screen.findByRole("button", {
+      name: `${formatDay(thursday)}: from your standing order. Skip this day`,
+    });
+    await userEvent.click(far);
+    await waitFor(() =>
+      expect(setStandingException).toHaveBeenCalledWith({
+        orgId: 7, serviceDate: thursday, action: "skip",
+      }),
+    );
+    expect(
+      await screen.findByRole("button", { name: `${formatDay(thursday)}: skipped. Take the skip back` }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a skipped weekend day on screen so it can be taken back", async () => {
+    const SAT = addDays(MONDAY, 5);
+    serveRule([6], [[SAT, "skip"]]);
+    renderBoard();
+
+    expect(
+      await screen.findByRole("button", { name: `${formatDay(SAT)}: skipped. Take the skip back` }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens on the week Settings links to", async () => {
+    serveRule([ISO_THU]);
+    const target = addDays(MONDAY, 7 * 30 + 2);
+    window.location.hash = `#/o/test-office/board?week=${target}`;
+    try {
+      renderBoard();
+      await waitFor(() =>
+        expect(fetchBoard).toHaveBeenLastCalledWith(
+          expect.objectContaining({ from: addDays(MONDAY, 7 * 30) }),
+        ),
+      );
+    } finally {
+      window.location.hash = "";
+    }
+  });
+
+  it("offers none of this on a colleague's row", async () => {
+    serveRule([ISO_THU]);
+    renderBoard();
+    await screen.findByRole("button", { name: STANDING });
+    expect(screen.getAllByRole("button", { name: /Skip this day|Plan to eat/ })).toHaveLength(
+      // Mon..Fri of my row: Thu standing; Wed and Fri empty and ahead.
+      3,
     );
   });
 });

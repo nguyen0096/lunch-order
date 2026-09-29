@@ -309,6 +309,36 @@ the caterer has already been told about. `refuse_reopen` now refuses
 was got wrong is corrected against what was actually eaten, where it reaches
 the bill, rather than by reopening ordering and calling a correction an order.
 
+**A day ahead of its menu is skipped or planned, through one function.**
+`standing_order_exceptions` existed from the start and the materializer always
+read it; nothing wrote it until the Board did. The write is
+`set_standing_exception(org, date, 'skip' | 'force' | null)`, and direct
+writes to the table are revoked, because what makes an exception mean anything
+is not something RLS can say: the date is after today in the office's zone, its
+menu is absent or a draft, and the caller has no order row on it. After
+publishing, the materializer has already run, so a skip written then would sit
+beside an order that says the opposite. From that point the day is ordered or
+cancelled like any other. The function takes no profile: it writes for
+`auth.uid()` and nobody else, and admins do not get it for others.
+
+It takes a `FOR SHARE` lock on the day's draft menu before writing, so a publish
+arriving at the same moment waits and its materializer sees the exception.
+
+**Exceptions outlive changes to the rule.** Turning a weekday off in Settings
+does not clear its skips, and turning one on does not clear its plans. An
+exception is a statement about a date: "not on 14/10" stays true if Tuesday is
+dropped and added back, and "yes on 14/10" stays true if the rule covers it for
+a while and then stops. Deleting them as redundant would be trivially safe for
+the database and wrong for the person the moment the rule changed back. A
+redundant one costs a row and changes nothing, so they stay. Settings counts only
+the skips the rule still covers, since those are the ones skipping something.
+
+**No horizon.** A member may skip or plan any date after today, however far
+ahead, and the Board pages forward without limit. The projection is a pure
+function of the rule and the exceptions over whatever week is on screen, so
+there is no window to maintain, and a limit would only be a number somebody
+has to justify when a person asks why they cannot mark their holiday.
+
 ## The shape of the money
 
 **Money belongs to a person, not to a week.** A week is a charge, a payment is

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckIcon, Dice5Icon, PlusIcon } from "lucide-react";
+import { toast } from "sonner";
 import {
   Action,
   Button,
@@ -23,11 +24,14 @@ import {
   fetchBoard,
   fetchTransfers,
   humanError,
+  projectBoard,
   setOrder,
+  setStandingException,
   type Board,
   type BoardCell,
   type BoardDay,
   type BoardMember,
+  type StandingException,
   type TransferRow,
 } from "../api.js";
 import { DishDialog } from "./DishDialog.js";
@@ -45,11 +49,16 @@ import {
   nextOrderableDay,
   passOnReason,
   pickDish,
+  planMessage,
+  planState,
+  planToggle,
   visibleDays,
   weekRangeLabel,
   type Dish,
   type Mark,
+  type PlanState,
 } from "./boardModel.js";
+import { allParams } from "../useHashRoute.js";
 import { now as appNow } from "../../shared/clock.js";
 import { formatPrice } from "../../shared/money.js";
 import { addDays, formatDay, todayIn, weekNumberOf, weekStart } from "../../shared/dates.js";
@@ -79,7 +88,13 @@ export function BoardScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
   const thisWeek = weekStart(today, org.billingWeekStartsOn);
 
-  const [weekOf, setWeekOf] = useState(thisWeek);
+  // `?week=` is how Settings links to the week of a skipped day.
+  const [weekOf, setWeekOf] = useState(() => {
+    const asked = allParams().get("week");
+    return asked !== null && /^\d{4}-\d{2}-\d{2}$/.test(asked)
+      ? weekStart(asked, org.billingWeekStartsOn)
+      : thisWeek;
+  });
   const [board, setBoard] = useState<Board | null>(null);
   const [transfers, setTransfers] = useState<Transfers | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -216,7 +231,38 @@ export function BoardScreen({ me, org }: ScreenProps) {
     },
   );
 
-  const busy = place.pending || stop.pending || pass.pending || decide.pending;
+  const plan = useAction(
+    async (a: {
+      serviceDate: string;
+      action: StandingException | null;
+      before: StandingException | null;
+      state: PlanState;
+      /** False for an undo, which has nothing further to undo. */
+      undoable: boolean;
+    }) => {
+      await setStandingException({ orgId: org.id, serviceDate: a.serviceDate, action: a.action });
+      return a;
+    },
+    {
+      // Not `success`: the toast carries an Undo, which useAction's string does not.
+      onSuccess: (a) => {
+        const message = planMessage(a.state, a.serviceDate);
+        if (a.undoable) {
+          toast.success(message, {
+            action: {
+              label: "Undo",
+              onClick: () => setExceptionRef.current(a.serviceDate, a.before, false),
+            },
+          });
+        } else {
+          toast.success(message);
+        }
+        void load();
+      },
+    },
+  );
+
+  const busy = place.pending || stop.pending || pass.pending || decide.pending || plan.pending;
 
   // useAction drops a call made while another is in flight, which is right for
   // a double click and wrong for a grid: two cells tapped in quick succession
@@ -312,6 +358,56 @@ export function BoardScreen({ me, org }: ScreenProps) {
     [enqueue, optimistically, stop],
   );
 
+  /**
+   * Write MY exception for a day ahead of its menu, drawn at once. On a
+   * refusal only that day is put back, since other days may have moved since.
+   */
+  const setException = useCallback(
+    (serviceDate: string, action: StandingException | null, undoable: boolean) => {
+      const b = boardRef.current;
+      if (!b) return;
+      const before = b.exceptions.get(serviceDate) ?? null;
+      // An Undo can arrive after the week has been paged away. The database
+      // still judges the day; this only decides what the toast says.
+      const day = b.days.find((d) => d.serviceDate === serviceDate) ?? {
+        serviceDate,
+        menuId: null,
+        status: null,
+        orderCutoffAt: null,
+        dishes: [],
+      };
+      const state = planState({
+        day,
+        today,
+        hasOrderRow: b.cells.has(cellKey(me.profileId, serviceDate)),
+        weekdays: b.weekdays,
+        exception: action,
+      });
+      if (state === null) return;
+
+      const put = (x: StandingException | null) =>
+        setBoard((cur) => {
+          if (!cur) return cur;
+          const exceptions = new Map(cur.exceptions);
+          if (x === null) exceptions.delete(serviceDate);
+          else exceptions.set(serviceDate, x);
+          const next = { ...cur, exceptions };
+          return { ...next, projected: projectBoard(next, { meProfileId: me.profileId, today }) };
+        });
+
+      put(action);
+      void enqueue(async () => {
+        const result = await plan.run({ serviceDate, action, before, state, undoable });
+        if (!result.ok) put(before);
+        return result;
+      });
+    },
+    [enqueue, plan, today, me.profileId],
+  );
+  // The Undo in a toast outlives the render that made it.
+  const setExceptionRef = useRef(setException);
+  setExceptionRef.current = setException;
+
   /* ------------------------------------------------------------- rendering */
 
   const days = useMemo(() => {
@@ -331,7 +427,10 @@ export function BoardScreen({ me, org }: ScreenProps) {
         ? false
         : board.days.some((x) => x.serviceDate === d && x.menuId !== null) ||
           board.members.some((m) => board.cells.has(cellKey(m.profileId, d))) ||
-          board.projected.has(d),
+          board.projected.has(d) ||
+          // A skipped weekend day is no longer projected, and the column has
+          // to stay for the skip to be taken back.
+          board.exceptions.has(d),
     );
   }, [board, from]);
 
@@ -592,6 +691,15 @@ export function BoardScreen({ me, org }: ScreenProps) {
                   timeZone: org.timezone,
                 });
                 const over = lunchIsOver({ day, org, now });
+                const planned = member.isMe
+                  ? planState({
+                      day,
+                      today,
+                      hasOrderRow: cell !== null,
+                      weekdays: board.weekdays,
+                      exception: board.exceptions.get(day.serviceDate) ?? null,
+                    })
+                  : null;
 
                 return (
                   <TableCell key={day.serviceDate} className="p-1 text-center">
@@ -612,14 +720,20 @@ export function BoardScreen({ me, org }: ScreenProps) {
                         cell={live}
                         received={receivedByDate.get(day.serviceDate) ?? null}
                         projected={board.projected.has(day.serviceDate)}
+                        plan={planned}
                         offeredTo={offer?.toName ?? null}
                         // A meal is always worth opening, to read the note or
                         // take an offer back, whatever the ordering window says.
-                        reason={live !== null ? null : orderReason}
+                        reason={live !== null || planned !== null ? null : orderReason}
                         pending={busy}
                         onOpen={() =>
                           setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
                         }
+                        onPlan={() => {
+                          if (planned !== null) {
+                            setException(day.serviceDate, planToggle(planned), true);
+                          }
+                        }}
                         onOrder={() => {
                           const dish = pickDish(day.dishes);
                           if (dish === null) return;
@@ -873,10 +987,12 @@ function MyCell({
   cell,
   received,
   projected,
+  plan,
   offeredTo,
   reason,
   pending,
   onOpen,
+  onPlan,
   onOrder,
 }: {
   day: BoardDay;
@@ -884,11 +1000,15 @@ function MyCell({
   /** A colleague's meal I accepted for this day. */
   received: TransferRow | null;
   projected: boolean;
+  /** Set on a day ahead of its menu, where a tap skips or plans instead. */
+  plan: PlanState | null;
   offeredTo: string | null;
   reason: string | null;
   pending: boolean;
   /** Open the dish dialog on this cell. */
   onOpen: () => void;
+  /** Flip this day between the rule and an exception to it. */
+  onPlan: () => void;
   /** Order a dish from this day's menu, chosen at random. */
   onOrder: () => void;
 }) {
@@ -917,6 +1037,30 @@ function MyCell({
         <span className="block max-w-full truncate text-xs font-normal">
           from {received.fromName}
         </span>
+      </Action>
+    );
+  }
+
+  if (plan !== null) {
+    const p = PLAN_CELL[plan];
+    return (
+      <Action
+        reason={null}
+        pending={pending}
+        variant="ghost"
+        title={p.verb}
+        aria-label={`${formatDay(day.serviceDate)}: ${p.state}. ${p.verb}`}
+        className={cn(
+          "h-auto min-h-9 w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
+          p.className,
+        )}
+        onClick={onPlan}
+      >
+        {p.label === null ? (
+          <PlusIcon className="size-4" aria-hidden="true" />
+        ) : (
+          <span className={cn("block", plan === "skipped" && "line-through")}>{p.label}</span>
+        )}
       </Action>
     );
   }
@@ -997,6 +1141,40 @@ function MyCell({
     </Action>
   );
 }
+
+/**
+ * My day ahead of its menu. Dashed, because each of these is a prediction
+ * until a menu is published: the accent fill stays with real orders.
+ */
+const PLAN_CELL: Record<
+  PlanState,
+  { label: string | null; state: string; verb: string; className: string }
+> = {
+  standing: {
+    label: "Standing",
+    state: "from your standing order",
+    verb: "Skip this day",
+    className: "border border-dashed border-border-strong text-muted hover:bg-surface-sunken",
+  },
+  skipped: {
+    label: "Skipped",
+    state: "skipped",
+    verb: "Take the skip back",
+    className: "border border-dashed border-border text-subtle hover:bg-surface-sunken",
+  },
+  planned: {
+    label: "Planned",
+    state: "planned",
+    verb: "Take the plan back",
+    className: "border border-dashed border-border-strong text-text hover:bg-surface-sunken",
+  },
+  empty: {
+    label: null,
+    state: "not eating",
+    verb: "Plan to eat",
+    className: "border border-border text-subtle hover:bg-surface-sunken hover:text-text",
+  },
+};
 
 /**
  * A colleague's day.

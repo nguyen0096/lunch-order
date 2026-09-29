@@ -10,6 +10,9 @@ import {
   nextOrderableDay,
   passOnReason,
   pickDish,
+  planMessage,
+  planState,
+  planToggle,
   visibleDays,
   weekRangeLabel,
 } from "../src/web/components/boardModel.js";
@@ -334,5 +337,53 @@ describe("pickDish", () => {
 
   it("has nothing to pick from an empty menu", () => {
     expect(pickDish([])).toBeNull();
+  });
+});
+
+describe("planState, a day ahead of its menu", () => {
+  // 2026-09-24 is a Thursday.
+  const THU = "2026-09-24";
+  const TODAY = "2026-09-22";
+  const noMenu = day({ serviceDate: THU, menuId: null, status: null, orderCutoffAt: null, dishes: [] });
+  const base = { day: noMenu, today: TODAY, hasOrderRow: false, weekdays: new Set([4]), exception: null };
+
+  it("reads the rule, then the exception over it", () => {
+    expect(planState(base)).toBe("standing");
+    expect(planState({ ...base, exception: "skip" })).toBe("skipped");
+    expect(planState({ ...base, exception: "force" })).toBe("standing");
+    expect(planState({ ...base, weekdays: new Set() })).toBe("empty");
+    expect(planState({ ...base, weekdays: new Set(), exception: "force" })).toBe("planned");
+    expect(planState({ ...base, weekdays: new Set(), exception: "skip" })).toBe("empty");
+  });
+
+  it("counts a draft as not out yet", () => {
+    expect(planState({ ...base, day: day({ serviceDate: THU, status: "draft" }) })).toBe("standing");
+  });
+
+  it("leaves a published, locked or cancelled day to ordering", () => {
+    for (const status of ["published", "locked", "cancelled"] as const) {
+      expect(planState({ ...base, day: day({ serviceDate: THU, status }) })).toBeNull();
+    }
+  });
+
+  it("is nothing today, before, or on a day with an order row", () => {
+    expect(planState({ ...base, day: { ...noMenu, serviceDate: TODAY } })).toBeNull();
+    expect(planState({ ...base, day: { ...noMenu, serviceDate: "2026-09-21" } })).toBeNull();
+    expect(planState({ ...base, hasOrderRow: true })).toBeNull();
+  });
+
+  it("has no horizon", () => {
+    expect(planState({ ...base, day: { ...noMenu, serviceDate: "2031-09-25" } })).toBe("standing");
+  });
+
+  it("toggles each state to the other side of the rule", () => {
+    expect(planToggle("standing")).toBe("skip");
+    expect(planToggle("skipped")).toBeNull();
+    expect(planToggle("empty")).toBe("force");
+    expect(planToggle("planned")).toBeNull();
+  });
+
+  it("names the day in the toast", () => {
+    expect(planMessage("skipped", THU)).toMatch(/^Skipped Thu 24 Sept?$/);
   });
 });
