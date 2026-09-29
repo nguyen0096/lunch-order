@@ -673,7 +673,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
         <TableBody>
           {board.members.map((member) => (
             <TableRow key={member.profileId}>
-              <TableCell className="sticky left-0 z-2 max-w-40 truncate bg-surface-raised font-medium">
+              <TableCell className="sticky left-0 z-2 max-w-40 truncate bg-surface-raised py-3 align-top font-medium">
                 {member.name}
                 {member.isMe && <span className="text-muted"> (you)</span>}
               </TableCell>
@@ -701,7 +701,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
                   : null;
 
                 return (
-                  <TableCell key={day.serviceDate} className="p-1 text-center">
+                  <TableCell key={day.serviceDate} className="p-1 text-center align-top">
                     {incoming !== null ? (
                       <IncomingOffer
                         offer={incoming}
@@ -953,7 +953,7 @@ function MenuPanel({
               key={dish.id}
               className="flex items-baseline justify-between gap-4 border-b border-border py-2"
             >
-              <span className="min-w-0 truncate font-medium">{dish.name}</span>
+              <span className="min-w-0 font-medium wrap-anywhere">{dish.name}</span>
               <span className="shrink-0 text-sm text-muted tabular">
                 {formatPrice(dish.priceMinor, org.currency)}
               </span>
@@ -964,6 +964,12 @@ function MenuPanel({
     </section>
   );
 }
+
+// Everything a cell says wraps, even inside one long word, because a dish name
+// has to be read whole. The row grows to fit instead. The 12rem cap is what
+// makes it wrap on a wide screen too: uncapped, one long name set its whole
+// column to the name's length.
+const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
 
 // An empty cell you can use has to outweigh one you cannot. Action draws
 // unavailable as a dashed border-strong edge, which is right for a button
@@ -1032,8 +1038,8 @@ function MyCell({
         aria-label={`${formatDay(day.serviceDate)}: ${received.dishName ?? "eating"}, from ${received.fromName}`}
         className="h-auto w-full min-w-24 cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg"
       >
-        <span className="block max-w-full truncate">{received.dishName ?? "Lunch"}</span>
-        <span className="block max-w-full truncate text-xs font-normal">
+        <span className={CELL_TEXT}>{received.dishName ?? "Lunch"}</span>
+        <span className={cn(CELL_TEXT, "text-xs font-normal")}>
           from {received.fromName}
         </span>
       </Action>
@@ -1120,16 +1126,16 @@ function MyCell({
     >
       {cell ? (
         <>
-          <span className={cn("block max-w-full truncate", offeredTo !== null && "line-through")}>
+          <span className={cn(CELL_TEXT, offeredTo !== null && "line-through")}>
             {label}
           </span>
           {cell.note !== null && (
-            <span className="block max-w-full truncate text-xs font-normal text-muted">
+            <span className={cn(CELL_TEXT, "text-xs font-normal text-muted")}>
               {cell.note}
             </span>
           )}
           {offeredTo !== null && (
-            <span className="block max-w-full truncate text-xs font-normal">to {offeredTo}</span>
+            <span className={cn(CELL_TEXT, "text-xs font-normal")}>to {offeredTo}</span>
           )}
         </>
       ) : projected ? (
@@ -1234,22 +1240,22 @@ function TheirCell({
         // names a dish and the bottom margin edge when it is empty: measured,
         // every filled chip sat 2.15px below the empty targets in the same
         // row, which is what made the grid read as jittery across a week.
-        "flex h-9 w-full min-w-16 rounded-md px-1 text-xs font-medium",
+        "flex h-auto min-h-9 w-full min-w-16 rounded-md px-1 py-1.5 text-xs font-medium whitespace-normal",
         MARK_FILL[mark],
         pendingWith !== null && "border border-dashed border-accent",
       )}
       onClick={onTap}
     >
       {gone !== null || pendingWith !== null ? (
-        <span className="block max-w-full truncate">to {gone ?? pendingWith}</span>
+        <span className={CELL_TEXT}>to {gone ?? pendingWith}</span>
       ) : dish !== null ? (
         onlyDish ? (
           <CheckIcon className="size-4" aria-hidden="true" />
         ) : (
-          <span className="block max-w-full truncate">{dish}</span>
+          <span className={CELL_TEXT}>{dish}</span>
         )
       ) : mark === "eating" ? (
-        <span className="block max-w-full truncate font-normal">no dish yet</span>
+        <span className={cn(CELL_TEXT, "font-normal")}>no dish yet</span>
       ) : mark === "projected" ? (
         <CheckIcon className="size-4 opacity-60" aria-hidden="true" />
       ) : null}
@@ -1304,8 +1310,8 @@ function IncomingOffer({
   onDecide: (status: "accepted" | "declined") => void;
 }) {
   return (
-    <div className="flex min-w-32 flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5">
-      <span className="text-xs text-accent-subtle-fg">
+    <div className="mx-auto flex max-w-52 min-w-32 flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5">
+      <span className="text-xs text-accent-subtle-fg wrap-anywhere">
         {offer.fromName} offers you {offer.dishName ?? "their lunch"}
       </span>
       <div className="flex gap-1">

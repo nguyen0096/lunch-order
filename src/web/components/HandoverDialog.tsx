@@ -51,7 +51,7 @@ export function HandoverDialog(props: HandoverDialogProps) {
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className="max-h-[85dvh] overflow-y-auto">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto wrap-anywhere">
         <DialogHeader>
           <DialogTitle>
             {member.name}
@@ -68,7 +68,7 @@ export function HandoverDialog(props: HandoverDialogProps) {
 
         {theirCell !== null && theirDish !== null && (
           <div className="flex items-baseline justify-between gap-4 rounded-md bg-surface-sunken px-3 py-2">
-            <span className="min-w-0 truncate font-medium">{theirDish}</span>
+            <span className="min-w-0 font-medium">{theirDish}</span>
             {theirCell.amountMinor !== null && (
               <span className="shrink-0 text-sm text-muted tabular">
                 {formatMoney(theirCell.amountMinor, org.currency)}
@@ -89,7 +89,7 @@ export function HandoverDialog(props: HandoverDialogProps) {
           reason={props.giveReason}
           pending={props.pending}
           onClick={props.onGive}
-          className="w-full"
+          className="h-auto min-h-11 w-full py-2 whitespace-normal"
         >
           {myDish === null ? `Give ${member.name} my lunch` : `Give ${member.name} my ${myDish}`}
         </Action>
