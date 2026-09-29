@@ -27,6 +27,8 @@ and whether it rolls back. The ones to know first:
 | `removal_and_chat_binding.sql` | only the bot binds a Telegram chat; a removed member stays out of the join code and old invitations, somebody who left does not; an admin or owner adds them back | no, rolls back |
 | `payment_notifications.sql` | money arriving tells the payer, an unmatched transfer tells that office's admins and owners, once, behind a switch, and nobody else | no, rolls back |
 | `standing_exceptions.sql` | a skip keeps publishing from ordering for you, a plan makes it order with no dish; only your own row, only in your office, only after today on a day with no published menu and no order of yours; exceptions survive rule changes | no, rolls back |
+| `atomic_writes.sql` | `set_my_order`, `publish_menu` and `apply_caterer_prices` refuse what the guards would have, in their words, across offices, past the cutoff and on a settled week, and a refusal part way leaves nothing written; a weekday rule's sweep holds only its own office's menus of that weekday | no, rolls back |
+| `atomic_writes_race.sql` | two sessions at once over dblink: two taps leave one dish, cancelling lunch and an order in flight wait for each other, pricing the week and a correction do not deadlock, nor a republish and an off-menu record, one office's sweep does not hold another's menus, a skip during a publish is refused, two drains never claim one message | **yes, then removes them**; local only, needs `dblink` |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -118,6 +120,25 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   whose menu is absent or a draft and on which they have no order row. No
   browser role holds INSERT, UPDATE or DELETE on `standing_order_exceptions`.
   Nothing deletes an exception when the weekday rule changes.
+- **A write the app makes for one tap goes through one named function.**
+  Choosing a dish is `set_my_order`, publishing a menu `publish_menu`, pricing
+  the week `apply_caterer_prices`, each one transaction. A new multi-step write
+  gets a function too, never a sequence of requests. Each is SECURITY DEFINER
+  with `search_path = ''`, which the guard triggers exempt, so each repeats their
+  checks itself: the caller (`my_org_ids`, `my_admin_org_ids`, or own row with
+  no profile parameter), the day's stage and cutoff, and the settled week via
+  `private.assert_week_open`, in the triggers' own words.
+- **Locks are taken in one order**: `private.lock_office_materialize(org)`, menu
+  rows by (org, date, id), the billing week's advisory lock, dish rows, the
+  order row, its lines. Nothing that holds a menu `FOR UPDATE` may then wait on
+  a dish, a line, an order or a week, because a correction holds the week and
+  then takes the menu `FOR KEY SHARE`. So a menu is taken `FOR SHARE` to order
+  on it and `FOR NO KEY UPDATE` to change it, never `FOR UPDATE`. The hourly
+  tick's plain `UPDATE` of due menus, in scan order, is the one known exception;
+  see [Decisions](../decisions.md#platform).
+- **A dish choice replaces the dish line.** The line is deleted and a fresh
+  `order_items` row written, never updated in place, and the member's own new
+  order is `source = 'member'`.
 - **Order prices are snapshotted** by trigger on write, and again into
   `billing_lines` at period close, so editing a menu can never rewrite a past bill.
 - **`VITE_`-prefixed variables are inlined into the browser bundle.** A secret

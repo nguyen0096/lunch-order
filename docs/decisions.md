@@ -18,6 +18,67 @@ and explicitly counts work by a paid employee. This is a company tool.
 Cloudflare's static asset bandwidth is unmetered on the free plan and permits
 commercial use. The app is a static bundle; nothing Vercel is good at is used.
 
+**A write the app makes for one tap is one transaction, in a named function.**
+PostgREST commits every request on its own, so an action the browser sent as
+several requests was committed piece by piece. Three did that, and each had a
+wrong outcome that was reachable, not theoretical: choosing a dish (delete the
+line, insert one) interleaved across two devices as delete, delete, insert,
+insert and left two dishes billed on one order; publishing a menu refused part
+way left a published menu with some dishes changed; and pricing the week on
+Settle week was refused on a locked menu for every member's and standing order,
+because the re-snapshot ran as an admin browser through `enforce_order_window`,
+and a refusal part way left some dishes priced and the rest not. They are now
+`set_my_order`, `publish_menu` and `apply_caterer_prices`, and the bot calls
+`set_my_order` too.
+
+Each is SECURITY DEFINER, which every guard trigger exempts through
+`private.is_service()`. So each checks for itself, in the triggers' own words,
+what RLS and the triggers would have checked: who may (`my_org_ids`,
+`my_admin_org_ids`, or the caller's own order with no profile parameter), the
+menu's status and cutoff, and the settled week, the last under the week's
+shared advisory lock so a settle cannot land between the check and the write.
+Only `snapshot_order_item` still runs, because it has no exemption: prices are
+copied by the trigger alone. A dish choice deletes the line and writes a fresh
+row rather than updating it, and a new order is `source = 'member'`; an
+existing one keeps its source.
+
+Locks are taken in one order: the office's materialize lock, menu rows by
+(org, date, id), the billing week's lock, dish rows, the order row, its lines.
+The corrections take the week's lock first and then reach a menu only through a
+foreign key's `FOR KEY SHARE`, so nothing that holds a menu `FOR UPDATE` may
+then wait on a dish, a line, an order or a week. Nothing does any more: a menu
+is taken `FOR SHARE` to order on it and `FOR NO KEY UPDATE` to change it,
+neither of which blocks `FOR KEY SHARE`. Two first drafts broke the rule and
+deadlocked, both reproduced in `atomic_writes_race.sql`: `apply_caterer_prices`
+against a correction on the same week (R3), and `publish_menu` against
+`correct_meal_off_menu` recording the dish it was repricing (R7).
+`materialize_standing_orders` had held its menu `FOR UPDATE` since the first
+migration and could deadlock the same way against a correction's order for a
+standing member; it takes `FOR NO KEY UPDATE` too.
+
+One case is left open. The hourly tick locks an office's due menus with a plain
+`UPDATE` in scan order and then bills a week, which is the opposite order to
+`apply_caterer_prices`. They meet only if a week's menu is still published past
+its cutoff at billing hour while an admin settles that week. The loser is either
+Settle week, which can be pressed again, or that office's tick subtransaction,
+which the next hour retries.
+
+Materializing standing orders was the other lock problem. A weekday rule or an
+exception ran `materialize_open_menus`, which locked every office's open menus
+ordered by date alone: two offices' writes could deadlock, and every member
+toggling a weekday held up every admin everywhere. Now a rule change sweeps its
+own office's menus of its weekday, an exception its own date, under the office's
+materialize lock, in (date, id) order, drafts included so a publish made straight
+on the table is waited out. `publish_menu` and `set_standing_exception` take the
+same lock, which closes the gap one transaction opened: a skip written while a
+brand new menu was being published found no menu, and the publish could not see
+the skip.
+
+Direct table writes stay granted for now, because the SPA deployed before these
+functions still makes them. Revoking INSERT, UPDATE and DELETE on `orders`,
+`order_items`, `menus` and `menu_items` for `authenticated` is a later
+migration, once that build is gone.
+
 **Its own repository.** GitHub Actions only reads workflows from the repository
 root. While this lived at `app/lunch-order/` inside `nexus-infra`, CI had never
 once executed.
@@ -321,8 +382,10 @@ beside an order that says the opposite. From that point the day is ordered or
 cancelled like any other. The function takes no profile: it writes for
 `auth.uid()` and nobody else, and admins do not get it for others.
 
-It takes a `FOR SHARE` lock on the day's draft menu before writing, so a publish
-arriving at the same moment waits and its materializer sees the exception.
+It takes the office's materialize lock and then a `FOR SHARE` lock on the day's
+draft menu before writing, so a publish arriving at the same moment waits and
+its materializer sees the exception, and a skip arriving during a publish waits
+and then sees the menu out.
 
 **Exceptions outlive changes to the rule.** Turning a weekday off in Settings
 does not clear its skips, and turning one on does not clear its plans. An

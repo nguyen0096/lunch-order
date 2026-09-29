@@ -53,7 +53,14 @@ insert into expected (name, anon_may) values
   ('my_former_offices',       false),
   -- The Board's skip and plan on a day with no menu yet. Always the caller's
   -- own row: there is no profile parameter to name anybody else.
-  ('set_standing_exception',  false);
+  ('set_standing_exception',  false),
+  -- One transaction for what the app used to send as several requests. Each
+  -- repeats the checks the guard triggers would make, because those exempt a
+  -- SECURITY DEFINER caller. set_my_order is the caller's own order only;
+  -- the other two check for an admin of the office.
+  ('set_my_order',            false),
+  ('publish_menu',            false),
+  ('apply_caterer_prices',    false);
 
 create temp table found as
 select p.proname::text as name,
