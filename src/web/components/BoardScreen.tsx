@@ -514,15 +514,29 @@ export function BoardScreen({ me, org }: ScreenProps) {
       // which is relative to the nearest positioned ancestor. That is not the
       // scroller here, so any page padding or offset ancestor between them was
       // being added to scrollLeft and the grid overshot the target day.
+      //
+      // Flush against it: the 8px of breathing room this used to leave was an
+      // unreadable sliver of the day before.
       const sticky = gridRef.current?.querySelector<HTMLElement>("thead th:first-child");
-      const gap = (sticky?.getBoundingClientRect().width ?? 0) + 8;
-      const delta =
-        column.getBoundingClientRect().left - scroller.getBoundingClientRect().left - gap;
+      const gap = sticky?.getBoundingClientRect().width ?? 0;
+      const origin = scroller.getBoundingClientRect().left + gap;
+      // Today first when today and the target both fit: on a phone that is
+      // the day being handed out and the day being ordered, side by side.
+      const todayColumn =
+        target.serviceDate > today
+          ? gridRef.current?.querySelector<HTMLElement>(`[data-service-date="${today}"]`)
+          : null;
+      const fromToday =
+        todayColumn &&
+        column.getBoundingClientRect().right - todayColumn.getBoundingClientRect().left <=
+          scroller.clientWidth - gap;
+      const lead = fromToday ? todayColumn : column;
+      const delta = lead.getBoundingClientRect().left - origin;
       scroller.scrollLeft = Math.max(0, scroller.scrollLeft + delta);
       scrolledFor.current = from;
     });
     return () => cancelAnimationFrame(frame);
-  }, [board, from, panelDay]);
+  }, [board, from, panelDay, today]);
 
   const nav = (
     <WeekNav
@@ -613,11 +627,15 @@ export function BoardScreen({ me, org }: ScreenProps) {
         )
       )}
 
-
-      <Table containerClassName="bg-surface-raised">
+      {/* Capped at the screen, so the heads can stick. A container that
+          scrolls sideways also becomes the one `sticky top-0` is measured
+          against, and an uncapped one never scrolls vertically, so the heads
+          rode off the top with the page and the columns lost their dates.
+          The phone cap leaves room for the header and the tab bar. */}
+      <Table containerClassName="max-h-[calc(100dvh-8rem)] bg-surface-raised md:max-h-[calc(100dvh-4rem)]">
         <TableHeader>
           <TableRow>
-            <TableHead className="sticky left-0 z-3 bg-surface-raised">Who</TableHead>
+            <TableHead className={cn("sticky left-0 z-3 bg-surface-raised", WHO_WIDTH)}>Who</TableHead>
             {days.map((d) => {
               const { dow, dom } = columnLabel(d.serviceDate);
               const isToday = d.serviceDate === today;
@@ -632,7 +650,10 @@ export function BoardScreen({ me, org }: ScreenProps) {
                   data-service-date={d.serviceDate}
                   aria-current={isToday ? "date" : undefined}
                   className={cn(
-                    "min-w-28 p-0 text-center",
+                    // 76px on a phone is three days beside the Who column at
+                    // 360. The floor is what holds it: every cell wraps, so
+                    // without one a column shrinks to a single letter.
+                    "min-w-19 p-0 text-center lg:min-w-28",
                     // Which column the menu below is describing. A neutral rule
                     // rather than a tint: the accent is spoken for by ordered.
                     panelDay?.serviceDate === d.serviceDate && "border-b-2 border-b-border-strong",
@@ -651,17 +672,30 @@ export function BoardScreen({ me, org }: ScreenProps) {
                     aria-label={`${dow} ${dom}${tags
                       .map((t) => `, ${t.toLowerCase()}`)
                       .join("")}: show this day's menu`}
-                    className="h-full w-full flex-col gap-0 rounded-none px-3 py-2 text-muted"
+                    className="h-full w-full flex-col gap-0 rounded-none px-1 py-2 whitespace-normal text-muted lg:px-3"
                     onClick={() => setPanelDate(d.serviceDate)}
                   >
-                    <span className="block text-xs font-semibold">{dow}</span>
-                    <span className="block text-base font-semibold text-text tabular">{dom}</span>
+                    {/* One line on a phone, so the two tag words below can
+                        have a line each without the head growing taller. */}
+                    <span className="flex items-baseline gap-1 lg:flex-col lg:items-center lg:gap-0">
+                      <span className="block text-xs font-semibold">{dow}</span>
+                      <span className="block text-base font-semibold text-text tabular">{dom}</span>
+                    </span>
                     {/* A word, not a colour. One grey stood for "no menu",
                         "closed" and "cancelled" at once, and read as none of
                         them. The non-breaking space keeps every head the same
-                        height when a day has nothing to say. */}
-                    <span className="block text-xs font-medium">
-                      {tags.length === 0 ? "\u00A0" : tags.join(" · ")}
+                        height when a day has nothing to say. On a phone each
+                        word takes a line: `Today · Cooking` on one line was
+                        what set the column's width. */}
+                    <span className="block min-h-8 text-xs font-medium lg:min-h-0 lg:whitespace-nowrap">
+                      {tags.length === 0
+                        ? "\u00A0"
+                        : tags.map((t, i) => (
+                            <span key={t} className="block lg:inline">
+                              {i > 0 && <span className="hidden lg:inline"> · </span>}
+                              {t}
+                            </span>
+                          ))}
                     </span>
                   </Button>
                 </TableHead>
@@ -673,9 +707,18 @@ export function BoardScreen({ me, org }: ScreenProps) {
         <TableBody>
           {board.members.map((member) => (
             <TableRow key={member.profileId}>
-              <TableCell className="sticky left-0 z-2 max-w-40 truncate bg-surface-raised py-3 align-top font-medium">
+              <TableCell
+                className={cn(
+                  "sticky left-0 z-2 bg-surface-raised py-3 align-top font-medium wrap-break-word",
+                  WHO_WIDTH,
+                )}
+              >
                 {member.name}
-                {member.isMe && <span className="text-muted"> (you)</span>}
+                {/* Its own line on a phone, so wrapping can never push it out
+                    of the cell the way truncation did. */}
+                {member.isMe && (
+                  <span className="block text-xs text-muted sm:inline sm:text-sm"> (you)</span>
+                )}
               </TableCell>
 
               {days.map((day) => {
@@ -761,7 +804,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
 
         <TableFooter>
           <TableRow>
-            <TableCell className="sticky left-0 z-2 bg-surface-raised font-medium">
+            <TableCell className={cn("sticky left-0 z-2 bg-surface-raised font-medium", WHO_WIDTH)}>
               Total
             </TableCell>
             {days.map((d) => (
@@ -971,6 +1014,11 @@ function MenuPanel({
 // column to the name's length.
 const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
 
+// On a phone the names wrap in 88px rather than truncating in 160px: 49% of
+// a 360px grid went on names, which left room for one day. Wider, the cap and
+// the padding are the desktop's.
+const WHO_WIDTH = "w-22 min-w-22 max-w-22 px-2 sm:w-auto sm:min-w-0 sm:max-w-40 sm:px-3";
+
 // An empty cell you can use has to outweigh one you cannot. Action draws
 // unavailable as a dashed border-strong edge, which is right for a button
 // standing on its own and wrong in a grid: against cells that are only a
@@ -1036,7 +1084,7 @@ function MyCell({
         reason={`${received.fromName} gave you this lunch, so there is nothing to order`}
         variant="ghost"
         aria-label={`${formatDay(day.serviceDate)}: ${received.dishName ?? "eating"}, from ${received.fromName}`}
-        className="h-auto w-full min-w-24 cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg"
+        className="h-auto w-full lg:min-w-24 cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg"
       >
         <span className={CELL_TEXT}>{received.dishName ?? "Lunch"}</span>
         <span className={cn(CELL_TEXT, "text-xs font-normal")}>
@@ -1056,7 +1104,7 @@ function MyCell({
         title={p.verb}
         aria-label={`${formatDay(day.serviceDate)}: ${p.state}. ${p.verb}`}
         className={cn(
-          "h-auto min-h-9 w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
+          "h-auto min-h-10 w-full flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal has-[>svg]:px-2 lg:min-h-9 lg:min-w-24",
           p.className,
         )}
         onClick={onPlan}
@@ -1079,14 +1127,14 @@ function MyCell({
     // smudge next to it. A phone has no hover, so each carries its own title
     // for the pointer and its own label for everything else.
     return (
-      <div className="flex w-full min-w-24 items-center gap-1">
+      <div className="flex w-full flex-col items-stretch gap-1 lg:min-w-24 lg:flex-row lg:items-center">
         <Action
           reason={null}
           pending={pending}
           variant="ghost"
           title="Choose a dish"
           aria-label={`${described}. Choose a dish`}
-          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          className={cn(SPLIT_HALF, OPEN_CELL)}
           onClick={onOpen}
         >
           <PlusIcon className="size-4" aria-hidden="true" />
@@ -1097,7 +1145,7 @@ function MyCell({
           variant="ghost"
           title="Order a random dish"
           aria-label={`${described}. Order a dish at random`}
-          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          className={cn(SPLIT_HALF, OPEN_CELL)}
           onClick={onOrder}
         >
           <Dice5Icon className="size-5" aria-hidden="true" />
@@ -1114,7 +1162,7 @@ function MyCell({
       title={orders ? "Order lunch" : undefined}
       aria-label={orders ? `${described}. Order lunch` : described}
       className={cn(
-        "h-auto w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
+        "h-auto min-h-10 w-full flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal has-[>svg]:px-2 lg:min-h-0 lg:min-w-24",
         cell
           ? "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70"
           : reason === null
@@ -1146,6 +1194,11 @@ function MyCell({
     </Action>
   );
 }
+
+// Stacked on a phone, where side by side would make each half 32px wide.
+// `has-[>svg]:px-0` because Button's own `has-[>svg]:px-3.5` is a different
+// variant from `px-0`, so it survived the merge and held the cell at 108px.
+const SPLIT_HALF = "h-10 flex-none px-0 has-[>svg]:px-0 lg:h-9 lg:flex-1";
 
 /**
  * My day ahead of its menu. Dashed, because each of these is a prediction
@@ -1310,16 +1363,16 @@ function IncomingOffer({
   onDecide: (status: "accepted" | "declined") => void;
 }) {
   return (
-    <div className="mx-auto flex max-w-52 min-w-32 flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5">
+    <div className="mx-auto flex max-w-52 flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5 lg:min-w-32">
       <span className="text-xs text-accent-subtle-fg wrap-anywhere">
         {offer.fromName} offers you {offer.dishName ?? "their lunch"}
       </span>
-      <div className="flex gap-1">
+      <div className="flex flex-col gap-1 lg:flex-row">
         <Action
           reason={reason}
           pending={pending}
           size="sm"
-          className="flex-1"
+          className="flex-none px-2 lg:flex-1 lg:px-3"
           onClick={() => onDecide("accepted")}
         >
           Accept
@@ -1329,7 +1382,7 @@ function IncomingOffer({
           pending={pending}
           size="sm"
           variant="outline"
-          className="flex-1"
+          className="flex-none px-2 lg:flex-1 lg:px-3"
           onClick={() => onDecide("declined")}
         >
           Decline
@@ -1345,9 +1398,9 @@ function BoardSkeleton() {
     <Table containerClassName="bg-surface-raised">
       <TableHeader>
         <TableRow>
-          <TableHead className="w-40">Who</TableHead>
+          <TableHead className={WHO_WIDTH}>Who</TableHead>
           {Array.from({ length: 5 }, (_, i) => (
-            <TableHead key={i} className="min-w-28">
+            <TableHead key={i} className="min-w-19 lg:min-w-28">
               <Skeleton className="mx-auto h-8 w-10" />
             </TableHead>
           ))}
