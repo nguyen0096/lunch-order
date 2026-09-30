@@ -124,6 +124,11 @@ Total     3         2         3           0       0
 outline, eating with no dish yet · `┌┐` empty, still a target · `═` the day the
 menu panel shows
 
+`Total` counts portions, because portions are what the caterer delivers: an
+admin can put more than one on somebody's order from Orders. Somebody eating
+with no dish chosen counts as one. A cell of more than one portion says so,
+`Phở bò × 2`, and its label adds `2 portions`.
+
 A meal somebody gave you, once you accept it, sits on your own row as the dish
 and `from Tèo`. The order stays on the giver's line, where it reads `to you`
 rather than your own name, which on somebody else's cell reads as a stranger's
@@ -176,7 +181,7 @@ HP                          ╎    to Tèo      ╎
 | strip | a button per visible day, `aria-pressed` on the picked one and `aria-current="date"` on today. Each chip carries my own state in my row's language: the accent fill for an order, a dashed edge for a prediction, the date struck through for a skip. `Today` takes the weekday's place |
 | stage word | on the picked chip only, since seven do not fit at 320; the list heading repeats it, `Tue 29 · Today · Cooking`, and every chip's label says it to a screen reader |
 | menu panel | the picked day's, as on the grid |
-| list | everyone for the picked day, with the day's headcount in its heading. Every cell is the grid's own, drawn by the same code and calling the same actions, so ordering, the dice, skipping, handing over and Accept or Decline behave identically |
+| list | everyone for the picked day, with the day's portions in its heading (`6 portions`, `1 portion`). Every cell is the grid's own, drawn by the same code and calling the same actions, so ordering, the dice, skipping, handing over and Accept or Decline behave identically |
 | opens on | the next day you can still order for, as the grid does |
 | swipe | sideways on the list moves one day. A mostly vertical drag, a pinch or a touch on the strip does not. It is an enhancement: the strip is how a keyboard or a screen reader changes day, and if a swipe takes away the cell that had focus, focus moves to the list, whose name is the day it now shows |
 | resize | crossing 640px keeps the picked day and anything open, and the grid scrolls to that day |
@@ -271,12 +276,9 @@ am out, you have mine" is usually said to somebody who was not eating anyway:
 | `Withdraw` | whoever made the offer, on their own cell, when one is pending |
 
 There is no admin row, here or anywhere else on this screen. An admin orders
-their own lunch from this board exactly as a member does, and the one control
-that was theirs -- `Pass Tèo's Cơm gà to someone`, a recipient picked from a
-list -- is gone with the rest. Recording a swap between two other people is a
-correction of what was written down rather than an arrangement between two
-people, and it has no screen yet: see
-[the backlog](../backlog.md#a-board-for-adjusting-what-was-recorded).
+their own lunch from this board exactly as a member does. Recording a swap
+between two other people is a correction of what was written down rather than
+an arrangement between two people, so it lives on [Orders](#orders-admin).
 
 An offer made to you appears on the cell of the meal it concerns, which is the
 giver's cell on their row, with Accept and Decline inline. A pending offer is
@@ -497,71 +499,133 @@ looking inconsistent.
 On a phone the table keeps person, still to pay, status and the control; meals,
 billed and received drop out rather than scroll sideways.
 
-Beside Settle, one quiet link to [Corrections](#corrections-admin): settling
-bills what the week records, so a day that got it wrong is put right first.
+Beside Settle, one quiet link, **Put a day right**, to [Orders](#orders-admin)
+on the week being settled: settling bills what the week records, so a day that
+got it wrong is put right first.
 
-## Corrections (admin)
+## Orders (admin)
 
-**Job.** Put right what the app recorded for a day that is already over, before
-the week is settled.
+**Job.** Answer "what did each person have, and what are they paying for it"
+for one week, and let an admin set it for anyone, on any day with a published
+menu, until the week is settled. Two uses cover almost all of it: ordering,
+changing or cancelling on somebody's behalf, and recording what happened
+outside the app (a verbal order, a lunch not eaten, a swap, an off-menu dish,
+a price the caterer changed).
 
-**It is not in the nav.** The way in is one quiet link on Payments, beside
-Settle, because that is where somebody is standing at the weekend when they
-notice the record and the lunch disagree. The route `#/o/<slug>/corrections` is
-real, so the page is linkable and survives a refresh, and a member who follows
-the link gets the same admin explanation every other admin page gives. The
-screen carries its own way back.
+First in the Admin group of the nav, route `#/o/<slug>/orders`. It replaced
+Corrections: `#/o/<slug>/corrections` redirects here, keeping its query and
+adding no history entry. `?week=<date>` opens that week, which is how
+**Put a day right** beside Settle on Payments opens the week being settled. A
+member who follows an `orders` link reaches the Board, because `orders` was
+the Board's name in the old five-tab app.
 
-The four cases it exists for, in the product owner's words: the caterer
-delivered one more portion than the app knows about because somebody ordered
-verbally; a person was marked down for a lunch they did not eat; a dish was
-served that was never on the menu; the caterer charged a price the menu did not
-say.
+The Board stays as it is and keeps the member's clock for admins too. This is
+the one screen where an admin steps outside it, and every step is on the
+record.
 
-**It opens on the most recent working day that is over**, because that is the
-day being finalised, not today. Week navigation and the day strip are the
-board's, not a third control; each day carries how many portions are recorded on
-it, which is the number an admin is checking against what arrived.
+**The Board's frame, with the day's prices in the panel.** `WeekNav` with the
+week number, a line saying each save bills and messages at once, the day
+panel, then the grid (people down, days across, a `Total` row of portions and
+money). On a phone: the Board's day strip, whose chips carry the day's portion
+count rather than my own state, then the panel, then the picked day's list
+(`Wed 30 · Served`, `8 portions`). Under both, `Changed by an admin on Wed 30
+Sept`: the day's `order_corrections` rows with their kind, summary, who and
+when, and `Why:`. Each row header carries the person's balance in the Bill
+screen's words (`owes 185.000 ₫`, `has 20.000 ₫ in credit`). Weekends get a
+column only when a menu exists for the day.
 
-**The day is a list of everybody**, the people with nothing recorded included,
-so "who did we miss" is answered by reading down it. Each row carries the dish,
-the portions, the note, the amount and where that person's account stands, and a
-row already corrected says so.
+**It opens** on the current week, or on the week a `?week=` names, and follows
+that parameter if it changes while the screen is open. It opens with the panel on the most recent working day
+that is over, because that is usually the day being checked. When that day is
+not in the week shown, the panel starts on the next day still open for
+ordering. A tap on a column head, or a chip, moves it.
 
-| Control | What it does |
+**The panel** names the day, its stage sentence (`Served. Open to record until
+the week is settled`, `Closed at 21:00 30/09`, `Closes 21:00 01/10`), and each
+dish with `3 people, 4 portions`, its price and **Reprice**. Reprice opens the
+reprice dialog, which counts people and portions and states the money going
+onto bills and coming off them separately; on a day not served yet the field
+reads `New price` rather than `What the caterer charged`. A day with no menu,
+or a draft, says why and links to the Menu screen on that date
+(`#/o/<slug>/menu?date=<date>`).
+
+### Cells
+
+Every cell is a record, so none wears the accent fill, the admin's own row
+included. Where a meal came from is a word under the dish, which needs no
+legend: none means the member or their standing days made it, `recorded`
+means an admin did (`source = admin`), `corrected` means the member did and an
+admin changed it since.
+
+| State | Drawn as |
 | --- | --- |
-| Add a meal / Change | one person, one dish, one quantity, one note. The picker's last option is a dish that was never on the menu, which then asks for its price |
-| This meal did not happen | the same dialog, one step on, naming what comes off that person's bill |
-| Reprice | one dish, this day only, every line on it at once |
-| Why | one optional line on every correction, kept with it in `order_corrections` |
+| a meal | solid `border-strong` outline, the dish (`× 2` above one portion), the note held to two lines, then the provenance word |
+| no price yet | `Price to come` on a `warn-subtle` chip; the week cannot settle while it is there |
+| eating, no dish | dashed outline, `no dish yet` |
+| passed and accepted, on the giver's row | `surface-sunken`, the dish struck through, `to Dinh` |
+| received, on the recipient's row | their own cell as usual, plus `+ 1 from Tèo`, with the portions the meal brought |
+| offer waiting | dashed accent edge, `offered to Thảo Vy` |
+| nothing, day open to record | hairline and a faint `+` |
+| nothing, day not open to record | no edge; the reason on tap, focus and hover |
 
-**Every write says what it is about to do to somebody's money, in figures,
-before it does it** -- what moves, and what that person's balance would become.
-That is a preview and is worded as one. What the database returns afterwards is
-the balance, and that is the only figure the screen states as fact.
+Each cell is one button whose label speaks the whole state, the note in full:
+`Tèo, Wed 30: Bún chả Hà Nội, 2 portions, recorded by an admin. Change`.
 
-**One correction, one person, one save.** No multi-row editing and no "save
-all": a rarely used tool that moves money makes each change a deliberate act,
-and the pending state blocks a second press.
+| Day | Cells | Reason |
+| --- | --- | --- |
+| published, open | open to record | |
+| closed or cooking (cutoff passed, today or ahead) | open to record, and every dialog carries the cutoff warning | |
+| served | open to record | |
+| no menu | inert | `No menu for Tue 22 Sept. Add the day on the Menu screen to record a lunch on it.` |
+| draft | inert | `The menu for Fri 2 Oct isn't published yet` |
+| cancelled | inert | `Lunch was cancelled on Thu 24 Sept` |
+| any day of a settled week | read only | the notice at the top |
 
-Repricing is the one control that reaches several people at once, so it is kept
-away from the rows and its confirmation counts the people, counts the portions,
-and states the money going onto bills and the money coming off them separately.
-A portion that carried no price at all takes the whole new one, and the
-confirmation says how many of those there are.
+### Dialogs
 
-The affected member is told by the database. The screen says so once, above the
-day, rather than on every control.
-What a correction may change is in
-[Ordering rules](ordering-rules.md#orders).
+A tap never writes. It opens one dialog for that person and that day,
+remounted per cell so it never carries the last cell's dish or note. The
+dialog focuses its title, so a stray keypress changes nothing; Escape closes it
+and focus goes back to the cell. It is dismissed with **Close**, never
+"Cancel", because cancelling a meal is one of the things it does. Enter in a
+field saves nothing.
+
+Every write shows its figures directly above the button, worded as what would
+happen and naming the person, and the button names the person too. The toast
+reports the balance the database returned, the only figure stated as fact. A
+refusal is the database's own sentence, in the dialog and in the toast; the
+dialog stays open and the week is read again underneath it, since a refusal
+usually means the week moved.
+
+| Step | What it shows | Button | Toast |
+| --- | --- | --- | --- |
+| add or change | the day line and stage (`Friday 2 October · open until 21:00 Thu 1 Oct`), who made the meal as a sentence (`Tèo ordered this.`, `Recorded by Nguyên on 30/09 14:05.`, `Quy ordered this, and Nguyên changed it on 30/09 15:00.`), the dishes as a radio list with prices ending in `A dish not on the menu` (which asks for its name and price and echoes the price as read; a name that matches a dish already on the day, ignoring case and spacing, says so on a `warn-subtle` line: a priced match is saved as that dish at its own price, which the preview uses; an unpriced one cannot be saved, and Save carries `"Mì Quảng" is already on the menu with no price yet. Set its price with Reprice, then record this meal`), portions as a stepper from 1 to 20, the note, Why, and the preview (`This would put 45.000 ₫ on Tèo's bill. Tèo owes 185.000 ₫ now, and would owe 230.000 ₫.` and `Tèo gets a message saying what you saved.`) | `Save Tèo's meal` | `Saved Tèo's meal. Tèo owes 230.000 ₫.` |
+| remove, a step on | `The record says Tèo had Bún chả Hà Nội × 2.` for a day that is over, `Tèo is down for Phở gà.` ahead, the money off on a `warn-subtle` block, Why | `Remove Tèo's meal` (danger), and Back | `Removed Tèo's meal. Tèo owes 85.000 ₫.` |
+| pass, a step on | `Whoever you pick pays for it instead of Thảo Vy.`, everybody else as a radio list, each saying `has lunch that day` or `nothing that day` (a search above ten people), Why, both people's figures, `Both of them get a message saying what you recorded.` | `Pass to Dinh`, and Back | `Passed Thảo Vy's Bún bò Huế to Dinh.` |
+| a passed meal | the dish and amount, `Tèo passed this meal to Dinh, and Dinh accepted it on 29/09 at 11:20. Dinh pays for it.` (or who recorded it), Why, the figures moving back; Change and Remove stay, and their figures are the payer's | `Undo the pass` (outline) | `Undid the pass. Tèo pays for Cơm tấm sườn again.` |
+| an offer waiting | `Tèo offered this to Thảo Vy, who has not answered.` with `Accept for Thảo Vy`, `Decline for Thảo Vy` and `Withdraw Tèo's offer`, each a step with its figures; the pass link carries `Answer or withdraw the offer first` | the step's own verb | `Accepted Tèo's offer for Thảo Vy.`, `Declined …`, `Withdrew Tèo's offer.` |
+| a settled week | the dish, the full note, who made it, the pass, and that person's changes on the day | Close only | |
+
+**The cutoff warning.** On a day at `Closed` or `Cooking`, a `warn-subtle` note
+tops every step: `Ordering for Thu 1 Oct closed at 21:00 30/09.` and `The
+caterer may already have the count and be cooking. If this adds a portion,
+tell them yourself: the app will not.` No checkbox and no extra step. A served
+day gets none, since the count no longer matters.
+
+**The admin's own row** is treated like anybody else's here: after the cutoff
+too, audited, messaged, with the same warning. On the Board an admin is held to
+the member's clock exactly as before.
+
+What each write may do is in [Ordering rules](ordering-rules.md#orders).
 
 | State | |
 | --- | --- |
-| loading | skeleton shaped like the list |
-| week settled | the week named, the day it closed, and nothing offered |
-| day with no menu | no price to change; a dish served anyway is still recorded against a person, with its own price |
-| meal passed to somebody else | not corrected here. The row says who pays for it now |
-| refused | the database's own sentence, in the dialog and in the toast, and the dialog stays open |
+| loading | a panel block and the Board's skeleton, grid or strip and list |
+| did not load | "The week did not load", the error, and Try again |
+| no menus this week | "No menus this week" and how to add one; the grid still lists who is in the office |
+| a late answer | only the newest load is drawn |
+| settled week | a `surface-sunken` notice: `The week of 21 to 27 September was settled on Mon 28 Sept at 09:00. A settled week is already billed and paid against, so nothing on it can change. Cells open to show what was recorded.` No Reprice, no `+`, no hover |
+| office of one | renders normally |
 
 ## Menu (admin)
 
@@ -675,7 +739,7 @@ one the office wrote:
 | --- | --- |
 | `{companyName}` | the office's name |
 | `{servingDate}` | the day, `24/09` |
-| `{dishes}` | one line per dish ordered, `- Cơm gà: 3`. A dish nobody ordered is left out |
+| `{dishes}` | one line per dish ordered, with its portions, `- Cơm gà: 3`. A dish nobody ordered is left out |
 | `{total}` | portions in all |
 | `{unchosen}` | people eating with no dish chosen, as a number, `0` included |
 
@@ -747,10 +811,11 @@ and `link_token` is not selectable by any browser role.
 
 **Job.** Decide what the office hears automatically, and say something to it now.
 
-**It is in the nav, unlike Corrections.** Correcting a finished day is a rare
-weekend job reached from where it is noticed; deciding what the office hears is
-something an admin comes back to. Route `#/o/<slug>/messages`, and a member who
-follows the link gets the same admin explanation every other admin page gives.
+**It is in the account menu, not the nav,** under Settings, for an admin or
+owner, on every width. It is the least frequent of the chores, and the phone's
+tab bar had no room for a seventh tab once Orders joined it. Route
+`#/o/<slug>/messages`, and a member who follows the link gets the same admin
+explanation every other admin page gives.
 
 Three parts, in the order somebody arrives wanting them: the setting, the
 errand, and the reason nothing works yet.

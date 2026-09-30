@@ -44,9 +44,11 @@ existing one keeps its source.
 
 Locks are taken in one order: the office's materialize lock, menu rows by
 (org, date, id), the billing week's lock, dish rows, the order row, its lines.
-The corrections take the week's lock first and then reach a menu only through a
-foreign key's `FOR KEY SHARE`, so nothing that holds a menu `FOR UPDATE` may
-then wait on a dish, a line, an order or a week. Nothing does any more: a menu
+The corrections hold their day's menu `FOR SHARE` before the week (from
+20261021100000; they used to reach it only through a foreign key), so
+cancelling lunch cannot miss the order a correction writes on a day ahead. A
+foreign key still takes a menu `FOR KEY SHARE`, so nothing that holds a menu
+`FOR UPDATE` may then wait on a dish, a line, an order or a week. Nothing does any more: a menu
 is taken `FOR SHARE` to order on it and `FOR NO KEY UPDATE` to change it,
 neither of which blocks `FOR KEY SHARE`. Two first drafts broke the rule and
 deadlocked, both reproduced in `atomic_writes_race.sql`: `apply_caterer_prices`
@@ -508,6 +510,41 @@ zeroing is kinder than failing a whole re-bill over one code path that has not
 caught up.
 
 ## Interface
+
+**Orders replaced Corrections, and it covers every day, not only finished
+ones.** Corrections put right a day that was over; the owner wanted one place
+where an admin also orders for anybody on request, so the same writes now reach
+any day whose menu is published, before or after the cutoff, until the week is
+settled. After the cutoff it only warns, in the dialog beside the button: the
+caterer may already be cooking, and an extra step would be friction on the
+case that is most often a late verbal order. A draft or cancelled day is
+refused in the database rather than only hidden. A past day with no menu is
+sent to the Menu screen, because a day with no dishes and prices has nothing to
+bill against and Menu already handles past days.
+
+**On Orders an admin can do anything with a pass.** Record one that takes
+effect at once, answer a member's offer on the recipient's behalf, withdraw it,
+and undo an accepted one. The admin is recording what two people already
+agreed, so asking the recipient to accept again in the app adds nothing, and
+refusing to let the admin answer would leave a meal on offer until the
+recipient opened the app. Each is audited and messaged to both people, which
+the old direct insert never was.
+
+**An undone pass is `undone`, not `cancelled`.** `cancelled` already means an
+offer withdrawn before anybody answered, a pass that never took effect.
+Reusing it for "accepted, then reversed" would leave the Bill and the audit
+unable to tell the two apart.
+
+**An admin's own row is ordinary on Orders and unchanged on the Board.** The
+Board is where an admin orders their own lunch, on the member's clock, and it
+stays that way. On Orders the admin's row is a record like everybody else's:
+blocking it would send an admin to ask another admin for a routine fix, and the
+change is audited and messaged either way.
+
+**Messages lives in the account menu.** It is the least frequent of the admin
+chores, and with Orders added the phone's tab bar reached seven items, which
+does not fit at 390px. It moved on every width rather than on phones alone, so
+a page is in one place however it is reached.
 
 **Two tabs for a member: Board and Bill.** Telegram took much of the daily act,
 so the web app keeps the two weekly questions. Standing days, the Telegram link and display

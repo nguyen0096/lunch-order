@@ -55,65 +55,15 @@ from the statement and writing a second sentence for the person with no meals
 in the week, which is a different message rather than the same one with a zero
 in it.
 
-## A board for adjusting what was recorded
+## Removing a dish somebody chose
 
-The five stages stop a member changing a finished day. An admin is exempt, and
-deliberately so: correcting a past day is most of why an admin touches an order
-at all. What is missing is a place to do it.
-
-An admin used to correct a past day through the same board everybody uses,
-which is the board for ordering your own lunch. The two jobs read alike and are
-not alike: one is "what am I eating", the other is "what did Quy actually eat on
-the 14th, because the caterer says five and we say four". They want different
-screens, and the second one wants an audit trail the first does not.
-
-The Board no longer does the second job at all. `Pass <name>'s <dish> to
-someone` has been removed from the handover sheet, and it was the only way, from
-any screen, to record a swap between two other people. That is accepted rather
-than overlooked: the alternative was one admin-only control on the screen whose
-whole rule is that it has none. The database still allows it -- an admin is
-exempt in `enforce_transfer_rules`, and the recorded swap still lands as
-`accepted` -- so this screen has nothing to unlock when it is built, only
-somewhere to put it. Until then the capability has no home.
-
-What it needs:
-
-- Orders and transfers on any day in an open period, with who changed what and
-  when. `meal_transfers` already records `created_by`, `decided_by` and
-  `decided_at`; `orders` records `created_by` and nothing about a later edit.
-- A reason on every adjustment, because the caterer's message is the evidence
-  and it is currently pasted into a textarea that writes nothing.
-- An exploit pass before it ships. Every rule this screen relaxes is a rule
-  that stops a member rewriting their own bill, and an admin-only screen that
-  posts to the same tables is only as safe as `my_admin_org_ids()`. The
-  isolation suite needs a case per relaxed rule: a member reaching the same
-  endpoint, and an admin of another office reaching this one.
-
-**Partly built.** The Corrections screen covers a day's meals: adding one the
-app missed, changing one, removing one, recording a dish that was never on the
-menu, and repricing a dish for a day. Every correction carries an optional
-reason and lands a row in `order_corrections`, which is the audit trail this
-entry asked for. See [screens](reference/screens.md#corrections-admin).
-
-Still open: transfers. A meal that changed hands is shown and refused there
-rather than corrected, because the person who pays for it is no longer the
-person the row names, so recording a swap between two other people still has no
-home. The exploit pass above is also still owed.
-
-Also open: removing a dish somebody chose. The database refuses it while any
-order line names the dish (`order_items_menu_item_fk`), so a wrong dish on a
-published menu stays until each of those orders is changed by hand. An admin
-screen should list who chose it and let the admin move each order to another
-dish or cancel it, then remove the dish, in one transaction. A line the system
-wrote on a one-dish menu does not block removal; see
+The database refuses to remove a dish while any order line names it
+(`order_items_menu_item_fk`), so a wrong dish on a published menu stays until
+each of those orders is changed by hand on the Orders screen. The Menu screen
+should list who chose it and let the admin move each order to another dish or
+cancel it, then remove the dish, in one transaction. A line the system wrote on
+a one-dish menu does not block removal; see
 [One-dish menus](reference/ordering-rules.md#one-dish-menus).
-
-Also open: two admins can deadlock when one records an accepted pass while the
-other changes the same order. It is rare, and one of the two is refused with
-`40P01` and can try again. An off-menu correction that adds a second dish to a
-one-dish day makes it likelier, because `settle_undecided` then locks every
-order the system gave that dish. The fix is for recording a pass to take its
-locks in the documented order ([Database](reference/database.md#invariants)).
 
 ## Paying in advance
 

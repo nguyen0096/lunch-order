@@ -26,12 +26,12 @@ the screens show.
 | Stage | When | A member can | An admin can | Enforced by |
 | --- | --- | --- | --- | --- |
 | no menu (`No menu`) | no menu row for the date | skip or plan a date after today | create a menu for any date, a past one included | `set_standing_exception`, `enforce_menu_not_in_past` (20260930100000) |
-| draft (`Draft`) | saved, not published; members cannot see it | skip or plan a date after today | edit dishes, publish, cancel | `menus_select` policy (rls) |
-| open | published, before the cutoff | order, change, cancel, pass a meal | the same on the Board; edit dishes; cancel lunch | `enforce_order_window` (20261003100100) |
-| locked (`Closed`) | the cutoff passed | offer, accept, decline, withdraw a pass | correct the record; fill in a missing price | `enforce_order_window`, `enforce_menu_item_frozen` (20260928100200) |
+| draft (`Draft`) | saved, not published; members cannot see it | skip or plan a date after today | edit dishes, publish, cancel. Nothing on Orders until it is published | `menus_select` policy (rls), `private.assert_menu_correctable` (20261021100000) |
+| open | published, before the cutoff | order, change, cancel, pass a meal | the same on the Board; edit dishes; cancel lunch; on Orders, anything below for anybody | `enforce_order_window` (20261003100100) |
+| locked (`Closed`) | the cutoff passed | offer, accept, decline, withdraw a pass | on Orders, order, change or remove for anybody, their own row included, and pass, answer or undo a pass; fill in a missing price | `enforce_order_window`, `enforce_menu_item_frozen` (20260928100200) |
 | closed (`Cooking`) | the office's start of day, `business_day_starts_at` (08:30) | the same as locked | the same as locked | `private.day_stage` |
-| done (`Served`) | the office's end of day, `business_day_ends_at` (17:30) | nothing | correct the record; record a pass | `enforce_transfer_rules` (20261001100000) |
-| cancelled (`Cancelled`) | lunch was called off | nothing | nothing, in principle (see [Observed](#observed)) | `enforce_order_window`, `enforce_menu_lifecycle` |
+| done (`Served`) | the office's end of day, `business_day_ends_at` (17:30) | nothing | the same as locked | `enforce_transfer_rules` (20261001100000) |
+| cancelled (`Cancelled`) | lunch was called off | nothing | nothing | `enforce_order_window`, `enforce_menu_lifecycle`, `private.assert_menu_correctable` |
 
 A **settled week** overrides every stage: no insert, update or delete on an
 order or its dishes, by anybody but the service role
@@ -70,8 +70,8 @@ stays open (`hold_period_open_while_unpriced`, 20260928100000).
 
 | Change | draft, published | locked | cancelled | Enforced by |
 | --- | --- | --- | --- | --- |
-| add a dish | yes | no; an off-menu dish only through Corrections | no | `enforce_menu_item_frozen` (20260928100200), `correct_meal_off_menu` |
-| rename or reprice | yes. Orders already placed keep the name and price they took | fill in a missing price only; other repricing through Corrections | no | `enforce_menu_item_frozen`, `snapshot_order_item` (orders), `reprice_dish` |
+| add a dish | yes | no; an off-menu dish only through Orders | no | `enforce_menu_item_frozen` (20260928100200), `correct_meal_off_menu` |
+| rename or reprice | yes. Orders already placed keep the name and price they took | fill in a missing price only; other repricing through Orders | no | `enforce_menu_item_frozen`, `snapshot_order_item` (orders), `reprice_dish` |
 | leave the price empty | yes; orders for it are held out of billing until priced | | | `v_order_charges.unpriced` (20260928100000) |
 | remove | only if no order line names it, in any order status, other than a line the system wrote while the day is open ([One-dish menus](#one-dish-menus)) | no | no | `order_items_menu_item_fk` ON DELETE RESTRICT (orders), `trg_menu_items_hold_menu` |
 
@@ -113,7 +113,8 @@ tappable only while the menu is absent or a draft
 | eating, no dish chosen | from a standing slot, an admin, or `set_my_order` with no dish | an order with no dish line, which a one-dish menu fills. The Board never creates one | `materialize_standing_orders`, `set_my_order` (20261018100000) |
 | cancel (not eating) | same window, own order | `status = cancelled`; the row keeps the slot. Ordering again revives it. No member delete | `orders_update_own` (rls), `enforce_order_window` |
 | after the cutoff | nobody on the Board, admins included | refused with the cutoff in the sentence | `enforce_order_window` |
-| correct a day | an admin, on any day with a menu, until the week is settled | set a person's dish, quantity and note (creating an `admin` order if there was none), add an off-menu dish, remove a meal (cancel), or reprice a dish for everybody. Re-bills the week, writes `order_corrections`, tells the member | `correct_meal`, `correct_meal_off_menu`, `remove_meal`, `reprice_dish` (20261007100200) |
+| order or put right for somebody | an admin, on any day whose menu is published or locked, before or after the cutoff, until the week is settled; their own row included. A draft is refused (`the menu for 02/10 isn't published yet`), and so is a cancelled day (`lunch on 24/09 was cancelled`) | set a person's dish, quantity and note (creating an `admin` order if there was none), add an off-menu dish (a name matching a dish already on the day is that dish at its price; one with no price yet is refused, `"Phở bò" is already on the menu with no price yet. Set its price with Reprice, then record this meal`, because pricing it for one person would leave everybody else's lines of it unpriced), remove a meal (cancel), or reprice a dish for everybody. Re-bills the week, writes `order_corrections`, tells the member | `correct_meal`, `correct_meal_off_menu`, `remove_meal`, `reprice_dish` (20261021100000) |
+| an admin's order ahead | the member, before the cutoff | the member can still change or cancel it on the Board; it keeps `source = admin` | `set_my_order`, `enforce_order_window` |
 | `source = admin` | only an admin may write it; it is exempt from the clock, not from a cancelled menu or a settled week | | `guard_order_source`, `enforce_order_window` (20261003100100) |
 
 ### Passing a meal
@@ -123,12 +124,26 @@ tappable only while the menu is absent or a draft
 | offer | the person whose placed order it is | a member: the day is done. An admin: the week is settled | `enforce_transfer_rules` (20261001100000) |
 | accept or decline | the recipient | same | `enforce_transfer_rules` |
 | withdraw | the person who offered | same | `enforce_transfer_rules` |
-| record a pass between two others | an admin; it is accepted at once | the week is settled | `enforce_transfer_rules` |
+| record a pass | an admin, from anybody to anybody else, their own meal included; accepted at once, no answer needed | the week is settled; not on a draft or cancelled day | `record_pass` (20261021100100) |
+| accept, decline or withdraw on somebody's behalf | an admin, on a pending offer | same | `answer_pass` |
+| undo an accepted pass | an admin; the meal goes back on the giver's bill | same | `undo_pass` |
+
+A pass ends `accepted`, `declined`, `cancelled` (withdrawn) or `undone`.
+`undone` means it happened and was reversed later, so the record can tell it
+from one that never took effect; `undone_at` and `undone_by` say when and who,
+and `decided_at` keeps the acceptance. Only `undo_pass` writes it. A browser
+may only move a pending pass to accepted, declined or cancelled, and a
+member's insert is always a pending offer, whatever status it carries
+(`enforce_transfer_rules`, 20261021100100).
 
 One live (pending or accepted) pass per order, no chains, never to yourself
-(`transfers_one_live_uk`, `transfers_not_self_ck`). Once accepted, the
-recipient pays. A pass is never deleted, by anybody; it ends by being declined
-or withdrawn (20261020100100). The Board holds admins to the member's window
+(`transfers_one_live_uk`, `transfers_not_self_ck`). `record_pass` says which
+live pass is in the way: an offer to answer or withdraw first, or a pass to
+undo first. Each admin pass write is one transaction: it re-bills the week,
+writes an `order_corrections` row (`pass`, `pass_declined`, `pass_withdrawn`,
+`pass_undone`, naming the pass) and tells both people. Once accepted, the
+recipient pays. A pass is never deleted, by anybody; it ends by being declined,
+withdrawn or undone (20261020100100). The Board holds admins to the member's window
 ([Passing a meal](screens.md#passing-a-meal)).
 
 ## Billing
@@ -167,7 +182,7 @@ balance is above 0 (20261017200000).
 | `menu_published` | first hourly tick after publish, while the cutoff is ahead; once per date | the group chat, and every active member with Telegram linked | `org_notifications`, default on |
 | `cutoff_warning` | the first tick within 70 minutes (60 to 1440) of the cutoff | the group and every linked member, ordered or not | default on, 70 |
 | `weekly_bill` | billing day, from 09:00 | a group summary; each member whose account is owed | default on, 09:00. Off stops the message, not the billing |
-| `bill_correction` | every correction | the order's owner and its payer | none |
+| `bill_correction` | every correction, and every pass an admin records, answers or undoes | the order's owner and its payer; for a pass, both people | none |
 | `dish_choice` | a one-dish menu gains a dish while open | each person whose system-written line it took back and who is still eating | none |
 | `transfer_offer` | a member offers a meal | the recipient | none |
 | `transfer_decided` | the recipient accepts or declines | the person who offered | none |
@@ -176,9 +191,18 @@ balance is above 0 (20261017200000).
 Sources: `run_hourly_tick` (20261009100000), `private.enqueue_correction`
 (20261007100200), `trg_transfer_notifies` (20261009100200),
 `trg_payment_apply` (20261013100200), `private.settle_undecided`
-(20261018100000). Only members who finished `/start` get a private message.
-There is no message for cancelling lunch, for a withdrawn pass, for a pass an
-admin recorded, or for a menu changed after publishing, beyond `dish_choice`.
+(20261018100000), `private.enqueue_pass` (20261021100100). Only members who
+finished `/start` get a private message. There is no message for cancelling
+lunch, for a member withdrawing their own offer, or for a menu changed after
+publishing, beyond `dish_choice`.
+
+A correction's first line depends on the day. For the person who eats it, on a
+day not yet over: `Nguyên ordered lunch for you on 02/10.` or `Nguyên
+cancelled your lunch on 02/10.` Otherwise, and for every reprice: `Lunch on
+02/10 was corrected by Nguyên.` A pass message says what the admin did from
+where the reader stands, for example `Nguyên recorded that Dinh had your lunch
+on 28/09 (Bún bò Huế, 50.000 ₫), so it is on Dinh's bill rather than yours.`
+When an admin answers an offer, `transfer_decided` is not sent as well.
 
 ## Observed
 
@@ -191,17 +215,18 @@ Surprises in the code as it stands. None is fixed here.
 5. Since reopening was removed, `Cooking` enforces nothing that `Closed` does not; it is a label (`refuse_reopen`, 20261006100000).
 6. `locked → cancelled` is a legal transition that the stage check always refuses (`enforce_menu_lifecycle`, 20261003100200).
 7. `published → draft` is still accepted by the database when no order exists, although decisions.md says un-publishing was removed (`enforce_menu_lifecycle`).
-8. Corrections check only the week, not the day's stage or status: an admin can correct an open or future day, and `correct_meal` on a cancelled day revives the order and bills it, so a cancelled menu's orders do leave `cancelled` (`private.replace_order_line`, `private.correction_period`).
+8. `reprice_dish` checks only the week, not the menu's status, so it reprices a dish on a draft or cancelled menu; the other corrections refuse both (`reprice_dish`, 20261021100000).
 9. An admin can write `source = admin` straight to the table and bypass the clock on any non-cancelled menu, draft included, with no `order_corrections` row (`orders_admin_all` rls, `guard_order_source`).
 10. "Eating, no dish chosen" on a menu of several dishes is billed as a 0 meal and counted in the weekly message's meal count (`v_order_charges`, `run_billing_inner`).
 11. A dish chosen by somebody who later cancelled still cannot be removed; cancelling keeps the order's lines (`order_items_menu_item_fk`).
-12. The database allows several dishes on one order; the Board and Corrections always write one (`order_items_one_per_dish_uk` allows distinct dishes).
+12. The database allows several dishes on one order; the Board and Orders always write one (`order_items_one_per_dish_uk` allows distinct dishes).
 13. A member can cancel an order while a pass on it is pending or accepted; the recipient is not told and pays nothing (`enforce_transfer_rules` checks order status on offer only).
 14. Leaving or being removed keeps already-created future orders placed and billed (`leave_office`, 20261002100000; no trigger on memberships).
 15. A member added back with a rule on gets no standing order for a menu already published; the Board still projects `Standing` there (`trg_standing_materialize` fires on rule writes only; `projectStandingDays` ignores menu status).
 16. Every guard exempts `private.is_service()`, which is true inside any `SECURITY DEFINER` function owned by `postgres`; the corrections RPCs therefore check the settled week themselves (20261007100200 header).
 17. The menu message is written once per date when first enqueued; later dish changes are never announced to the group, only to those a second dish puts back to undecided (`run_hourly_tick`, dedupe key per date).
 18. A second dish added before the first hourly tick after publishing queues `dish_choice` to the people it puts back before `menu_published` reaches anybody, so their first message about the day asks them to choose (`private.settle_undecided`, `run_hourly_tick`).
+19. An admin can still insert a pass for somebody else's meal straight into `meal_transfers`, where it is accepted at once with no `order_corrections` row and no message; no screen does this any more, and Orders uses `record_pass` (`enforce_transfer_rules`, `transfers_admin_all` rls).
 
 ## One-dish menus
 
