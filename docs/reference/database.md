@@ -32,6 +32,8 @@ and whether it rolls back. The ones to know first:
 | `zero_due_week.sql` | the hourly tick bills and closes a week in which somebody's only order has no dish: 0-due weeks are paid and dated, credit and advance payments untouched, the weekly bill sent only to who owes | no, rolls back |
 | `one_dish.sql` | a one-dish menu gives every undecided slot its dish, marked as the system's, at publish, on a removal down to one and for a slot made later; a second dish takes back only those lines and asks only those people with Telegram, once; nothing after the cutoff, in a settled week, on a rename or in another office | no, rolls back |
 | `one_dish_race.sql` | over dblink: a dish added while a member chooses the one dish, both ways round, and a publish while a weekday rule is turned on, both ways round | **yes, then removes them**; local only, needs `dblink` |
+| `rebill_statements.sql` | a re-bill leaves every statement equal to its lines: a person's last meal of the week leaving (removed after an off-menu or menu correction, passed on, cancelled) deletes the statement and returns their credit, a changed dish or price updates it, a second meal shrinks it; credit over two weeks, a settled week and a waived one; declined and withdrawn passes move nothing, and nobody deletes a pass; the other office unchanged | no, rolls back |
+| `rebill_race.sql` | over dblink: removing somebody's only meal while their payment is being moved, both ways round, waits rather than deadlocks and leaves nobody owing | **yes, then removes them**; local only, needs `dblink` |
 | `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
@@ -144,7 +146,18 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   then takes the menu `FOR KEY SHARE`. So a menu is taken `FOR SHARE` to order
   on it and `FOR NO KEY UPDATE` to change it, never `FOR UPDATE`. The hourly
   tick's plain `UPDATE` of due menus, in scan order, is the one known exception;
-  see [Decisions](../decisions.md#platform).
+  see [Decisions](../decisions.md#platform). Money comes after: `run_billing`
+  holds the week, then the payments on its statements, then each person in
+  profile order (`private.reallocate`), because `move_payment` and
+  `void_payment` take the payment before the person.
+- **A statement is the sum of its lines.** Every re-bill recalculates every
+  statement in the week, to zero when no line is left, reallocates each of
+  those people, and then deletes a statement with no lines (waived or not).
+  A payment that pointed at it is re-pointed at the person's newest week
+  holding money (`private.payment_frontier`), or at nothing.
+- **A pass is never deleted.** No browser role holds DELETE on
+  `meal_transfers`; a pass ends as `declined` or `cancelled`, which
+  `enforce_transfer_rules` checks and `trg_transfer_rebills` bills.
 - **A browser writes no dish.** `menu_items` is written by `publish_menu` and
   the corrections, each holding the menu before the dish, because a dish
   change takes its menu from a row trigger and a delete has locked its row

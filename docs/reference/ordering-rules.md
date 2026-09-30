@@ -127,7 +127,8 @@ tappable only while the menu is absent or a draft
 
 One live (pending or accepted) pass per order, no chains, never to yourself
 (`transfers_one_live_uk`, `transfers_not_self_ck`). Once accepted, the
-recipient pays. The Board holds admins to the member's window
+recipient pays. A pass is never deleted, by anybody; it ends by being declined
+or withdrawn (20261020100100). The Board holds admins to the member's window
 ([Passing a meal](screens.md#passing-a-meal)).
 
 ## Billing
@@ -146,6 +147,11 @@ declined or withdrawn (`trg_transfer_rebills`, 20261004100000). A member's own
 order change reaches the bill at the next of those. A settled week is never
 recomputed, and money already matched to it stays there
 (`private.reallocate`, 20261007090000).
+
+Each re-bill recalculates every statement in the week from its lines, and
+deletes one left with no lines. So when somebody's last meal of the week goes
+(removed, passed on, cancelled, or its price taken away), that week stops
+charging them and any credit it held is theirs again (20261020100000).
 
 A placed order with no dish line bills at 0; a statement whose meals come to 0
 is paid, takes none of the person's credit, and gets `paid_at` when it is
