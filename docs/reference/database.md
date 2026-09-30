@@ -29,6 +29,7 @@ and whether it rolls back. The ones to know first:
 | `standing_exceptions.sql` | a skip keeps publishing from ordering for you, a plan makes it order with no dish; only your own row, only in your office, only after today on a day with no published menu and no order of yours; exceptions survive rule changes | no, rolls back |
 | `atomic_writes.sql` | `set_my_order`, `publish_menu` and `apply_caterer_prices` refuse what the guards would have, in their words, across offices, past the cutoff and on a settled week, and a refusal part way leaves nothing written; a weekday rule's sweep holds only its own office's menus of that weekday | no, rolls back |
 | `atomic_writes_race.sql` | two sessions at once over dblink: two taps leave one dish, cancelling lunch and an order in flight wait for each other, pricing the week and a correction do not deadlock, nor a republish and an off-menu record, one office's sweep does not hold another's menus, a skip during a publish is refused, two drains never claim one message | **yes, then removes them**; local only, needs `dblink` |
+| `zero_due_week.sql` | the hourly tick bills and closes a week in which somebody's only order has no dish: 0-due weeks are paid and dated, credit and advance payments untouched, the weekly bill sent only to who owes | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -139,6 +140,11 @@ These are not style preferences. Breaking one corrupts money or leaks data.
 - **A dish choice replaces the dish line.** The line is deleted and a fresh
   `order_items` row written, never updated in place, and the member's own new
   order is `source = 'member'`.
+- **A week with nothing due is paid.** A placed order with no dish line bills
+  at 0; a statement whose meals come to 0 is `paid`, takes none of the person's
+  credit, and gets `paid_at` when it is settled (kept on a re-bill), since
+  `billing_statements_paid_ck` ties `paid` to a date. The weekly bill goes only
+  to somebody whose balance is above 0.
 - **Order prices are snapshotted** by trigger on write, and again into
   `billing_lines` at period close, so editing a menu can never rewrite a past bill.
 - **`VITE_`-prefixed variables are inlined into the browser bundle.** A secret
