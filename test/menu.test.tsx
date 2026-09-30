@@ -10,6 +10,8 @@ import {
   adoptIds,
   changeSummary,
   dishChanges,
+  renameClash,
+  renameRow,
   type DishRow,
 } from "../src/web/components/menu/DishRows.js";
 import {
@@ -1836,6 +1838,157 @@ describe("Which saved dish each row is", () => {
       within(await screen.findByRole("dialog")).getByText(/^2 new dishes, orders close /),
     ).toBeInTheDocument();
   });
+  // A cancelled order keeps its lines, and the foreign key restricts the
+  // delete, so a dish nobody is eating any more is still held on the record.
+  it("holds a dish ordered and cancelled, and says so plainly", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }), takers: new Map([[102, []]]) });
+    renderMenu();
+    await ready();
+
+    // No names to ring, but the remove button already refuses.
+    const remove = screen.getByRole("button", { name: "Remove Bún bò" });
+    await waitFor(() => expect(remove).toHaveAttribute("aria-disabled", "true"));
+    expect(screen.queryByText(/Ordered by/)).not.toBeInTheDocument();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+
+    expect(within(removedList()!).getByRole("listitem")).toHaveTextContent(
+      "Was ordered and cancelled; it stays on the record, so removing it will be refused.",
+    );
+    expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText(
+        '"Bún bò" was ordered and cancelled; it stays on the record, so it cannot be removed. Keep it, or mark its new row as the same dish',
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("names the dish when the database refuses its removal, and reads the orders again", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    publishMenu.mockRejectedValue(new api.DishInUseError(102));
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+    const reads = fetchDishTakers.mock.calls.length;
+    // Nobody yet as the dialog opens; Tèo by the time the write lands.
+    fetchDishTakers.mockResolvedValueOnce(new Map()).mockResolvedValue(new Map([[102, ["Tèo"]]]));
+
+    await user.click(publishButton());
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Publish" });
+    await waitFor(() => expect(confirm).not.toHaveAttribute("aria-disabled", "true"));
+    await user.click(confirm);
+
+    await waitFor(() =>
+      expect(failure).toHaveBeenCalledWith(
+        '"Bún bò" has an order on it, so it cannot be removed. Keep it, or mark its new row as the same dish.',
+      ),
+    );
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // Read again on the way in and after the refusal, and the list now says whose.
+    expect(fetchDishTakers.mock.calls.length).toBeGreaterThan(reads);
+    expect(
+      await within(removedList()!).findByText(
+        "Ordered by Tèo. Removing a dish somebody chose will be refused.",
+      ),
+    ).toBeInTheDocument();
+    // The re-parse survives: nothing reloaded the rows.
+    expect(screen.getByDisplayValue("Bún bò Huế")).toBeInTheDocument();
+  });
+
+  it("reads the orders again as the confirmation opens, and holds a dish chosen meanwhile", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+    expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
+
+    // Tèo orders Bún bò while the admin is checking the list.
+    fetchDishTakers.mockResolvedValue(new Map([[102, ["Tèo"]]]));
+    await user.click(publishButton());
+    const dialog = await screen.findByRole("dialog");
+
+    const reason =
+      '"Bún bò" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish';
+    expect(await within(dialog).findByText(`${reason}.`)).toBeInTheDocument();
+    const confirm = within(dialog).getByRole("button", { name: "Publish" });
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    await user.click(confirm);
+    expect(publishMenu).not.toHaveBeenCalled();
+  });
+
+  it("refuses two kept dishes trading names in one publish, with the reason", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    const first = screen.getByLabelText("Dish 1 name");
+    const second = screen.getByLabelText("Dish 2 name");
+    await user.clear(first);
+    await user.type(first, "Bún bò");
+    await user.clear(second);
+    await user.type(second, "Cơm gà");
+
+    // publish_menu renames #101 first, while #102 still holds "Bún bò".
+    expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText(
+        '"Bún bò" passes from #102 to #101 in one publish, which the database refuses. Publish one of the renames first, then the other',
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("gives a typed row the id of a removed dish whose name it matches, and takes it back", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k");
+    expect(within(removedList()!).getByText("Bún bò")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Add a dish" }));
+    const typed = screen.getByLabelText("Dish 2 name");
+    await user.type(typed, "bún bò");
+
+    expect(identityOf("bún bò")).toBe("Saved dish #102, updated in place");
+    expect(removedList()).not.toBeInTheDocument();
+
+    // Typing on is a different dish, so the id goes back.
+    await user.type(typed, " Huế");
+    expect(identityOf("bún bò Huế")).toBe("New dish, added when you publish");
+    expect(within(removedList()!).getByText("Bún bò")).toBeInTheDocument();
+
+    await user.clear(typed);
+    await user.type(typed, "Bún bò");
+    await user.type(screen.getByLabelText("Price of Bún bò"), "50k");
+    expect(await publishAndSend(user)).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 45_000 },
+      { id: 102, name: "Bún bò", priceMinor: 50_000 },
+    ]);
+  });
+
+  it("does not hand a typed row an id another row still carries", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await user.click(screen.getByRole("button", { name: "Add a dish" }));
+    await user.type(screen.getByLabelText("Dish 3 name"), "Bún bò");
+
+    expect(screen.getAllByDisplayValue("Bún bò")).toHaveLength(2);
+    const third = screen.getByLabelText("Dish 3 name");
+    const tag = document.getElementById(third.getAttribute("aria-describedby")!);
+    expect(tag?.textContent).toBe("New dish, added when you publish");
+  });
+
 });
 
 describe("The identity rules, on their own", () => {
@@ -1871,6 +2024,25 @@ describe("The identity rules, on their own", () => {
     // 101 renamed by hand to "Cơm gà rán"; a parse bringing "Cơm gà rán" keeps 101.
     const out = adoptIds([row("Cơm gà rán")], [row("Cơm gà rán", 101)], saved);
     expect(out.map((r) => r.id)).toEqual([101]);
+  });
+
+  it("lets a kept dish take a name another gives up earlier in the list", () => {
+    // #102 is renamed first, so "Bún bò" is free by the time #101 takes it.
+    expect(renameClash([row("Bún bò Huế", 102), row("Bún bò", 101)], saved)).toBeNull();
+    expect(renameClash([row("Bún bò", 101), row("Bún bò Huế", 102)], saved)).toBe(
+      '"Bún bò" passes from #102 to #101 in one publish, which the database refuses. Publish one of the renames first, then the other',
+    );
+    // A removed dish's name is free: removals run first.
+    expect(renameClash([row("Bún bò", 101)], saved)).toBeNull();
+    // A new row may take any name given up: additions run last.
+    expect(renameClash([row("Cơm gà rán", 101), row("Cơm gà")], saved)).toBeNull();
+  });
+
+  it("a typed match holds only while the name matches; a pick or a saved row keeps its id", () => {
+    const typed = renameRow(row(""), "Bún bò", [], saved);
+    expect(typed).toMatchObject({ id: 102, typedMatch: true });
+    expect(renameRow(typed, "Bún bò Huế", [], saved)).toMatchObject({ id: null, typedMatch: false });
+    expect(renameRow(row("Bún bò", 102), "Bún bò Huế", [], saved).id).toBe(102);
   });
 
   it("counts updated, new and removed against the saved menu", () => {

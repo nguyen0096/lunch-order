@@ -14,6 +14,23 @@ import type { MenuStatus } from "../../shared/types.js";
 /** `priceMinor` null means the caterer has not priced it yet. */
 export type DraftDish = { id?: number; name: string; priceMinor: number | null };
 
+/**
+ * Publishing tried to delete a dish that an order line still points at.
+ *
+ * `order_items_menu_item_fk` is `on delete restrict`, and a cancelled order
+ * keeps its lines, so this is reachable even when nobody is eating the dish.
+ * `dishId` is read from the refusal's detail; the caller knows the dish's
+ * name and says the sentence.
+ */
+export class DishInUseError extends Error {
+  constructor(readonly dishId: number | null) {
+    super(
+      "A dish being removed has an order on it, so it cannot be removed. Keep it, or mark its new row as the same dish.",
+    );
+    this.name = "DishInUseError";
+  }
+}
+
 export type PublishResult = {
   menuId: number;
   dishes: number;
@@ -57,7 +74,14 @@ export async function publishMenu(args: {
     p_source_text: args.sourceText,
     p_parse_meta: args.parseMeta,
   });
-  if (error) throw error;
+  if (error) {
+    if (error.code === "23503" && /order_items_menu_item_fk/.test(error.message)) {
+      // `Key (id, menu_id)=(231, 11) is still referenced from table "order_items".`
+      const id = /Key \([^)]*\)=\((\d+)/.exec(error.details ?? "")?.[1];
+      throw new DishInUseError(id === undefined ? null : Number(id));
+    }
+    throw error;
+  }
 
   const row = (data as Array<{
     menu_id: number; standing_orders: number; was_update: boolean;
@@ -185,20 +209,37 @@ export async function fetchPublishImpact(args: {
  *
  * Read from `order_items` rather than `orders`: an order with no dish chosen
  * belongs to nobody's dish and must not be counted against one. Nor does a
- * line the system wrote on a one-dish menu: nobody chose it, and the dish can
- * be removed with it on.
+ * line the system wrote on a one-dish menu: nobody chose it, and
+ * `trg_menu_items_hold_menu` deletes it with its dish.
+ *
+ * Every other line counts, whatever its order's status. A cancelled order
+ * keeps its lines and `order_items_menu_item_fk` restricts the delete, so a
+ * dish chosen and then cancelled cannot be removed either. Such a dish is in
+ * the map with no names: nobody to ring, but still on the record.
  */
 export async function fetchDishTakers(menuId: number): Promise<Map<number, string[]>> {
   const { data, error } = await supabase
     .from("order_items")
     .select("menu_item_id, profile_id, orders!inner(status)")
     .eq("menu_id", menuId)
-    .eq("auto_assigned", false)
-    .eq("orders.status", "placed");
+    .eq("auto_assigned", false);
   if (error) throw error;
 
-  const ids = [...new Set((data ?? []).map((r) => r.profile_id as string))];
-  if (ids.length === 0) return new Map();
+  const lines = (data ?? []) as unknown as Array<{
+    menu_item_id: number | null;
+    profile_id: string;
+    orders: { status: string } | Array<{ status: string }> | null;
+  }>;
+  const placed = (r: (typeof lines)[number]) => {
+    const o = Array.isArray(r.orders) ? r.orders[0] : r.orders;
+    return o?.status === "placed";
+  };
+
+  const out = new Map<number, string[]>();
+  for (const r of lines) if (r.menu_item_id !== null) out.set(r.menu_item_id, []);
+
+  const ids = [...new Set(lines.filter(placed).map((r) => r.profile_id))];
+  if (ids.length === 0) return out;
 
   // Names come from the membership, not the profile: an office knows people by
   // what they are called at work, and that is the column the board uses too.
@@ -212,14 +253,10 @@ export async function fetchDishTakers(menuId: number): Promise<Map<number, strin
     (people ?? []).map((m) => [m.profile_id as string, (m.display_name as string | null) ?? ""]),
   );
 
-  const out = new Map<number, string[]>();
-  for (const row of data ?? []) {
-    const id = row.menu_item_id as number | null;
-    if (id === null) continue;
-    const name = names.get(row.profile_id as string) ?? "";
-    const list = out.get(id) ?? [];
-    list.push(name === "" ? "Somebody" : name);
-    out.set(id, list);
+  for (const row of lines) {
+    if (row.menu_item_id === null || !placed(row)) continue;
+    const name = names.get(row.profile_id) ?? "";
+    out.get(row.menu_item_id)?.push(name === "" ? "Somebody" : name);
   }
   for (const [, list] of out) list.sort((a, b) => a.localeCompare(b));
   return out;

@@ -35,6 +35,12 @@ export type DishRow = {
    */
   seeded: ItemWarning[];
   seededPrice: string;
+  /**
+   * The id came from typing a removed dish's exact name, so typing on lets it
+   * go again. A parse's match, a pick and a saved row keep theirs: editing
+   * those is a rename.
+   */
+  typedMatch?: boolean;
 };
 
 let sequence = 0;
@@ -362,24 +368,83 @@ function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
-/** Null when the dish can go; otherwise why the database will refuse it. */
+/**
+ * Null when the dish can go; otherwise why the database will refuse it.
+ *
+ * A dish in `takers` with no names was chosen on orders since cancelled: the
+ * lines stay on the record, and the foreign key refuses the delete just the
+ * same.
+ */
 function removeReason(id: number | null, takers: Map<number, string[]>): string | null {
+  if (id === null || !takers.has(id)) return null;
   const note = takerNote(id, takers);
-  return note === null ? null : `${note}. Removing a dish somebody chose will be refused`;
+  return note === null
+    ? "Was ordered and cancelled; it stays on the record, so removing it will be refused"
+    : `${note}. Removing a dish somebody chose will be refused`;
 }
 
 /**
- * Why Publish would be refused, or null: a dish somebody chose is no longer in
- * the list. The same fact the remove button refuses on, reached by a re-parse
- * instead of a press.
+ * Why Publish would be refused, or null: a dish with an order on it is no
+ * longer in the list. The same fact the remove button refuses on, reached by
+ * a re-parse instead of a press.
  */
 export function removedOrderedReason(
   removed: SavedDish[],
   takers: Map<number, string[]>,
 ): string | null {
-  const ordered = removed.find((d) => takerNote(d.id, takers) !== null);
-  if (ordered === undefined) return null;
-  return `"${ordered.name}" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish`;
+  const held = removed.find((d) => takers.has(d.id));
+  if (held === undefined) return null;
+  return takerNote(held.id, takers) === null
+    ? `"${held.name}" was ordered and cancelled; it stays on the record, so it cannot be removed. Keep it, or mark its new row as the same dish`
+    : `"${held.name}" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish`;
+}
+
+/**
+ * A name typed into a row. A row with no dish yet takes the id of a saved
+ * dish no other row carries whose name it now matches, by the same rule a
+ * parse matches on; one that took an id that way gives it back when the name
+ * stops matching. Every other row just changes its name.
+ */
+export function renameRow(
+  row: DishRow,
+  name: string,
+  rows: DishRow[],
+  saved: SavedDish[],
+): DishRow {
+  const next = { ...row, name };
+  if (row.id !== null && row.typedMatch !== true) return next;
+  const claimed = new Set(rows.filter((r) => r.key !== row.key).map((r) => r.id));
+  const match = saved.find((d) => nameKey(d.name) === nameKey(name) && !claimed.has(d.id));
+  if (match !== undefined) return { ...next, id: match.id, typedMatch: true };
+  return row.typedMatch === true ? { ...next, id: null, typedMatch: false } : next;
+}
+
+/**
+ * Why Publish would be refused, or null: a kept dish takes a name another kept
+ * dish only gives up later in the same publish.
+ *
+ * `publish_menu` renames kept dishes one at a time in list order, and
+ * `menu_items_name_uk` is checked on each, so the first of a swap, or of a
+ * chain where the later row gives the name up, meets the name still in use.
+ * A removed dish's name is free (removals go first), and so is any name for a
+ * new row (additions go last).
+ */
+export function renameClash(rows: DishRow[], saved: SavedDish[]): string | null {
+  const savedById = new Map(saved.map((d) => [d.id, d]));
+  const holder = new Map<string, { id: number; index: number }>();
+  rows.forEach((r, index) => {
+    const was = r.id === null ? undefined : savedById.get(r.id);
+    if (was !== undefined) holder.set(nameKey(was.name), { id: was.id, index });
+  });
+  for (let i = 0; i < rows.length; i += 1) {
+    const r = rows[i]!;
+    if (r.id === null || !savedById.has(r.id)) continue;
+    const h = holder.get(nameKey(r.name));
+    if (h !== undefined && h.id !== r.id && h.index > i) {
+      return `"${r.name.trim()}" passes from #${h.id} to #${r.id} in one publish, which the database refuses. Publish one of the renames first, then the other`;
+    }
+  }
+  return null;
 }
 
 /** The messages for one field, rendered under it. */
@@ -566,7 +631,7 @@ export function DishRows({
                     label={label}
                     current={renamed ? was : undefined}
                     removed={removed}
-                    onPick={(id) => onChange(row.key, { id })}
+                    onPick={(id) => onChange(row.key, { id, typedMatch: false })}
                   />
                 )}
                 {takerNote(row.id, takers) !== null && (

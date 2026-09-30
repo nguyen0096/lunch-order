@@ -9,6 +9,7 @@ import {
   fetchPublishImpact,
   humanError,
   publishMenu,
+  DishInUseError,
   type EditableMenu,
   type PublishImpact,
 } from "../api.js";
@@ -20,6 +21,8 @@ import {
   dishChanges,
   duplicateName,
   removedOrderedReason,
+  renameClash,
+  renameRow,
   rowFromAssist,
   rowFromLine,
   rowFromMenu,
@@ -289,25 +292,64 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   /* ------------------------------------------------------------- mutations */
 
+  /**
+   * Who has ordered what, read again. Only the load fetched it before, so an
+   * order placed while the admin was checking the list reached nobody until
+   * the database refused the publish. A failure keeps what is on screen: the
+   * database still refuses the write either way.
+   */
+  const refreshTakers = useCallback(async () => {
+    if (menu === null) return;
+    const mine = latest.current;
+    try {
+      const next = await fetchDishTakers(menu.id);
+      if (mine === latest.current) setTakers(next);
+    } catch {
+      // Keep the list already on screen.
+    }
+  }, [menu]);
+
+  const [checking, setChecking] = useState(false);
+  const openPublish = useCallback(() => {
+    setConfirming(true);
+    setChecking(true);
+    void refreshTakers().finally(() => setChecking(false));
+  }, [refreshTakers]);
+
   const publish = useAction(
-    async () =>
-      publishMenu({
-        orgId: org.id,
-        profileId: me.profileId,
-        serviceDate,
-        cutoffAt,
-        dishes: toDrafts(rows),
-        sourceText: text,
-        // The evidence trail `parse_meta` exists for: which reader produced
-        // this list, and how much of the message it could not place.
-        parseMeta: {
-          readBy,
-          model,
-          dishes: rows.length,
-          unreadLines: parsed?.unparsed.length ?? 0,
-          publishedFrom: "web",
-        },
-      }),
+    async () => {
+      try {
+        return await publishMenu({
+          orgId: org.id,
+          profileId: me.profileId,
+          serviceDate,
+          cutoffAt,
+          dishes: toDrafts(rows),
+          sourceText: text,
+          // The evidence trail `parse_meta` exists for: which reader produced
+          // this list, and how much of the message it could not place.
+          parseMeta: {
+            readBy,
+            model,
+            dishes: rows.length,
+            unreadLines: parsed?.unparsed.length ?? 0,
+            publishedFrom: "web",
+          },
+        });
+      } catch (e) {
+        if (!(e instanceof DishInUseError)) throw e;
+        // The check before the dialog missed an order placed since. Read the
+        // orders again so the removed list says whose, and name the dish.
+        setConfirming(false);
+        void refreshTakers();
+        const name = saved.find((d) => d.id === e.dishId)?.name;
+        throw name === undefined
+          ? e
+          : new Error(
+              `"${name}" has an order on it, so it cannot be removed. Keep it, or mark its new row as the same dish.`,
+            );
+      }
+    },
     {
       success: (r) =>
         r.standingOrders > 0 ? `Published · ordered for ${people(r.standingOrders)}` : "Published",
@@ -349,9 +391,18 @@ export function MenuScreen({ me, org }: ScreenProps) {
     setModel(null);
   }, [text, today, currency, saved]);
 
-  const patchRow = useCallback((key: string, patch: Partial<DishRow>) => {
-    setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
-  }, []);
+  const patchRow = useCallback(
+    (key: string, patch: Partial<DishRow>) => {
+      setRows((rs) =>
+        rs.map((r) => {
+          if (r.key !== key) return r;
+          const onlyName = patch.name !== undefined && Object.keys(patch).length === 1;
+          return onlyName ? renameRow(r, patch.name!, rs, saved) : { ...r, ...patch };
+        }),
+      );
+    },
+    [saved],
+  );
 
   const removeRow = useCallback((key: string) => {
     setRows((rs) => rs.filter((r) => r.key !== key));
@@ -422,6 +473,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
     publishDisabledReason(drafts, serviceDate) ??
     (duplicate === null ? null : `Two rows are called "${duplicate}". Rename one`) ??
     removedOrderedReason(changes.removed, takers) ??
+    renameClash(rows, saved) ??
     cutoffIssue;
 
   const parseReason = frozen ?? (text.trim() === "" ? "Paste the caterer's message first" : null);
@@ -774,7 +826,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
             <Action
               reason={publishReason}
               pending={publish.pending}
-              onClick={() => setConfirming(true)}
+              onClick={openPublish}
             >
               Publish
             </Action>
@@ -800,6 +852,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
         <PublishDialog
           open
           onOpenChange={setConfirming}
+          reason={checking ? "Checking who has ordered" : publishReason}
           org={org}
           serviceDate={serviceDate}
           status={status}

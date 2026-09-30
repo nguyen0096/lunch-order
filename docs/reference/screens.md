@@ -594,17 +594,31 @@ publish".
   index), looked for first among the rows on screen, then among the saved
   dishes, so a dish an earlier parse dropped is recognised when a later one
   brings it back. Each id goes to one row. A reworded name is `New`.
-- **Editing a name by hand** keeps the id: it is a rename.
+- **Editing a name by hand** keeps the id: it is a rename. A row with no id
+  whose typed name matches a saved dish no other row carries takes that id,
+  by the same rule, and gives it back if typing goes on past the match.
 - **Same dish as.** A `New` row, while any saved dish is about to be removed,
   offers a select of those dishes. Choosing one gives the row its id, so a
   reworded dish becomes a rename and keeps its orders. A renamed row shows the
   same select set to the dish it renames, and `None, a new dish` detaches it.
 - **Will be removed** lists, under the table, the saved dishes no row carries,
-  struck through, with id and price. One somebody chose names who and says
-  removing it will be refused; Publish then carries the reason (`"Bún bò"
-  would be removed, and somebody chose it. Keep it, or mark its new row as the
-  same dish`). **Keep** puts a dish back at its saved place with its id and
-  moves focus to its name box.
+  struck through, with id and price. A dish with an order line on it cannot
+  be deleted (`order_items_menu_item_fk`), and a cancelled order keeps its
+  lines, so every line counts except those the system wrote on a one-dish
+  menu, which go with their dish. One chosen on a placed order names who; one
+  chosen only on cancelled orders says it was ordered and cancelled and stays
+  on the record. Either way Publish carries the reason (`"Bún bò" would be
+  removed, and somebody chose it. Keep it, or mark its new row as the same
+  dish`). **Keep** puts a dish back at its saved place with its id and moves
+  focus to its name box.
+- **Orders are read again when Publish is pressed**, so a dish chosen while
+  the admin was checking holds the confirmation's Publish, with the reason. If
+  the database still refuses a removal, the error names the dish, the orders
+  are read again, and the list being checked stays.
+- **Names trading places.** `publish_menu` renames kept dishes one by one in
+  list order, so a kept row cannot take a saved name that a kept dish further
+  down is only giving up in the same publish (a swap, or such a chain).
+  Publish carries the reason and asks for one rename to be published first.
 
 There is no un-publish. A published menu is editable in place, so it only ever
 hid a day from members while lunch went on being cooked. Calling lunch off is
@@ -628,7 +642,7 @@ What publishing, editing and cancelling do is in
 | no menu for the date | empty editor, paste prompt |
 | draft | editable, Publish enabled once it has a dish |
 | published | editable with a warning naming who has ordered each dish |
-| a saved dish left out of the list | under Will be removed, with Keep; Publish unavailable, with the reason, if somebody chose it |
+| a saved dish left out of the list | under Will be removed, with Keep; Publish unavailable, with the reason, if it was ever chosen, cancelled or not |
 | locked | read only, with the reason: orders have gone to the caterer |
 | cooking, served | the same; nothing on this screen reopens a day |
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |

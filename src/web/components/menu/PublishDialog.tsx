@@ -41,6 +41,7 @@ export function PublishDialog({
   impact,
   cutoffAt,
   pending,
+  reason,
   onConfirm,
 }: {
   open: boolean;
@@ -56,6 +57,11 @@ export function PublishDialog({
   impact: PublishImpact | null;
   cutoffAt: string;
   pending: boolean;
+  /**
+   * Null when the write can go. The orders are read again as the dialog
+   * opens, so this can turn non-null here after Publish was pressed.
+   */
+  reason: string | null;
   onConfirm: () => void;
 }) {
   const standing = impact?.standing ?? 0;
@@ -117,13 +123,17 @@ export function PublishDialog({
           <p className="text-muted">
             Nothing has been written yet. This is the write.
           </p>
+
+          {reason !== null && reason !== "Checking who has ordered" && (
+            <p className="rounded-md bg-danger-subtle px-3 py-2 text-danger-subtle-fg">{`${reason}.`}</p>
+          )}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Action reason={null} pending={pending} onClick={onConfirm}>
+          <Action reason={reason} pending={pending} onClick={onConfirm}>
             {pending ? "Publishing…" : "Publish"}
           </Action>
         </DialogFooter>
