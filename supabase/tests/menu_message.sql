@@ -1,4 +1,5 @@
--- The "menu published" message lists every available dish, priced or not.
+-- The "menu published" message lists every dish, priced or not, and a
+-- one-dish menu says standing orders are down for it.
 -- Run against a scratch project or branch:
 --   psql "$DATABASE_URL" -f supabase/tests/menu_message.sql
 --
@@ -32,27 +33,26 @@ select o.id, v.d, v.cut, 'e1e1e1e1-0000-0000-0000-000000000001', 'menu_message.s
   cross join (values
     (date '2030-01-02', timestamptz '2030-01-01 16:00:00+00'),
     (date '2030-01-03', timestamptz '2030-01-02 16:00:00+00'),
-    (date '2030-01-04', timestamptz '2030-01-03 16:00:00+00')
+    (date '2030-01-04', timestamptz '2030-01-03 16:00:00+00'),
+    (date '2030-01-06', timestamptz '2030-01-05 16:00:00+00'),
+    (date '2030-01-07', timestamptz '2030-01-06 16:00:00+00')
   ) as v(d, cut)
  where o.slug = 'menu-msg';
 
--- The last dish of each menu is unavailable, so the probes also show that a
--- price going missing did not change which dishes are listed.
-insert into public.menu_items (menu_id, org_id, name, price_minor, position, is_available)
-select m.id, m.org_id, v.nm, v.pr, v.pos, v.avail
+insert into public.menu_items (menu_id, org_id, name, price_minor, position)
+select m.id, m.org_id, v.nm, v.pr, v.pos
   from public.menus m
   join public.organizations o on o.id = m.org_id and o.slug = 'menu-msg'
   join (values
-    (date '2030-01-02', 'Cơm tấm', null::bigint, 0, true),
-    (date '2030-01-02', 'Bún bò',  null,         1, true),
-    (date '2030-01-02', 'Hết món', null,         2, false),
-    (date '2030-01-03', 'Cơm tấm', 50000,        0, true),
-    (date '2030-01-03', 'Bún bò',  null,         1, true),
-    (date '2030-01-03', 'Hết món', 40000,        2, false),
-    (date '2030-01-04', 'Cơm tấm', 50000,        0, true),
-    (date '2030-01-04', 'Bún bò',  60000,        1, true),
-    (date '2030-01-04', 'Hết món', null,         2, false)
-  ) as v(d, nm, pr, pos, avail) on v.d = m.service_date;
+    (date '2030-01-02', 'Cơm tấm', null::bigint, 0),
+    (date '2030-01-02', 'Bún bò',  null,         1),
+    (date '2030-01-03', 'Cơm tấm', 50000,        0),
+    (date '2030-01-03', 'Bún bò',  null,         1),
+    (date '2030-01-04', 'Cơm tấm', 50000,        0),
+    (date '2030-01-04', 'Bún bò',  60000,        1),
+    (date '2030-01-06', 'Cơm tấm', 50000,        0),
+    (date '2030-01-07', repeat('Bún bò Huế ', 17) || 'đặc biệt', null, 0)
+  ) as v(d, nm, pr, pos) on v.d = m.service_date;
 
 create function pg_temp.msg(p_date date) returns text
 language sql stable as $fn$
@@ -71,7 +71,18 @@ insert into probe values
    E'Menu for 03/01\n- Cơm tấm  50.000 ₫\n- Bún bò  price to come\nOrders close 23:00 02/01.'),
   ('every price present: unchanged from before',
    pg_temp.msg('2030-01-04'),
-   E'Menu for 04/01\n- Cơm tấm  50.000 ₫\n- Bún bò  60.000 ₫\nOrders close 23:00 03/01.');
+   E'Menu for 04/01\n- Cơm tấm  50.000 ₫\n- Bún bò  60.000 ₫\nOrders close 23:00 03/01.'),
+  ('one dish: standing orders are said to be down for it',
+   pg_temp.msg('2030-01-06'),
+   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nStanding orders are down for Cơm tấm.\nOrders close 23:00 05/01.');
+
+insert into probe
+select 'one dish of the longest name still fits, and names it twice',
+       (length(b) < 4096 and b like E'Menu for 07/01\n- Bún bò Huế %  price to come\n'
+                                    || E'Standing orders are down for Bún bò Huế %đặc biệt.\n'
+                                    || 'Orders close 23:00 06/01.')::text,
+       'true'
+  from pg_temp.msg('2030-01-07') as b;
 
 -- Never a zero for an unknown price: 0 is a real price. Judged line by line
 -- on both menus that hold an unpriced dish, so a priced 50.000 cannot stand in.

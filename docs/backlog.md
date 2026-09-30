@@ -100,6 +100,21 @@ rather than corrected, because the person who pays for it is no longer the
 person the row names, so recording a swap between two other people still has no
 home. The exploit pass above is also still owed.
 
+Also open: removing a dish somebody chose. The database refuses it while any
+order line names the dish (`order_items_menu_item_fk`), so a wrong dish on a
+published menu stays until each of those orders is changed by hand. An admin
+screen should list who chose it and let the admin move each order to another
+dish or cancel it, then remove the dish, in one transaction. A line the system
+wrote on a one-dish menu does not block removal; see
+[One-dish menus](reference/ordering-rules.md#one-dish-menus).
+
+Also open: two admins can deadlock when one records an accepted pass while the
+other changes the same order. It is rare, and one of the two is refused with
+`40P01` and can try again. An off-menu correction that adds a second dish to a
+one-dish day makes it likelier, because `settle_undecided` then locks every
+order the system gave that dish. The fix is for recording a pass to take its
+locks in the documented order ([Database](reference/database.md#invariants)).
+
 ## Paying in advance
 
 **Mostly done.** Somebody can top up, and the money stays money. A payment

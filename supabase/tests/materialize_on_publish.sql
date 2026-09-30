@@ -56,8 +56,11 @@ begin
           v_admin)
   returning id into v_menu;
 
+  -- A browser writes no dish (20261018100100); the dish is the fixture's.
+  reset role;
   insert into public.menu_items (menu_id, org_id, name, price_minor, position)
   values (v_menu, v_org, 'Test dish', 45000, 0);
+  set local role authenticated;
 
   begin
     update public.menus set status = 'published' where id = v_menu;
@@ -74,8 +77,9 @@ begin
     ('orders materialized on publish',
       (select count(*)::text from public.orders
         where menu_id = v_menu and source = 'standing'), v_expected::text),
-    ('materialized orders have no dish yet',
-      (select count(*)::text from public.order_items where menu_id = v_menu), '0');
+    ('a one-dish menu gives each materialized order its dish, marked as the system''s',
+      (select count(*)::text from public.order_items
+        where menu_id = v_menu and auto_assigned), v_expected::text);
 
   -- Republishing must not duplicate.
   update public.menus set status = 'locked'    where id = v_menu;

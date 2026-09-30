@@ -30,6 +30,8 @@ and whether it rolls back. The ones to know first:
 | `atomic_writes.sql` | `set_my_order`, `publish_menu` and `apply_caterer_prices` refuse what the guards would have, in their words, across offices, past the cutoff and on a settled week, and a refusal part way leaves nothing written; a weekday rule's sweep holds only its own office's menus of that weekday | no, rolls back |
 | `atomic_writes_race.sql` | two sessions at once over dblink: two taps leave one dish, cancelling lunch and an order in flight wait for each other, pricing the week and a correction do not deadlock, nor a republish and an off-menu record, one office's sweep does not hold another's menus, a skip during a publish is refused, two drains never claim one message | **yes, then removes them**; local only, needs `dblink` |
 | `zero_due_week.sql` | the hourly tick bills and closes a week in which somebody's only order has no dish: 0-due weeks are paid and dated, credit and advance payments untouched, the weekly bill sent only to who owes | no, rolls back |
+| `one_dish.sql` | a one-dish menu gives every undecided slot its dish, marked as the system's, at publish, on a removal down to one and for a slot made later; a second dish takes back only those lines and asks only those people with Telegram, once; nothing after the cutoff, in a settled week, on a rename or in another office | no, rolls back |
+| `one_dish_race.sql` | over dblink: a dish added while a member chooses the one dish, both ways round, and a publish while a weekday rule is turned on, both ways round | **yes, then removes them**; local only, needs `dblink` |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -145,6 +147,15 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   credit, and gets `paid_at` when it is settled (kept on a re-bill), since
   `billing_statements_paid_ck` ties `paid` to a date. The weekly bill goes only
   to somebody whose balance is above 0.
+- **Only the system marks a line `auto_assigned`.** `private.settle_undecided`
+  and `private.assign_only_dish` write it, as the definer, only while the day's
+  stage is `open` and never in a settled week, which they check themselves
+  because the guards exempt them. A write of a line by anybody but the
+  service clears it (`guard_auto_assigned`), a browser holds no UPDATE on the
+  column, a dish choice writes a fresh line, and offering the meal clears it
+  (`trg_transfer_decides`). The dish count is settled from where it ends: once
+  per `publish_menu`, once per statement on `menu_items` otherwise, after the
+  menu is held `FOR NO KEY UPDATE`.
 - **Order prices are snapshotted** by trigger on write, and again into
   `billing_lines` at period close, so editing a menu can never rewrite a past bill.
 - **`VITE_`-prefixed variables are inlined into the browser bundle.** A secret

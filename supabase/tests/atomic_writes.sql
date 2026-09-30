@@ -159,7 +159,6 @@ declare
   v_period bigint;
 begin
   perform pg_temp.menu('org_a', 'open',   v_future, array['Com ga', 'Pho', 'Het'], array[45000, 50000, 40000]);
-  update public.menu_items set is_available = false where id = pg_temp.c('i_open_3')::bigint;
   perform pg_temp.menu('org_a', 'late',   v_future, array['Bun cha'], array[40000]);
   perform pg_temp.menu('org_a', 'drafty', v_future, array['Chao'], array[30000]);
   perform pg_temp.menu('org_a', 'called', v_future, array['Mi'], array[null]::int[]);
@@ -280,8 +279,6 @@ do $$ begin
   insert into probe values ('M3 a dish from another menu is refused by the snapshot trigger',
     pg_temp.order_for('m_open', 'i_sweep_b_1'),
     '23503 dish ' || pg_temp.c('i_sweep_b_1') || ' is not on this menu');
-  insert into probe values ('M3 a dish that is off today is refused',
-    pg_temp.order_for('m_open', 'i_open_3'), '55000 "Het" is not available today');
 
   -- TEO has a standing order with no dish yet, and nothing of his own.
   perform pg_temp.act_as(pg_temp.c('teo'));
@@ -441,7 +438,7 @@ begin
 
   insert into probe values ('P4 a new day with no dish is refused by the lifecycle',
     pg_temp.publish('org_a', 'empty', '[]'),
-    '55000 cannot publish a menu with no available dishes');
+    '55000 cannot publish a menu with no dishes');
   insert into probe values ('P5 two dishes of one name are refused',
     left(pg_temp.publish('org_a', 'twice',
       '[{"name": "Pho", "price_minor": 1}, {"name": " pho ", "price_minor": 2}]'), 5),
@@ -612,7 +609,8 @@ insert into probe values
              join extensions.pgrowlocks('public.menus') l on l.locked_row = m.ctid
             where l.modes && array['For No Key Update', 'For Update'])),
    'm_sweep,m_sweep_draft'),
-  ('L2 and orders on the open one', pg_temp.order_of('m_sweep', 'dinh'), 'standing placed -'),
+  ('L2 and orders on the open one, whose one dish it takes',
+   pg_temp.order_of('m_sweep', 'dinh'), 'standing placed Ga@1000'),
   ('L2 not on another weekday', pg_temp.order_of('m_sweep_off', 'dinh'), 'none');
 
 --------------------------------------------------------------------- verdict

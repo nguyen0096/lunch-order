@@ -103,7 +103,7 @@ on conflict (org_id, profile_id, weekday) do nothing;
 -- same sequence the Menu screen performs: insert a draft, add a dish, flip it.
 create function pg_temp.publish(p_day text) returns bigint
 language plpgsql as $fn$
-declare v_menu bigint;
+declare v_menu bigint; v_role text := current_user;
 begin
   insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
   values (pg_temp.c('org_a')::bigint, pg_temp.c(p_day)::date,
@@ -115,8 +115,11 @@ begin
     select id into v_menu from public.menus
      where org_id = pg_temp.c('org_a')::bigint and service_date = pg_temp.c(p_day)::date;
   else
+    -- A browser writes no dish (20261018100100); the dish is the fixture's.
+    reset role;
     insert into public.menu_items (menu_id, org_id, name, price_minor, position)
     values (v_menu, pg_temp.c('org_a')::bigint, 'Com ga', 45000, 0);
+    execute format('set local role %I', v_role);
   end if;
   update public.menus set status = 'published' where id = v_menu;
   return v_menu;
@@ -169,11 +172,11 @@ insert into probe values
    (select source from public.orders
      where service_date = pg_temp.c('off')::date and profile_id = pg_temp.c('dinh')::uuid),
    'standing'),
-  ('S2 with no dish chosen',
-   (select count(*)::text from public.order_items oi
+  ('S2 given the one dish on the menu, by the system',
+   (select string_agg(oi.item_name_snapshot || ' ' || oi.auto_assigned, ',') from public.order_items oi
       join public.orders o on o.id = oi.order_id
      where o.service_date = pg_temp.c('off')::date and o.profile_id = pg_temp.c('dinh')::uuid),
-   '0'),
+   'Com ga true'),
   ('S2 and nobody else is put on the planned day',
    pg_temp.orders_on('off', 'teo'), '0');
 

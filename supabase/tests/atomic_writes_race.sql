@@ -340,10 +340,9 @@ insert into probe values ('R5 so the order stands and no skip claims otherwise',
 
 -- Admin A republishes a finished day, dropping dish E and pricing dish D.
 -- Admin B records TEO as having eaten "Dish D". The republish holds the menu
--- and waits on E's line (held here by H, as a correction deleting it would);
--- B takes the week, updates dish D and inserts TEO's order, whose foreign key
--- takes the menu FOR KEY SHARE. Were the republish's menu lock FOR UPDATE, B
--- would wait for A, then A for B on dish D: 40P01.
+-- and waits on E's line (held here by H, as a correction deleting it would).
+-- B holds the menu before the week (20261018100000), so it waits for A rather
+-- than taking dish D from under it, and goes through once A commits.
 insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
 values (pg_temp.c('org_a')::bigint, pg_temp.c('eaten')::date, now() - interval '3 days',
         pg_temp.c('adm')::uuid);
@@ -364,6 +363,13 @@ select o.id, o.org_id, o.profile_id, o.menu_id, pg_temp.c('i_eaten_e')::bigint, 
   from public.orders o where o.menu_id = pg_temp.c('m_eaten')::bigint;
 insert into ctx select 'l_eaten', max(id)::text from public.order_items
                  where menu_id = pg_temp.c('m_eaten')::bigint;
+-- DINH also had the unpriced D, so losing E leaves her no 0 meal: billing a
+-- 0 meal with no payment trips billing_statements_paid_ck in
+-- private.reallocate, which is not what this race is about.
+insert into public.order_items (order_id, org_id, profile_id, menu_id, menu_item_id,
+                                item_name_snapshot, unit_price_minor)
+select o.id, o.org_id, o.profile_id, o.menu_id, pg_temp.c('i_eaten_d')::bigint, '', 0
+  from public.orders o where o.menu_id = pg_temp.c('m_eaten')::bigint;
 
 select pg_temp.open('h', null);
 insert into probe values ('R7 H holds the line on dish E',
@@ -378,9 +384,10 @@ select pg_temp.open('b', 'adm2');
 select pg_temp.send('b', format(
   $q$select order_id::text from public.correct_meal_off_menu(%s, %L::date, %L::uuid, 'Dish D', 3000, 1::smallint, null, 'phone')$q$,
   pg_temp.c('org_a'), pg_temp.c('eaten'), pg_temp.c('teo')));
+insert into probe values ('R7 the off-menu record waits on the menu', pg_temp.busy('b'), 'waiting');
 insert into probe values ('R7 H lets the line go', pg_temp.close('h'), 'ok');
-insert into probe values ('R7 the off-menu record goes through', pg_temp.finish('b'), 'ok');
-insert into probe values ('R7 and so does the republish', pg_temp.finish('a'), 'ok');
+insert into probe values ('R7 the republish goes through', pg_temp.finish('a'), 'ok');
+insert into probe values ('R7 and so does the off-menu record', pg_temp.finish('b'), 'ok');
 insert into probe values ('R7 E is gone, D carries the republish''s price, TEO ate D',
   pg_temp.dishes_of_eaten() , '0:Dish D@2000 / Dish D');
 

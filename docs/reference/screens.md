@@ -193,8 +193,8 @@ The dice is offered only where there is something to randomise. Randomising is a
 first-class choice, not a fallback: on most days nobody minds which of three
 similar dishes arrives, and the people who do mind take the `+` instead. "Eating,
 dish not chosen" therefore never arises from a tap. It survives only for a
-standing order materialised before a menu existed, which is the one case where the
-system genuinely cannot guess.
+standing order on a menu of several dishes, which is the one case where the
+system genuinely cannot guess; with one dish, the system gives it that dish.
 
 An admin opening a colleague's cell can read that colleague's note, because the
 admin is the person who reads the list down the phone to the caterer.
@@ -583,7 +583,7 @@ What publishing, editing and cancelling do is in
 | State | |
 | --- | --- |
 | no menu for the date | empty editor, paste prompt |
-| draft | editable, Publish enabled once a dish is available |
+| draft | editable, Publish enabled once it has a dish |
 | published | editable with a warning naming who has ordered each dish |
 | locked | read only, with the reason: orders have gone to the caterer |
 | cooking, served | the same; nothing on this screen reopens a day |

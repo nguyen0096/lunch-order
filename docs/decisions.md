@@ -397,6 +397,22 @@ redundant one costs a row and changes nothing, so they stay. Settings counts onl
 the skips the rule still covers, on dates with no order row of mine, since those
 are the ones the Board draws as skipped.
 
+**One dish needs no choice, and the system says which lines it wrote.** With
+one dish on the menu there is nothing to decide, so an undecided slot is an
+order for it. The line carries `auto_assigned` so the answer can be taken back
+when a second dish arrives, and only that line: a member who tapped the one
+dish, or wrote a note on it, has answered the question, and asking again would
+throw that answer away. That is why any write of their own clears the mark
+rather than keeping it, and why offering the meal to somebody does too: taking
+back a line that is on its way to a colleague would change what they accepted.
+A system line does not block removing its dish either, because nobody chose it;
+a line somebody did write still does. After the cutoff nothing moves: the count
+has gone to the caterer.
+
+Dish availability went at the same time. No screen ever set it, and it was a
+second answer to "how many dishes does this menu have", which the one-dish rule
+needs to have exactly one answer.
+
 **No horizon.** A member may skip or plan any date after today, however far
 ahead, and the Board pages forward without limit. The projection is a pure
 function of the rule and the exceptions over whatever week is on screen, so
