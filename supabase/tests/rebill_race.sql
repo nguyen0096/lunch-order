@@ -1,5 +1,5 @@
--- Three sessions at once: a re-bill, a payment being moved or a week waived,
--- and a payment arriving, all on one person. Run against a LOCAL scratch
+-- Three or four sessions at once: a re-bill, a payment being moved or voided
+-- or a week waived, and payments arriving, all on one person. Run against a LOCAL scratch
 -- database only, as a superuser over TCP (dblink needs it):
 --   docker exec -i <db container> psql -h 127.0.0.1 -U supabase_admin -d postgres -f - < supabase/tests/rebill_race.sql
 --
@@ -7,23 +7,29 @@
 -- sessions are dblink connections back into the same database, and removes
 -- them at the end.
 --
--- The lock order this holds to: the week, then payments, then each person
--- (the `lunch.reallocate:` advisory key, in profile order), then statement
--- rows. `move_payment` takes a payment and then people; a payment arriving
--- (`trg_payment_apply`) takes the person and then their statements;
--- `run_billing` takes the week, the payments on its statements, every person
--- in the week, then statements; `waive_statement` takes the person, then the
--- statement. Each scenario below:
+-- The lock order this holds to: the week, then each person (the
+-- `lunch.reallocate:` advisory key, in profile order), then payment rows,
+-- then statement rows. `run_billing` takes the week, every person in the
+-- week, the payments pointing at its statements, then statements;
+-- `move_payment` and `void_payment` take their people, then the payment;
+-- a payment arriving (`trg_payment_apply`) and `waive_statement` take the
+-- person, then statements. Each scenario below:
 --
 --   C  a payment arriving for X, held open, so it holds X and X's statements
 --   B  a re-bill of X's week (remove_meal, reprice_dish), sent first
 --   A  move_payment of a payment of X's, or waive_statement of X's week
 --   then C commits, and both A and B must go through.
 --
--- Without the payment lock, R1 deadlocks: B deletes the statement the payment
--- points at, which updates the payment A holds. Without the person lock, R2
--- to R4 deadlock: B writes X's statement and then waits for X, while A holds
--- X and waits for that statement. With the old `waive_statement`, R5 does.
+-- R6 and R7 add C2, a payment arriving for Z (after X) in the same week, so
+-- that B holds X and waits for Z while C's new payment starts pointing at X's
+-- statement, and A then moves (R6) or voids (R7) that new payment.
+--
+-- Negative controls, each deadlocking (40P01) without its part of the fix:
+-- the re-bill's person lock (R1 to R5); the person-first `waive_statement`
+-- (R5); the person-first `move_payment` and `void_payment` (R1, R6, R7).
+-- The re-bill's payment lock fails none of these once nothing holds a payment
+-- while waiting for a person. It takes, up front and in id order, the rows
+-- the delete updates through the FK anyway.
 
 set statement_timeout = '180s';
 set client_min_messages = warning;
@@ -163,7 +169,11 @@ select '00000000-0000-0000-0000-000000000000', u.id::uuid, 'authenticated', 'aut
     ('bace0000-0000-0000-0000-000000000004', 'xc@rebillrace.test',  'Xc Pham'),
     ('bace0000-0000-0000-0000-000000000005', 'xd@rebillrace.test',  'Xd Vo'),
     ('bace0000-0000-0000-0000-000000000006', 'xe@rebillrace.test',  'Xe Do'),
-    ('bace0000-0000-0000-0000-000000000007', 'yen@rebillrace.test', 'Yen Le')
+    ('bace0000-0000-0000-0000-000000000007', 'yen@rebillrace.test', 'Yen Le'),
+    ('bace0000-0000-0000-0000-000000000008', 'xf@rebillrace.test',  'Xf Ho'),
+    ('bace0000-0000-0000-0000-000000000009', 'zg@rebillrace.test',  'Zg Ly'),
+    ('bace0000-0000-0000-0000-000000000010', 'xh@rebillrace.test',  'Xh Mai'),
+    ('bace0000-0000-0000-0000-000000000011', 'zi@rebillrace.test',  'Zi Ta')
   ) as u(id, email, name)
 on conflict (id) do nothing;
 
@@ -179,7 +189,11 @@ join (values
   ('bace0000-0000-0000-0000-000000000004', 'member', 'RXCC'),
   ('bace0000-0000-0000-0000-000000000005', 'member', 'RXDD'),
   ('bace0000-0000-0000-0000-000000000006', 'member', 'RXEE'),
-  ('bace0000-0000-0000-0000-000000000007', 'member', 'RYEN')
+  ('bace0000-0000-0000-0000-000000000007', 'member', 'RYEN'),
+  ('bace0000-0000-0000-0000-000000000008', 'member', 'RXFF'),
+  ('bace0000-0000-0000-0000-000000000009', 'member', 'RZGG'),
+  ('bace0000-0000-0000-0000-000000000010', 'member', 'RXHH'),
+  ('bace0000-0000-0000-0000-000000000011', 'member', 'RZII')
 ) as u(pid, role, code) on o.slug = 'rebill-race';
 
 insert into ctx
@@ -190,7 +204,11 @@ select 'xb',  'bace0000-0000-0000-0000-000000000003' union all
 select 'xc',  'bace0000-0000-0000-0000-000000000004' union all
 select 'xd',  'bace0000-0000-0000-0000-000000000005' union all
 select 'xe',  'bace0000-0000-0000-0000-000000000006' union all
-select 'yen', 'bace0000-0000-0000-0000-000000000007';
+select 'yen', 'bace0000-0000-0000-0000-000000000007' union all
+select 'xf',  'bace0000-0000-0000-0000-000000000008' union all
+select 'zg',  'bace0000-0000-0000-0000-000000000009' union all
+select 'xh',  'bace0000-0000-0000-0000-000000000010' union all
+select 'zi',  'bace0000-0000-0000-0000-000000000011';
 
 -- This week (d, d2) and two weeks ago (d0), all locked, as weeks being
 -- corrected are.
@@ -215,7 +233,7 @@ select m.id, m.org_id, v.nm, v.pr, v.pos
 insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
 select m.org_id, m.id, m.service_date, pg_temp.c(v.who)::uuid, 'member', pg_temp.c(v.who)::uuid
   from (values ('xa','d'), ('xb','d0'), ('xb','d'), ('xc','d'), ('xd','d0'), ('xd','d'),
-               ('xe','d'), ('xe','d2')) as v(who, dk)
+               ('xe','d'), ('xe','d2'), ('xf','d'), ('zg','d'), ('xh','d'), ('zi','d')) as v(who, dk)
   join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c(v.dk)::date;
 
 insert into public.order_items (order_id, org_id, profile_id, menu_id, menu_item_id, quantity)
@@ -245,7 +263,7 @@ select 'pay_' || v.who, p.id::text from public.payments p
   join (values ('xa'), ('xb'), ('xc'), ('xd')) as v(who) on p.provider_txn_id = 'rebill-race-' || v.who;
 insert into ctx
 select 'order_' || v.who, o.id::text from public.orders o
-  join (values ('xa','d'), ('xb','d'), ('xe','d2')) as v(who, dk)
+  join (values ('xa','d'), ('xb','d'), ('xe','d2'), ('xf','d'), ('xh','d')) as v(who, dk)
     on o.profile_id = pg_temp.c(v.who)::uuid and o.service_date = pg_temp.c(v.dk)::date;
 insert into ctx
 select 'pho', mi.id::text from public.menu_items mi join public.menus m on m.id = mi.menu_id
@@ -354,6 +372,60 @@ insert into probe values ('R5 then both go through', pg_temp.finish_both(), 'a=o
 insert into probe values
   ('R5 XE: one meal left, waived, the arrival is credit',
     pg_temp.st('xe', 'w') || ' ' || pg_temp.bal('xe'), 'meals=45000 n=1 paid=10000 waived -10000');
+
+------------------------- R6 a new payment moved while the re-bill waits
+
+-- B holds XF and waits for ZG. Meanwhile XF's new payment (C) comes to point
+-- at XF's statement, and A moves it. B, once it has ZG, deletes that
+-- statement, which updates A's payment.
+select pg_temp.open('c', 'adm');
+insert into probe values ('R6 C: a payment arrives for XF, held', pg_temp.run('c', pg_temp.arrive('xf')), 'ok');
+select pg_temp.open('c2', 'adm');
+insert into probe values ('R6 C2: a payment arrives for ZG, held', pg_temp.run('c2', pg_temp.arrive('zg')), 'ok');
+select pg_temp.open('b', 'adm');
+select pg_temp.send('b', format($q$select balance_minor::text from public.remove_meal(%s, 'did not eat')$q$,
+                                pg_temp.c('order_xf')));
+insert into probe values ('R6 C commits', pg_temp.close('c'), 'ok');
+insert into ctx select 'pay_new_xf', p.id::text from public.payments p where p.provider_txn_id = 'rebill-race-arrive-xf';
+insert into probe values ('R6 control: the new payment points at XF''s statement',
+  ((select p.matched_statement_id from public.payments p where p.id = pg_temp.c('pay_new_xf')::bigint)
+    is not null)::text, 'true');
+select pg_temp.open('a', 'adm');
+select pg_temp.send('a', pg_temp.move('pay_new_xf'));
+insert into probe values ('R6 B and A both wait', pg_temp.busy('b') || ',' || pg_temp.busy('a'), 'waiting,waiting');
+insert into probe values ('R6 C2 commits', pg_temp.close('c2'), 'ok');
+insert into probe values ('R6 then both go through', pg_temp.finish_both(), 'a=ok b=ok');
+insert into probe values
+  ('R6 XF: no statement, owes nothing', pg_temp.st('xf', 'w') || ' ' || pg_temp.bal('xf'), 'none 0'),
+  ('R6 the new payment is YEN''s',
+    (select (p.profile_id = pg_temp.c('yen')::uuid)::text from public.payments p
+      where p.id = pg_temp.c('pay_new_xf')::bigint), 'true'),
+  ('R6 ZG: charged, the arrival paid in', pg_temp.st('zg', 'w') || ' ' || pg_temp.bal('zg'),
+    'meals=45000 n=1 paid=10000 partial 35000');
+
+------------------------- R7 the same, with the new payment voided
+
+select pg_temp.open('c', 'adm');
+insert into probe values ('R7 C: a payment arrives for XH, held', pg_temp.run('c', pg_temp.arrive('xh')), 'ok');
+select pg_temp.open('c2', 'adm');
+insert into probe values ('R7 C2: a payment arrives for ZI, held', pg_temp.run('c2', pg_temp.arrive('zi')), 'ok');
+select pg_temp.open('b', 'adm');
+select pg_temp.send('b', format($q$select balance_minor::text from public.remove_meal(%s, 'did not eat')$q$,
+                                pg_temp.c('order_xh')));
+insert into probe values ('R7 C commits', pg_temp.close('c'), 'ok');
+insert into ctx select 'pay_new_xh', p.id::text from public.payments p where p.provider_txn_id = 'rebill-race-arrive-xh';
+select pg_temp.open('a', 'adm');
+select pg_temp.send('a', format($q$select public.void_payment(%s, 'recorded twice')::text$q$,
+                                pg_temp.c('pay_new_xh')));
+insert into probe values ('R7 B and A both wait', pg_temp.busy('b') || ',' || pg_temp.busy('a'), 'waiting,waiting');
+insert into probe values ('R7 C2 commits', pg_temp.close('c2'), 'ok');
+insert into probe values ('R7 then both go through', pg_temp.finish_both(), 'a=ok b=ok');
+insert into probe values
+  ('R7 XH: no statement, owes nothing, the payment voided',
+    pg_temp.st('xh', 'w') || ' ' || pg_temp.bal('xh') || ' '
+      || (select (p.voided_at is not null)::text from public.payments p
+           where p.id = pg_temp.c('pay_new_xh')::bigint),
+    'none 0 true');
 
 --------------------------------------------------------------------- verdict
 

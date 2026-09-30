@@ -19,16 +19,25 @@
 -- deleted statement is re-pointed at the person's frontier, the same rule
 -- `trg_payment_apply` uses.
 --
--- Locks, in the order `move_payment` and `void_payment` already take them: a
--- payment, then each person (`lunch.reallocate:` advisory key, profile
--- order), then statement rows. The re-bill used to write statement rows first
--- and take people after, so a payment arriving, a payment moved and a
--- correction on the same person's week deadlocked (40P01). It now holds the
--- week, then the payments on the week's statements (the delete below updates
--- them through the FK), then every person with a statement, a line or a
--- billable order in the week, and only then touches a statement.
--- `waive_statement` locked the statement before the person; it now takes the
--- person first too.
+-- Locks, one order for everything that writes money: the week, then each
+-- person (the `lunch.reallocate:` advisory key, in profile order), then
+-- payment rows, then statement rows. The re-bill used to write statement rows
+-- before taking people, and `move_payment` and `void_payment` locked the
+-- payment before the people, so a payment arriving, a payment moved or voided
+-- and a correction on the same person's week deadlocked (40P01). Now:
+--
+--   run_billing      the week; every person with a statement, a line or a
+--                    billable order in it; the payments pointing at its
+--                    statements; then statements
+--   move_payment,    the people the payment is on and going to, then the
+--   void_payment     payment, re-read under the lock; refused if it moved
+--   waive_statement  the person, then the statement, re-read under the lock
+--   trg_payment_apply  the person, then its own new row
+--
+-- Which payments point at a person's statements only changes under that
+-- person's lock (`trg_payment_apply`, `move_payment`, `void_payment`, a
+-- re-bill's re-pointing), so once run_billing holds the people that set is
+-- fixed and can be locked.
 --
 -- A settled week is unchanged: `run_billing` still refuses it without
 -- `p_force`, and the guards still refuse every write that would change it.
@@ -144,19 +153,11 @@ begin
   -- The week first, as every caller that holds it already has.
   perform pg_advisory_xact_lock(hashtext('lunch.run_billing'), p_period_id::int);
 
-  -- Then the payments, then the people, then (in the inner function) the
-  -- statement rows: the order move_payment and void_payment take them in.
-  perform 1 from public.payments p
-    join public.billing_statements st on st.id = p.matched_statement_id
-   where st.billing_period_id = p_period_id
-   order by p.id
-     for no key update of p;
-
   select * into v_p from public.billing_periods bp where bp.id = p_period_id;
   v_org := v_p.org_id;
 
-  -- Everybody the inner function can write a statement for. The key is the
-  -- one private.reallocate takes, so its own lock later is a re-entry.
+  -- Then everybody the inner function can write a statement for. The key is
+  -- the one private.reallocate takes, so its own lock later is a re-entry.
   for v_person in
     select st.profile_id from public.billing_statements st
      where st.billing_period_id = p_period_id
@@ -174,6 +175,13 @@ begin
     perform pg_advisory_xact_lock(
       hashtextextended('lunch.reallocate:' || v_org || ':' || v_person, 0));
   end loop;
+
+  -- Then the payments the delete below can update through the FK.
+  perform 1 from public.payments p
+    join public.billing_statements st on st.id = p.matched_statement_id
+   where st.billing_period_id = p_period_id
+   order by p.id
+     for no key update of p;
 
   perform * from private.run_billing_inner(p_period_id, p_force);
 
@@ -233,7 +241,13 @@ declare
   v_start  date;
 begin
   select * into v_st from public.billing_statements s where s.id = p_statement_id;
-  if not found or not (v_st.org_id = any ((select private.my_admin_org_ids())::bigint[])) then
+  -- Not a permission question: a re-bill deletes a week once nothing is on
+  -- it, so an admin's open screen routinely names one that is gone.
+  if not found then
+    raise exception 'that week has nothing on it any more, so there is nothing to waive'
+      using errcode = 'no_data_found';
+  end if;
+  if not (v_st.org_id = any ((select private.my_admin_org_ids())::bigint[])) then
     raise exception 'only an admin of this office can waive a week'
       using errcode = 'insufficient_privilege';
   end if;
@@ -269,3 +283,164 @@ end $fn$;
 
 revoke execute on function public.waive_statement(bigint, text) from public, anon;
 grant  execute on function public.waive_statement(bigint, text) to authenticated;
+
+-- As in 20261011100300, but the people are locked before the payment, the
+-- order run_billing takes them in. Holding the payment and then waiting for a
+-- person deadlocked with a re-bill that held that person and then had to
+-- update the payment. The payment is read again under the lock; if somebody
+-- moved it meanwhile, the people locked are the wrong ones, so it refuses.
+create or replace function public.move_payment(
+  p_payment_id bigint, p_to_profile_id uuid, p_reason text default null)
+returns table(payment_id bigint, profile_id uuid, matched_statement_id bigint)
+language plpgsql
+security definer
+set search_path to ''
+as $fn$
+declare
+  v_actor  uuid := (select auth.uid());
+  v_reason text;
+  v_pay    public.payments%rowtype;
+  v_org    public.organizations%rowtype;
+  v_from   uuid;
+  v_st     bigint;
+  v_money  text;
+begin
+  select * into v_pay from public.payments p where p.id = p_payment_id;
+  if not found or not (v_pay.org_id = any ((select private.my_admin_org_ids())::bigint[])) then
+    raise exception 'only an admin of this office can move a payment'
+      using errcode = 'insufficient_privilege';
+  end if;
+  v_reason := private.short_text(p_reason, 200, 'reason');
+
+  if not exists (select 1 from public.memberships m
+                  where m.org_id = v_pay.org_id and m.profile_id = p_to_profile_id) then
+    raise exception 'that person is not in this office' using errcode = 'no_data_found';
+  end if;
+
+  v_from := v_pay.profile_id;
+  if v_from is not null and v_from <> p_to_profile_id then
+    perform pg_advisory_xact_lock(hashtextextended(
+      'lunch.reallocate:' || v_pay.org_id || ':' || least(v_from, p_to_profile_id), 0));
+    perform pg_advisory_xact_lock(hashtextextended(
+      'lunch.reallocate:' || v_pay.org_id || ':' || greatest(v_from, p_to_profile_id), 0));
+  else
+    perform pg_advisory_xact_lock(hashtextextended(
+      'lunch.reallocate:' || v_pay.org_id || ':' || p_to_profile_id, 0));
+  end if;
+
+  select * into v_pay from public.payments p where p.id = p_payment_id for update;
+  if v_pay.profile_id is distinct from v_from then
+    raise exception 'that payment was moved by somebody else just now; reload and try again'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  if v_pay.voided_at is not null then
+    raise exception 'that payment was voided, so there is no money in it to move'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+  if v_pay.profile_id is not distinct from p_to_profile_id then
+    raise exception 'that payment is already on %', private.member_name(v_pay.org_id, p_to_profile_id)
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+  -- Before this function existed, applying a stray recorded a second, manual
+  -- row carrying the stray's id and left the stray on nobody. Moving the stray
+  -- as well would count that one arrival twice.
+  if exists (select 1 from public.payments r
+              where r.org_id = v_pay.org_id and r.provider = 'manual'
+                and r.voided_at is null
+                and r.raw ->> 'resolves_payment_id' = v_pay.id::text) then
+    raise exception 'that payment was already applied by recording a copy of it; move the copy instead'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  select * into v_org from public.organizations o where o.id = v_pay.org_id;
+  v_money := private.money_text(v_pay.amount_minor, v_org.currency_minor_units, v_org.currency);
+
+  update public.payments p set profile_id = p_to_profile_id where p.id = v_pay.id;
+  if v_from is not null then perform private.reallocate(v_pay.org_id, v_from); end if;
+  perform private.reallocate(v_pay.org_id, p_to_profile_id);
+
+  v_st := private.payment_frontier(v_pay.org_id, p_to_profile_id);
+  update public.payments p set matched_statement_id = v_st where p.id = v_pay.id;
+
+  insert into public.payment_corrections
+    (org_id, kind, payment_id, from_profile_id, to_profile_id, amount_minor, summary, reason, made_by)
+  values (v_pay.org_id, 'move', v_pay.id, v_from, p_to_profile_id, v_pay.amount_minor,
+          case when v_from is null
+               then 'Applied ' || v_money || ' that matched nobody to '
+                    || private.member_name(v_pay.org_id, p_to_profile_id)
+               else 'Moved ' || v_money || ' from ' || private.member_name(v_pay.org_id, v_from)
+                    || ' to ' || private.member_name(v_pay.org_id, p_to_profile_id)
+          end,
+          v_reason, v_actor);
+
+  return query select v_pay.id, p_to_profile_id, v_st;
+end $fn$;
+
+-- As in 20261011100300, with the person locked before the payment, for the
+-- same reason as move_payment.
+create or replace function public.void_payment(p_payment_id bigint, p_reason text)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $fn$
+declare
+  v_actor  uuid := (select auth.uid());
+  v_reason text;
+  v_pay    public.payments%rowtype;
+  v_org    public.organizations%rowtype;
+  v_who    uuid;
+begin
+  select * into v_pay from public.payments p where p.id = p_payment_id;
+  if not found or not (v_pay.org_id = any ((select private.my_admin_org_ids())::bigint[])) then
+    raise exception 'only an admin of this office can void a payment'
+      using errcode = 'insufficient_privilege';
+  end if;
+  v_reason := private.short_text(p_reason, 200, 'reason');
+  if v_reason is null then
+    raise exception 'say why this payment is being voided; the next admin to read the record will ask'
+      using errcode = 'invalid_parameter_value';
+  end if;
+  if v_pay.provider <> 'manual' then
+    raise exception 'only a payment recorded by hand can be voided; money the bank reported did arrive, so move it to the right person instead'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  v_who := v_pay.profile_id;
+  if v_who is not null then
+    perform pg_advisory_xact_lock(hashtextextended(
+      'lunch.reallocate:' || v_pay.org_id || ':' || v_who, 0));
+  end if;
+
+  select * into v_pay from public.payments p where p.id = p_payment_id for update;
+  if v_pay.profile_id is distinct from v_who then
+    raise exception 'that payment was moved by somebody else just now; reload and try again'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+  if v_pay.voided_at is not null then
+    raise exception 'that payment is already voided' using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  update public.payments p
+     set voided_at = now(), voided_by = v_actor, void_reason = v_reason,
+         matched_statement_id = null
+   where p.id = v_pay.id;
+  if v_pay.profile_id is not null then
+    perform private.reallocate(v_pay.org_id, v_pay.profile_id);
+  end if;
+
+  select * into v_org from public.organizations o where o.id = v_pay.org_id;
+  insert into public.payment_corrections
+    (org_id, kind, payment_id, from_profile_id, amount_minor, summary, reason, made_by)
+  values (v_pay.org_id, 'void', v_pay.id, v_pay.profile_id, v_pay.amount_minor,
+          'Voided ' || private.money_text(v_pay.amount_minor, v_org.currency_minor_units, v_org.currency)
+            || ' recorded by hand'
+            || coalesce(' for ' || private.member_name(v_pay.org_id, v_pay.profile_id), ''),
+          v_reason, v_actor);
+end $fn$;
+
+revoke execute on function public.move_payment(bigint, uuid, text) from public, anon;
+grant  execute on function public.move_payment(bigint, uuid, text) to authenticated;
+revoke execute on function public.void_payment(bigint, text)       from public, anon;
+grant  execute on function public.void_payment(bigint, text)       to authenticated;

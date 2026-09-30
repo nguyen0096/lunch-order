@@ -598,6 +598,33 @@ insert into probe values
     coalesce((select matched_statement_id::text from public.payments where provider_txn_id = 'rb-WAIV'), 'null'),
     'null');
 
+-- Waiving a week a re-bill has deleted says so, rather than claiming the admin
+-- may not. A member waiving a real week is still a permission question.
+do $$
+declare v_state text;
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"cccccccc-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  begin
+    perform public.waive_statement((select v::bigint from ctx where k = 'waiv_st'), 'again');
+    v_state := 'allowed';
+  exception when others then v_state := sqlstate || ' ' || sqlerrm;
+  end;
+  insert into probe values ('10 waive a deleted week: says it is gone', v_state,
+    'P0002 that week has nothing on it any more, so there is nothing to waive');
+
+  perform set_config('request.jwt.claims',
+    '{"sub":"cccccccc-0000-0000-0000-000000000009","role":"authenticated"}', true);
+  begin
+    perform public.waive_statement(pg_temp.st_id('TAKE', 'p2'), 'mine');
+    v_state := 'allowed';
+  exception when others then v_state := sqlstate;
+  end;
+  insert into probe values ('10 a member waiving a real week is refused', v_state, '42501');
+  reset role;
+end $$;
+
 -- The waiver went with the statement. A meal recorded again is charged on a
 -- new, unwaived statement, and the payment the waived week never used pays it.
 do $$

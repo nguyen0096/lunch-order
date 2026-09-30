@@ -32,8 +32,8 @@ and whether it rolls back. The ones to know first:
 | `zero_due_week.sql` | the hourly tick bills and closes a week in which somebody's only order has no dish: 0-due weeks are paid and dated, credit and advance payments untouched, the weekly bill sent only to who owes | no, rolls back |
 | `one_dish.sql` | a one-dish menu gives every undecided slot its dish, marked as the system's, at publish, on a removal down to one and for a slot made later; a second dish takes back only those lines and asks only those people with Telegram, once; nothing after the cutoff, in a settled week, on a rename or in another office | no, rolls back |
 | `one_dish_race.sql` | over dblink: a dish added while a member chooses the one dish, both ways round, and a publish while a weekday rule is turned on, both ways round | **yes, then removes them**; local only, needs `dblink` |
-| `rebill_statements.sql` | a re-bill leaves every statement equal to its lines: a person's last meal of the week leaving (removed after an off-menu or menu correction, passed on, cancelled) deletes the statement and returns their credit, a changed dish or price updates it, a second meal shrinks it; credit over two weeks, a settled week, and a waived week whose lines go (a meal re-added is charged afresh); declined and withdrawn passes move nothing, and nobody deletes a pass; the other office unchanged | no, rolls back |
-| `rebill_race.sql` | over dblink, three sessions on one person: a payment arriving held open, a re-bill of their week (a removal, a reprice) and a payment moved (matched to this week, to another week, a stray applied) or the week waived; each waits rather than deadlocks and nobody is left owing | **yes, then removes them**; local only, needs `dblink` |
+| `rebill_statements.sql` | a re-bill leaves every statement equal to its lines: a person's last meal of the week leaving (removed after an off-menu or menu correction, passed on, cancelled) deletes the statement and returns their credit, a changed dish or price updates it, a second meal shrinks it; credit over two weeks, a settled week, and a waived week whose lines go (a meal re-added is charged afresh, waiving it again says it is gone); declined and withdrawn passes move nothing, and nobody deletes a pass; the other office unchanged | no, rolls back |
+| `rebill_race.sql` | over dblink, three or four sessions on one person: payments arriving held open, a re-bill of their week (a removal, a reprice) and a payment moved (matched to this week, to another week, a stray applied, one that arrived while the re-bill waited), voided, or the week waived; each waits rather than deadlocks and nobody is left owing | **yes, then removes them**; local only, needs `dblink` |
 | `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
@@ -157,13 +157,16 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   on it and `FOR NO KEY UPDATE` to change it, never `FOR UPDATE`. The hourly
   tick's plain `UPDATE` of due menus, in scan order, is the one known exception;
   see [Decisions](../decisions.md#platform). Money comes after, in one order:
-  the week, payments, each person (the `lunch.reallocate:` advisory key, in
-  profile order), then statement rows. `run_billing` holds the week, the
-  payments on its statements, and every person with a statement, a line or a
-  billable order in the week before it writes a statement; `move_payment` and
-  `void_payment` take the payment, then the people; `trg_payment_apply` and
-  `waive_statement` take the person, then the statements. `private.reallocate`
-  takes its person's key again, which is a no-op when it is already held.
+  the week, each person (the `lunch.reallocate:` advisory key, in profile
+  order), payment rows, then statement rows. `run_billing` holds the week,
+  every person with a statement, a line or a billable order in the week, and
+  then the payments pointing at its statements, before it writes a statement;
+  `move_payment` and `void_payment` read the payment, take its people (both,
+  for a move), then lock the payment and refuse if it moved meanwhile;
+  `trg_payment_apply` and `waive_statement` take the person, then the
+  statements. Which payments point at a person's statements changes only
+  under that person's lock. `private.reallocate` takes its person's key again,
+  which is a no-op when it is already held.
 - **A statement is the sum of its lines.** Every re-bill recalculates every
   statement in the week, to zero when no line is left, reallocates each of
   those people, and then deletes a statement with no lines (waived or not).
