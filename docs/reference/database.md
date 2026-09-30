@@ -32,6 +32,7 @@ and whether it rolls back. The ones to know first:
 | `zero_due_week.sql` | the hourly tick bills and closes a week in which somebody's only order has no dish: 0-due weeks are paid and dated, credit and advance payments untouched, the weekly bill sent only to who owes | no, rolls back |
 | `one_dish.sql` | a one-dish menu gives every undecided slot its dish, marked as the system's, at publish, on a removal down to one and for a slot made later; a second dish takes back only those lines and asks only those people with Telegram, once; nothing after the cutoff, in a settled week, on a rename or in another office | no, rolls back |
 | `one_dish_race.sql` | over dblink: a dish added while a member chooses the one dish, both ways round, and a publish while a weekday rule is turned on, both ways round | **yes, then removes them**; local only, needs `dblink` |
+| `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
 `isolation.sql` needs fixtures around it:
@@ -65,6 +66,11 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   instead of a join.
 - **An office is founded only through `create_organization`.** Nobody inserts
   into `organizations` directly.
+- **The caterer template names the dishes and only known placeholders.**
+  `organizations_caterer_message_template_ck` refuses a template without
+  `{dishes}`, with any `{word}` other than `{companyName}`, `{servingDate}`,
+  `{dishes}`, `{total}` and `{unchosen}`, or over 2000 characters. Null is the
+  app's default wording.
 - **One bank account belongs to one live office.** The SePay webhook routes by
   the account number, so `organizations_account_number_uk` is unique on the
   whitespace-folded number among offices not deleted.
