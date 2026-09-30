@@ -309,3 +309,8 @@ acting on is real: the rules are spread across policies, grants and triggers,
 and only tests tie them together. Start by writing down what specifically has
 been buggy or hard to scale, because that decides which of the two directions
 helps.
+
+## Noted in passing
+
+- A week's `payment_ref` has no year (`'LUNCH' || to_char(period_start, 'IW') || short_code`, `private.payment_ref`), so the same ISO week a year later gives the same reference and the new statement fails on `billing_statements_ref_uk`.
+- `supabase/tests/transfer_consent.sql` picks `organizations order by id limit 1` and needs an owner and two members there, so it fails on any database whose first office is not shaped that way; it should build its own fixtures.

@@ -19,9 +19,16 @@
 -- deleted statement is re-pointed at the person's frontier, the same rule
 -- `trg_payment_apply` uses.
 --
--- The payments on the week's statements are locked before anybody's weeks are
--- redrawn, because `move_payment` and `void_payment` take the payment before
--- the person, and the delete below updates those payments through the FK.
+-- Locks, in the order `move_payment` and `void_payment` already take them: a
+-- payment, then each person (`lunch.reallocate:` advisory key, profile
+-- order), then statement rows. The re-bill used to write statement rows first
+-- and take people after, so a payment arriving, a payment moved and a
+-- correction on the same person's week deadlocked (40P01). It now holds the
+-- week, then the payments on the week's statements (the delete below updates
+-- them through the FK), then every person with a statement, a line or a
+-- billable order in the week, and only then touches a statement.
+-- `waive_statement` locked the statement before the person; it now takes the
+-- person first too.
 --
 -- A settled week is unchanged: `run_billing` still refuses it without
 -- `p_force`, and the guards still refuse every write that would change it.
@@ -128,6 +135,7 @@ security definer
 set search_path to ''
 as $function$
 declare
+  v_p      public.billing_periods%rowtype;
   v_org    bigint;
   v_person uuid;
   v_empty  bigint[];
@@ -136,18 +144,39 @@ begin
   -- The week first, as every caller that holds it already has.
   perform pg_advisory_xact_lock(hashtext('lunch.run_billing'), p_period_id::int);
 
+  -- Then the payments, then the people, then (in the inner function) the
+  -- statement rows: the order move_payment and void_payment take them in.
   perform 1 from public.payments p
     join public.billing_statements st on st.id = p.matched_statement_id
    where st.billing_period_id = p_period_id
    order by p.id
      for no key update of p;
 
+  select * into v_p from public.billing_periods bp where bp.id = p_period_id;
+  v_org := v_p.org_id;
+
+  -- Everybody the inner function can write a statement for. The key is the
+  -- one private.reallocate takes, so its own lock later is a re-entry.
+  for v_person in
+    select st.profile_id from public.billing_statements st
+     where st.billing_period_id = p_period_id
+    union
+    select bl.payer_profile_id from public.billing_lines bl
+     where bl.billing_period_id = p_period_id
+    union
+    select c.payer_profile_id from public.v_order_charges c
+     where c.org_id = v_p.org_id
+       and c.order_status = 'placed'
+       and c.service_date between v_p.period_start and v_p.period_end
+       and not c.unpriced
+    order by 1
+  loop
+    perform pg_advisory_xact_lock(
+      hashtextextended('lunch.reallocate:' || v_org || ':' || v_person, 0));
+  end loop;
+
   perform * from private.run_billing_inner(p_period_id, p_force);
 
-  select bp.org_id into v_org from public.billing_periods bp where bp.id = p_period_id;
-
-  -- In profile order, so that it takes the per-person locks in the same order
-  -- move_payment does and the two cannot deadlock on each other.
   for v_person in
     select distinct st.profile_id from public.billing_statements st
      where st.billing_period_id = p_period_id
@@ -185,3 +214,58 @@ begin
 end $function$;
 
 revoke execute on function public.run_billing(bigint, boolean) from public, anon, authenticated;
+
+-- As in 20261011100300, but the person is locked before their statement, the
+-- order run_billing and private.reallocate take them in. Locking the row
+-- first and the person in `trg_statement_waived` after deadlocked with a
+-- re-bill of the same week.
+create or replace function public.waive_statement(p_statement_id bigint, p_reason text default null)
+returns void
+language plpgsql
+security definer
+set search_path to ''
+as $fn$
+declare
+  v_actor  uuid := (select auth.uid());
+  v_reason text;
+  v_st     public.billing_statements%rowtype;
+  v_org    public.organizations%rowtype;
+  v_start  date;
+begin
+  select * into v_st from public.billing_statements s where s.id = p_statement_id;
+  if not found or not (v_st.org_id = any ((select private.my_admin_org_ids())::bigint[])) then
+    raise exception 'only an admin of this office can waive a week'
+      using errcode = 'insufficient_privilege';
+  end if;
+  v_reason := private.short_text(p_reason, 200, 'reason');
+
+  perform pg_advisory_xact_lock(
+    hashtextextended('lunch.reallocate:' || v_st.org_id || ':' || v_st.profile_id, 0));
+
+  -- Read again under the lock: a re-bill may have changed or deleted it.
+  select * into v_st from public.billing_statements s where s.id = p_statement_id for update;
+  if not found then
+    raise exception 'that week has nothing on it any more, so there is nothing to waive'
+      using errcode = 'no_data_found';
+  end if;
+  if v_st.status = 'waived' then
+    raise exception 'that week is already waived' using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  update public.billing_statements s
+     set status = 'waived', paid_at = null, marked_paid_by = v_actor
+   where s.id = v_st.id;
+
+  select * into v_org from public.organizations o where o.id = v_st.org_id;
+  select bp.period_start into v_start from public.billing_periods bp where bp.id = v_st.billing_period_id;
+  insert into public.payment_corrections
+    (org_id, kind, statement_id, from_profile_id, amount_minor, summary, reason, made_by)
+  values (v_st.org_id, 'waive', v_st.id, v_st.profile_id, v_st.meals_minor,
+          'Waived ' || private.member_name(v_st.org_id, v_st.profile_id) || '''s week of '
+            || to_char(v_start, 'DD/MM') || ', '
+            || private.money_text(v_st.meals_minor, v_org.currency_minor_units, v_org.currency),
+          v_reason, v_actor);
+end $fn$;
+
+revoke execute on function public.waive_statement(bigint, text) from public, anon;
+grant  execute on function public.waive_statement(bigint, text) to authenticated;

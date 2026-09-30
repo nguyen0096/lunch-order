@@ -151,7 +151,9 @@ recomputed, and money already matched to it stays there
 Each re-bill recalculates every statement in the week from its lines, and
 deletes one left with no lines. So when somebody's last meal of the week goes
 (removed, passed on, cancelled, or its price taken away), that week stops
-charging them and any credit it held is theirs again (20261020100000).
+charging them and any credit it held is theirs again (20261020100000). A
+waiver goes with its statement: a meal recorded in that week afterwards is
+charged on a new statement that is not waived.
 
 A placed order with no dish line bills at 0; a statement whose meals come to 0
 is paid, takes none of the person's credit, and gets `paid_at` when it is

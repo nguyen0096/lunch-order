@@ -598,6 +598,27 @@ insert into probe values
     coalesce((select matched_statement_id::text from public.payments where provider_txn_id = 'rb-WAIV'), 'null'),
     'null');
 
+-- The waiver went with the statement. A meal recorded again is charged on a
+-- new, unwaived statement, and the payment the waived week never used pays it.
+do $$
+begin
+  set local role authenticated;
+  perform set_config('request.jwt.claims',
+    '{"sub":"cccccccc-0000-0000-0000-000000000001","role":"authenticated"}', true);
+  perform public.correct_meal(
+           (select v::bigint from ctx where k = 'org_a'), (select v::date from ctx where k = 'd2a'),
+           'cccccccc-0000-0000-0000-000000000012', pg_temp.item('d2a', 'Cơm gà'), 1::smallint,
+           null, 'did eat after all');
+  reset role;
+end $$;
+
+insert into probe values
+  ('10 re-added: WAIV charged on a new unwaived statement', pg_temp.st('WAIV', 'p2'),
+    'meals=45000 n=1 paid=20000 partial'),
+  ('10 re-added: not the waived row',
+    (pg_temp.st_id('WAIV', 'p2') <> (select v::bigint from ctx where k = 'waiv_st'))::text, 'true'),
+  ('10 re-added: WAIV balance', pg_temp.bal('WAIV'), '25000');
+
 -------------------------------------------- 11. lunch cancelled, not corrected
 
 -- The member's own cancel reaches the bill at the next re-bill; this is that
@@ -662,13 +683,13 @@ insert into probe values
      = (select coalesce(sum(meals_minor), 0) from public.billing_statements
          where billing_period_id = (select v::bigint from ctx where k = 'p2')))::text, 'true'),
   -- Exact, from the prices: TWOM Phở 30000, CHNG Gỏi cuốn 40000, GIVB,
-  -- TAKE (GIVE's meal) at 45000 each.
+  -- TAKE (GIVE's meal) and WAIV (re-added) at 45000 each.
   ('G3 w2: the week totals what was eaten',
     (select coalesce(sum(amount_minor), 0)::text from public.billing_lines
-      where billing_period_id = (select v::bigint from ctx where k = 'p2')), '160000'),
+      where billing_period_id = (select v::bigint from ctx where k = 'p2')), '205000'),
   ('G4 w2: the period roll-up agrees',
     (select format('%s/%s', line_count, total_minor) from public.billing_periods
-      where id = (select v::bigint from ctx where k = 'p2')), '4/160000'),
+      where id = (select v::bigint from ctx where k = 'p2')), '5/205000'),
   ('G5 office A: no payment appeared, vanished or changed',
     (select format('%s/%s', count(*), sum(amount_minor)) from public.payments
       where org_id = (select v::bigint from ctx where k = 'org_a')),
