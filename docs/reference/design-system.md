@@ -7,12 +7,15 @@ every future screen, not this one.
 ## What this app is
 
 A shared weekly board for an office lunch order. Vietnamese food, Vietnamese
-names, prices in whole dong. Most people order from Telegram and never open this;
-the web app is the desktop surface where an admin publishes a menu, sees the
-week, and settles the bill.
+names, prices in whole dong. Many people order from Telegram, but the web app is
+used mainly on phones, opened from a chat link: to order, to hand a meal over,
+to see the bill. An admin publishes a menu and settles the week on the same
+screens, often at a desk.
 
-That is the opposite of what the old CSS assumed (`mobile-first, one breakpoint`),
-which is why the old one looked like a phone app stretched across a monitor.
+So every screen works at 320px first and uses the width it is given above that.
+The old CSS got the first half and not the second (`mobile-first, one
+breakpoint`), which is why it looked like a phone app stretched across a
+monitor.
 
 ## Non-negotiables
 
@@ -144,7 +147,18 @@ width it is given. It is a table, semantically and visually, because it is one.
 
 Left aligned throughout. Numbers right aligned in their own column.
 
-The menu is a panel under the grid, not content inside the cells: a week of
+**Two layouts for the Board, split at 640px** (`useNarrow`, `max-width:
+39.99rem`). From 640px up it is the grid above; below, a week strip, the
+picked day's menu panel and a list of everyone for that day, drawn from the
+same cells. See [screens](screens.md#on-a-phone). No other screen has a second
+layout: their content is already a column.
+
+**Targets.** 44px each way on a phone, which is `Button`'s default and icon
+size (`h-11`, `size-11`) and what every Board cell in the list is held to. The
+grid, from 640px up, keeps its denser 36 to 40px cells, since a week of them has
+to fit across.
+
+The menu is a panel above the grid, not content inside the cells: a week of
 people by days cannot also carry five days of dish lists, and it is what stops
 the cell from having to say what you are about to order. Tapping a column head
 moves the panel to that day.

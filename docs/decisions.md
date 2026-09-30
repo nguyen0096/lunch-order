@@ -493,8 +493,8 @@ caught up.
 
 ## Interface
 
-**Two tabs for a member: Board and Bill.** Telegram took the daily act, so the
-web app is the desktop surface. Standing days, the Telegram link and display
+**Two tabs for a member: Board and Bill.** Telegram took much of the daily act,
+so the web app keeps the two weekly questions. Standing days, the Telegram link and display
 name are set once and live behind the avatar; a permanent tab for them competes
 with the two weekly questions and loses.
 
@@ -551,6 +551,16 @@ succeed in silence, so a working feature was indistinguishable from a broken one
 these are the days with a menu -- was not one of the three things it meant.
 Heads carry the stage word instead. Colour on this screen now means one thing:
 the accent is *ordered*.
+
+**Below 640px the Board is a day, not a table.** The web app is used mainly on
+phones, and at 360 the grid spent 49% of its width on names and left room for
+one day. Tightened, with an 88px wrapping Who column and 76px days, it showed
+three, but in 76px a dish name wraps word by word, a name in 88px does the
+same, and the rest of the week is still a sideways scroll away. Any narrower
+only trades names for dishes. A strip of the week above one day's list gives
+both the width of the screen and keeps every control at 44px, at the cost of
+the week at a glance, which the strip's marks keep for your own row. The cells
+are shared with the grid, so the two layouts cannot drift apart.
 
 **One week, two screens, one control.** The menu editor offered nineteen days
 as a wrapping strip of cards while the board, one item above it in the nav,

@@ -79,6 +79,8 @@ both.
 
 **Job.** Answer "what am I eating this week" and "how many people am I ordering
 for" on one screen. This is the hero and it uses the full width it is given.
+From 640px up it is the grid below; narrower, it is one day at a time (see
+[on a phone](#on-a-phone)).
 
 **Your row is an action, theirs is a record.** Your own row shows your dish on
 the accent fill, with the note under it, and every empty day on it is a control.
@@ -108,8 +110,9 @@ outline, eating with no dish yet · `┌┐` empty, still a target · `═` the 
 menu panel shows
 
 A meal somebody gave you, once you accept it, sits on your own row as the dish
-and `from Tèo`. The order stays on the giver's line, where it reads `to Neyu`,
-so without it your row looked empty and offered you a second lunch for a day
+and `from Tèo`. The order stays on the giver's line, where it reads `to you`
+rather than your own name, which on somebody else's cell reads as a stranger's
+(the handover sheet says `passed this meal to you` too). Without it your row looked empty and offered you a second lunch for a day
 you already had one. Tapping it says why there is nothing to order.
 
 **Which days you can act on** is the first question the grid answers, and the
@@ -131,7 +134,41 @@ there is nothing here an admin sees that a member does not. See
 
 **The menu panel** above the grid names one day's dishes with prices and when it
 closes, so nobody has to tap a cell to find out what is on offer. It opens on the
-next day you can still order for, and a tap on any column head moves it.
+next day you can still order for, and a tap on any column head, or a chip in
+the strip on a phone, moves it.
+
+### On a phone
+
+Below 640px the grid gives way to one day at a time. At 360 a week of columns
+left room for a single day beside the names, so the layout turned on its side:
+
+```
+‹  28 Sept – 3 Oct  ›
+┌────┐┌─────┐┏━━━━┓┌╌╌╌╌┐┌╌╌╌╌┐
+│Mon ││Today│┃Wed ┃╎Thu ╎╎Fri ╎      the strip: one chip a day
+│ 28 ││ 29  │┃ 30 ┃╎ 1  ╎╎ 2  ╎
+└────┘└─────┘┗━━━━┛└╌╌╌╌┘└╌╌╌╌┘
+Wednesday 30 September       Closes 21:00 29/09
+Hủ tiếu Nam Vang 45.000 ₫ ...                     the menu panel
+Wed 30                                 6 eating
+Nguyễn Đình Nguyên (you)    [  +  ][  ⚄  ]        the list: a row each
+Vinh Tony                   │Hủ tiếu Nam Vang│
+HP                          ╎    to Tèo      ╎
+```
+
+| Part | Behaviour |
+| --- | --- |
+| strip | a button per visible day, `aria-pressed` on the picked one and `aria-current="date"` on today. Each chip carries my own state in my row's language: the accent fill for an order, a dashed edge for a prediction, the date struck through for a skip. `Today` takes the weekday's place |
+| stage word | on the picked chip only, since seven do not fit at 320; the list heading repeats it, `Tue 29 · Today · Cooking`, and every chip's label says it to a screen reader |
+| menu panel | the picked day's, as on the grid |
+| list | everyone for the picked day, with the day's headcount in its heading. Every cell is the grid's own, drawn by the same code and calling the same actions, so ordering, the dice, skipping, handing over and Accept or Decline behave identically |
+| opens on | the next day you can still order for, as the grid does |
+| swipe | sideways on the list moves one day. A mostly vertical drag, a pinch or a touch on the strip does not. It is an enhancement: the strip is how a keyboard or a screen reader changes day, and if a swipe takes away the cell that had focus, focus moves to the list, whose name is the day it now shows |
+| resize | crossing 640px keeps the picked day and anything open, and the grid scrolls to that day |
+
+Every target on a phone is at least 44px each way. A seven-day week at 320 is
+the one case the strip does not fit, and there it scrolls sideways, keeping the
+picked chip in view.
 
 **Week navigation** is `‹ 22–26 Sept ›` with a "This week" reset that appears only
 once you have navigated away. One control, not a strip plus a legend plus a label.
@@ -247,7 +284,7 @@ an admin to the same end of day.
 
 | State | |
 | --- | --- |
-| loading | skeleton shaped like the grid |
+| loading | skeleton shaped like the grid, or like the strip and list on a phone |
 | no menu that day | the cell is inert and says so on tap; the panel says it too |
 | cutoff passed | the column head says `Closed`, and the cell carries the database's sentence on hover, focus or tap. Nothing recedes |
 | lunch is over | the column head says `Served`; handing a meal over and answering an offer are unavailable, with the reason |

@@ -10,9 +10,9 @@ sense for an app that was the only way in.
 
 Telegram is now the only way in for most people. They order, cancel and check
 what they owe without opening a browser, and they never had an email address to
-sign in with. That leaves the web app doing a different job: the desktop surface
-where an admin publishes a menu, reads the week, and settles the bill, plus a
-place for anyone to see the board on a bigger screen.
+sign in with. Whoever does open the web app still opens it mainly on a phone,
+from a chat link: an admin publishing a menu, reading the week and settling the
+bill, and a member who wants the whole week in front of them.
 
 The navigation never caught up, which is why it felt heavy. It was carrying a
 full member experience that its members no longer used.

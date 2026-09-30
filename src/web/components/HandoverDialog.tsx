@@ -26,6 +26,8 @@ export type HandoverDialogProps = {
   giveReason: string | null;
   /** A live offer already sitting on their meal. */
   offer: TransferRow | null;
+  /** Their meal went to me, which the sentence says as "you". */
+  passedToMe: boolean;
   /** Only the person who made an offer may take it back. */
   mayWithdraw: boolean;
   pending: boolean;
@@ -61,7 +63,9 @@ export function HandoverDialog(props: HandoverDialogProps) {
             {theirCell === null
               ? `${member.name} is not down as eating.`
               : theirCell.transferredToName !== null
-                ? `${member.name} passed this meal to ${theirCell.transferredToName}, so they are billed for it.`
+                ? props.passedToMe
+                  ? `${member.name} passed this meal to you, so you are billed for it.`
+                  : `${member.name} passed this meal to ${theirCell.transferredToName}, so they are billed for it.`
                 : `${member.name} is eating${theirDish === null ? ", with no dish chosen" : ""}.`}
           </DialogDescription>
         </DialogHeader>

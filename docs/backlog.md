@@ -251,6 +251,18 @@ Sources: <https://developer.sepay.vn/vi/bankhub/tong-quan>,
 <https://developer.sepay.vn/vi/sepay-webhooks>,
 <https://github.com/sepayvn/laravel-sepay>.
 
+## The Board on a phone, next
+
+Two ideas from the phone layout's review, left out of it on purpose:
+
+- **Group the day's list by dish.** Whoever hands the boxes out reads a dish
+  and finds the people, the reverse of the list's order. Grouping would serve
+  that moment and cost the fixed row order everybody else relies on to find
+  themselves.
+- **Headcounts on the strip.** A number per chip is the admin's question
+  across the week, and it competes for the 44px chip with my own state, which
+  is the member's question. The list heading already counts the picked day.
+
 ## Vietnamese interface
 
 The content is already Vietnamese (dish names, member names), and the typeface
