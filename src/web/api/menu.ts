@@ -167,7 +167,7 @@ export async function fetchPublishImpact(args: {
     supabase.from("orders").select("id", { count: "exact", head: true })
       .eq("menu_id", args.menuId).eq("status", "placed"),
     supabase.from("order_items").select("id", { count: "exact", head: true })
-      .eq("menu_id", args.menuId),
+      .eq("menu_id", args.menuId).eq("auto_assigned", false),
   ]);
   if (orders.error) throw orders.error;
   if (chosen.error) throw chosen.error;
@@ -184,13 +184,16 @@ export async function fetchPublishImpact(args: {
  * and it is the admin who has to ring those people.
  *
  * Read from `order_items` rather than `orders`: an order with no dish chosen
- * belongs to nobody's dish and must not be counted against one.
+ * belongs to nobody's dish and must not be counted against one. Nor does a
+ * line the system wrote on a one-dish menu: nobody chose it, and the dish can
+ * be removed with it on.
  */
 export async function fetchDishTakers(menuId: number): Promise<Map<number, string[]>> {
   const { data, error } = await supabase
     .from("order_items")
     .select("menu_item_id, profile_id, orders!inner(status)")
     .eq("menu_id", menuId)
+    .eq("auto_assigned", false)
     .eq("orders.status", "placed");
   if (error) throw error;
 

@@ -612,7 +612,7 @@ async function menuRows(
                filter (where mi.id is not null),
              '[]'::json) as items
       from public.menus m
-      left join public.menu_items mi on mi.menu_id = m.id and mi.is_available
+      left join public.menu_items mi on mi.menu_id = m.id
      where m.org_id = ${link.org.id}
        and case when ${menuId ?? null}::bigint is null
                 then m.service_date between ${today}::date

@@ -13,7 +13,7 @@ export async function fetchMenu(orgId: number, serviceDate: string): Promise<Men
     .from("menus")
     .select(
       `id, org_id, service_date, status, order_cutoff_at,
-       menu_items ( id, name, price_minor, position, is_available )`,
+       menu_items ( id, name, price_minor, position )`,
     )
     .eq("org_id", orgId)
     .eq("service_date", serviceDate)
@@ -21,13 +21,11 @@ export async function fetchMenu(orgId: number, serviceDate: string): Promise<Men
   if (error) throw error;
   if (!data) return null;
 
-  type ItemRow = {
-    id: number; name: string; price_minor: number; position: number; is_available: boolean;
-  };
+  type ItemRow = { id: number; name: string; price_minor: number; position: number };
   const items = ((data.menu_items ?? []) as unknown as ItemRow[])
     .map((i) => ({
       id: i.id, name: i.name, priceMinor: i.price_minor,
-      position: i.position, isAvailable: i.is_available,
+      position: i.position,
     }))
     .sort((a, b) => a.position - b.position || a.id - b.id);
 
@@ -224,7 +222,7 @@ export async function fetchBoard(args: {
     supabase
       .from("menus")
       .select(`id, service_date, status, order_cutoff_at,
-               menu_items ( id, name, price_minor, position, is_available )`)
+               menu_items ( id, name, price_minor, position )`)
       .eq("org_id", args.orgId)
       .gte("service_date", args.from)
       .lte("service_date", args.to),
@@ -267,11 +265,10 @@ export async function fetchBoard(args: {
     if (r.error) throw r.error;
   }
 
-  type ItemRow = { id: number; name: string; price_minor: number; position: number; is_available: boolean };
+  type ItemRow = { id: number; name: string; price_minor: number; position: number };
   const menuByDate = new Map<string, BoardDay>();
   for (const m of menusRes.data ?? []) {
     const dishes = ((m.menu_items ?? []) as unknown as ItemRow[])
-      .filter((i) => i.is_available)
       .sort((a, b) => a.position - b.position || a.id - b.id)
       .map((i) => ({ id: i.id, name: i.name, priceMinor: i.price_minor }));
     menuByDate.set(m.service_date, {

@@ -85,7 +85,6 @@ export type MenuItem = {
    */
   priceMinor: number | null;
   position: number;
-  isAvailable: boolean;
 };
 
 export type Menu = {
