@@ -14,15 +14,19 @@ import {
 } from "../api.js";
 import {
   DishRows,
+  RemovedDishes,
+  adoptIds,
   blankRow,
+  dishChanges,
   duplicateName,
-  nameKey,
+  removedOrderedReason,
   rowFromAssist,
   rowFromLine,
   rowFromMenu,
   rowFromParsed,
   toDrafts,
   type DishRow,
+  type SavedDish,
 } from "./menu/DishRows.js";
 import { PublishDialog } from "./menu/PublishDialog.js";
 import { StatusActions } from "./menu/StatusActions.js";
@@ -262,6 +266,10 @@ export function MenuScreen({ me, org }: ScreenProps) {
     });
   }, [serviceDate, defaultCutoffTime, org.timezone]);
 
+  // What publishing is measured against: each row's id says whether it updates
+  // one of these or inserts, and any of these no row claims gets deleted.
+  const saved = useMemo<SavedDish[]>(() => menu?.items ?? [], [menu]);
+
   const status: MenuStatus | null = menu?.status ?? null;
   const frozen = readOnlyReason(status);
   const frozenSentence = status === null ? null : frozenNotice(status);
@@ -317,7 +325,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
         : `Read ${dishCount(r.items.length)}`,
     onSuccess: (r) => {
       setRows((previous) =>
-        adoptIds(r.items.map((i) => rowFromAssist(i, currency)), previous),
+        adoptIds(r.items.map((i) => rowFromAssist(i, currency)), previous, saved),
       );
       setParsed(null);
       setNotes(r.notes);
@@ -335,11 +343,11 @@ export function MenuScreen({ me, org }: ScreenProps) {
     setParsed(result);
     setNotes(result.notes);
     setRows((previous) =>
-      adoptIds(result.items.map((i) => rowFromParsed(i, currency)), previous),
+      adoptIds(result.items.map((i) => rowFromParsed(i, currency)), previous, saved),
     );
     setReadBy("offline");
     setModel(null);
-  }, [text, today, currency]);
+  }, [text, today, currency, saved]);
 
   const patchRow = useCallback((key: string, patch: Partial<DishRow>) => {
     setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
@@ -348,6 +356,28 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const removeRow = useCallback((key: string) => {
     setRows((rs) => rs.filter((r) => r.key !== key));
   }, []);
+
+  // Keep puts the dish back where it was saved, and focus goes to it: the
+  // button it was pressed on has just left the list with the dish.
+  const focusOn = useRef<string | null>(null);
+  const keepDish = useCallback(
+    (dish: SavedDish) => {
+      const row = rowFromMenu(dish, currency);
+      focusOn.current = row.key;
+      setRows((rs) => {
+        const at = saved.findIndex((d) => d.id === dish.id);
+        const out = [...rs];
+        out.splice(Math.min(Math.max(at, 0), out.length), 0, row);
+        return out;
+      });
+    },
+    [currency, saved],
+  );
+  useEffect(() => {
+    if (focusOn.current === null) return;
+    document.getElementById(`${focusOn.current}-name`)?.focus();
+    focusOn.current = null;
+  }, [rows]);
 
   const takeLine = useCallback((line: number, raw: string) => {
     setRows((rs) => [...rs, rowFromLine(raw)]);
@@ -386,10 +416,12 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const drafts = toDrafts(rows);
   const duplicate = duplicateName(rows);
+  const changes = dishChanges(rows, saved);
   const publishReason =
     frozen ??
     publishDisabledReason(drafts, serviceDate) ??
     (duplicate === null ? null : `Two rows are called "${duplicate}". Rename one`) ??
+    removedOrderedReason(changes.removed, takers) ??
     cutoffIssue;
 
   const parseReason = frozen ?? (text.trim() === "" ? "Paste the caterer's message first" : null);
@@ -705,6 +737,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
             <>
               <DishRows
                 rows={rows}
+                saved={saved}
                 currency={org.currency}
                 readOnlyReason={frozen}
                 takers={takers}
@@ -723,6 +756,17 @@ export function MenuScreen({ me, org }: ScreenProps) {
                 </div>
               )}
             </>
+          )}
+
+          {/* Also when the table is empty: clearing every row is how the whole
+              saved menu ends up here. */}
+          {frozen === null && (
+            <RemovedDishes
+              removed={changes.removed}
+              takers={takers}
+              currency={org.currency}
+              onKeep={keepDish}
+            />
           )}
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4">
@@ -759,7 +803,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
           org={org}
           serviceDate={serviceDate}
           status={status}
-          dishes={rows.length}
+          changes={changes}
           unpriced={drafts.filter((d) => d.priceMinor === null).length}
           impact={impact}
           cutoffAt={cutoffAt}
@@ -818,25 +862,6 @@ function nextServiceDay(today: string): string {
   let day = addDays(today, 1);
   while (isoWeekday(day) > 5) day = addDays(day, 1);
   return day;
-}
-
-/**
- * Carry the ids of dishes already on the menu across a re-parse.
- *
- * Without this, re-pasting a corrected message over a published menu turns
- * every dish into a delete-and-reinsert, which the FK from `order_items`
- * refuses the moment anybody has chosen one. Matching on the name is what the
- * database's own unique index matches on.
- */
-function adoptIds(next: DishRow[], previous: DishRow[]): DishRow[] {
-  const known = new Map<string, number>();
-  for (const row of previous) {
-    if (row.id !== null) known.set(nameKey(row.name), row.id);
-  }
-  return next.map((row) => {
-    const id = row.id ?? known.get(nameKey(row.name)) ?? null;
-    return id === row.id ? row : { ...row, id };
-  });
 }
 
 function emptyHeading(a: {

@@ -580,6 +580,32 @@ Every saved dish names who chose it, and the remove control carries those names
 as the reason it is unavailable. The trigger refuses that write either way, but
 a refusal you read after pressing is worth less than the list you needed before.
 
+**Which saved dish a row is.** Publishing updates a row that carries a saved
+dish's id, inserts one without, and deletes every saved dish no row carries
+(`publish_menu`). Once the day has saved dishes, each row shows which it is:
+the id in muted text, `#230`, for a dish updated in place (its orders stay),
+or `New` for one inserted. A day with nothing saved shows no tags, since every
+row would say `New`. The name box is described by the tag, so a screen reader
+hears "Saved dish #230, updated in place" or "New dish, added when you
+publish".
+
+- **Matching on a parse.** Parse and Read with AI give a row the id of a dish
+  with the same name (NFC, trimmed, any case, the rule of `menu_items`' unique
+  index), looked for first among the rows on screen, then among the saved
+  dishes, so a dish an earlier parse dropped is recognised when a later one
+  brings it back. Each id goes to one row. A reworded name is `New`.
+- **Editing a name by hand** keeps the id: it is a rename.
+- **Same dish as.** A `New` row, while any saved dish is about to be removed,
+  offers a select of those dishes. Choosing one gives the row its id, so a
+  reworded dish becomes a rename and keeps its orders. A renamed row shows the
+  same select set to the dish it renames, and `None, a new dish` detaches it.
+- **Will be removed** lists, under the table, the saved dishes no row carries,
+  struck through, with id and price. One somebody chose names who and says
+  removing it will be refused; Publish then carries the reason (`"Bún bò"
+  would be removed, and somebody chose it. Keep it, or mark its new row as the
+  same dish`). **Keep** puts a dish back at its saved place with its id and
+  moves focus to its name box.
+
 There is no un-publish. A published menu is editable in place, so it only ever
 hid a day from members while lunch went on being cooked. Calling lunch off is
 Cancel, which says so.
@@ -591,7 +617,9 @@ menu loads that menu's stored cutoff, so republishing to fix a price never moves
 it silently. The default itself is set once in Settings.
 
 Publishing is the highest-consequence action in the app, so it confirms, naming
-the date and how many people it will notify.
+the date, how many people it will notify, and what it does to the dishes:
+`2 dishes updated, 1 new, 1 removed` (only the parts that happen, the noun on
+the first), then the removed dishes by name.
 What publishing, editing and cancelling do is in
 [Ordering rules](ordering-rules.md#menu-lifecycle).
 
@@ -600,6 +628,7 @@ What publishing, editing and cancelling do is in
 | no menu for the date | empty editor, paste prompt |
 | draft | editable, Publish enabled once it has a dish |
 | published | editable with a warning naming who has ordered each dish |
+| a saved dish left out of the list | under Will be removed, with Keep; Publish unavailable, with the reason, if somebody chose it |
 | locked | read only, with the reason: orders have gone to the caterer |
 | cooking, served | the same; nothing on this screen reopens a day |
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |

@@ -1,5 +1,5 @@
 import { Trash2Icon } from "lucide-react";
-import { Action, cn } from "@/ui";
+import { Action, Badge, Button, cn } from "@/ui";
 import type { DraftDish } from "../../api.js";
 import type { ItemWarning, ParsedItem } from "../../../shared/menuParser.js";
 import { dishName } from "../../../shared/dishName.js";
@@ -267,16 +267,90 @@ export function toDrafts(rows: DishRow[]): DraftDish[] {
   });
 }
 
+/** A dish as the database holds it now, before anything on screen is published. */
+export type SavedDish = { id: number; name: string; priceMinor: number | null; position: number };
+
+/**
+ * Carry the ids of dishes already on the menu across a re-parse.
+ *
+ * Without this, re-pasting a corrected message over a published menu turns
+ * every dish into a delete-and-reinsert, which the FK from `order_items`
+ * refuses the moment anybody has chosen one. Matching on the name is what the
+ * database's own unique index matches on.
+ *
+ * The rows on screen are asked first, so a dish the admin renamed by hand
+ * keeps its id under the new name; the saved menu second, so a dish that an
+ * earlier parse dropped is recognised when a later one brings it back. Each id
+ * goes to one row at most: two rows with one id would be one dish updated
+ * twice.
+ */
+export function adoptIds(next: DishRow[], previous: DishRow[], saved: SavedDish[]): DishRow[] {
+  const known = new Map<string, number>();
+  for (const row of previous) {
+    const key = nameKey(row.name);
+    if (row.id !== null && !known.has(key)) known.set(key, row.id);
+  }
+  for (const dish of saved) {
+    const key = nameKey(dish.name);
+    if (!known.has(key)) known.set(key, dish.id);
+  }
+  const taken = new Set<number>();
+  for (const row of next) if (row.id !== null) taken.add(row.id);
+  return next.map((row) => {
+    if (row.id !== null) return row;
+    const id = known.get(nameKey(row.name));
+    if (id === undefined || taken.has(id)) return row;
+    taken.add(id);
+    return { ...row, id };
+  });
+}
+
+/**
+ * What publishing the rows would do to the saved menu: which dishes it updates
+ * in place, how many it adds, and which it deletes. `publish_menu` decides the
+ * same thing from the same ids, so this is a prediction, not a second rule.
+ */
+export function dishChanges(
+  rows: DishRow[],
+  saved: SavedDish[],
+): { updated: number; added: number; removed: SavedDish[] } {
+  const savedIds = new Set(saved.map((d) => d.id));
+  const kept = new Set<number>();
+  let added = 0;
+  for (const row of rows) {
+    if (row.id !== null && savedIds.has(row.id)) kept.add(row.id);
+    else added += 1;
+  }
+  return { updated: kept.size, added, removed: saved.filter((d) => !kept.has(d.id)) };
+}
+
+/**
+ * `2 dishes updated, 1 new, 1 removed`. Only the parts that happen, and the
+ * noun goes on whichever comes first so a single count still agrees.
+ */
+export function changeSummary(c: { updated: number; added: number; removed: number }): string {
+  const noun = (n: number) => (n === 1 ? "dish" : "dishes");
+  const parts: string[] = [];
+  if (c.updated > 0) parts.push(`${c.updated} ${noun(c.updated)} updated`);
+  if (c.added > 0) {
+    parts.push(parts.length === 0 ? `${c.added} new ${noun(c.added)}` : `${c.added} new`);
+  }
+  if (c.removed > 0) {
+    parts.push(parts.length === 0 ? `${c.removed} ${noun(c.removed)} removed` : `${c.removed} removed`);
+  }
+  return parts.length === 0 ? "No dishes" : parts.join(", ");
+}
+
 /**
  * Who is having this dish, as a sentence.
  *
- * Null for a row that nobody has chosen, and for one that has not been saved
- * yet: a dish being typed has no id and therefore no orders, which is not the
- * same fact as a saved dish nobody wanted.
+ * Null for a dish that nobody has chosen, and for a row that has not been
+ * saved yet: a dish being typed has no id and therefore no orders, which is
+ * not the same fact as a saved dish nobody wanted.
  */
-function takerNote(row: DishRow, takers: Map<number, string[]>): string | null {
-  if (row.id === null) return null;
-  const names = takers.get(row.id);
+function takerNote(id: number | null, takers: Map<number, string[]>): string | null {
+  if (id === null) return null;
+  const names = takers.get(id);
   if (names === undefined || names.length === 0) return null;
   if (names.length <= 3) return `Ordered by ${listNames(names)}`;
   return `Ordered by ${listNames(names.slice(0, 3))} and ${names.length - 3} more`;
@@ -289,9 +363,23 @@ function listNames(names: string[]): string {
 }
 
 /** Null when the dish can go; otherwise why the database will refuse it. */
-function removeReason(row: DishRow, takers: Map<number, string[]>): string | null {
-  const note = takerNote(row, takers);
+function removeReason(id: number | null, takers: Map<number, string[]>): string | null {
+  const note = takerNote(id, takers);
   return note === null ? null : `${note}. Removing a dish somebody chose will be refused`;
+}
+
+/**
+ * Why Publish would be refused, or null: a dish somebody chose is no longer in
+ * the list. The same fact the remove button refuses on, reached by a re-parse
+ * instead of a press.
+ */
+export function removedOrderedReason(
+  removed: SavedDish[],
+  takers: Map<number, string[]>,
+): string | null {
+  const ordered = removed.find((d) => takerNote(d.id, takers) !== null);
+  if (ordered === undefined) return null;
+  return `"${ordered.name}" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish`;
 }
 
 /** The messages for one field, rendered under it. */
@@ -326,9 +414,15 @@ function rowLabel(row: DishRow, index: number): string {
  * are worse than the same information in one column per row. The grid is a
  * table on a monitor and a stack of cards on a phone, with the same labels in
  * both, so nothing is only discoverable by scrolling.
+ *
+ * Once the day has saved dishes, each row also says which one it is: `#101`
+ * for a dish publishing updates in place, `New` for one it inserts. With
+ * nothing saved every row would say `New`, which tells nobody anything, so the
+ * column is not drawn.
  */
 export function DishRows({
   rows,
+  saved,
   currency,
   readOnlyReason,
   takers,
@@ -336,6 +430,8 @@ export function DishRows({
   onRemove,
 }: {
   rows: DishRow[];
+  /** The day's dishes as last loaded; empty when nothing is saved yet. */
+  saved: SavedDish[];
   currency: Currency;
   /** Null when the menu can be edited, otherwise the sentence saying why not. */
   readOnlyReason: string | null;
@@ -356,8 +452,8 @@ export function DishRows({
             >
               <span className="flex flex-col gap-0.5">
                 <span className="font-medium">{row.name}</span>
-                {takerNote(row, takers) !== null && (
-                  <span className="text-xs text-muted">{takerNote(row, takers)}</span>
+                {takerNote(row.id, takers) !== null && (
+                  <span className="text-xs text-muted">{takerNote(row.id, takers)}</span>
                 )}
               </span>
               {/* Not `formatMoney(x ?? 0)`: on a frozen menu a zero would read
@@ -376,6 +472,10 @@ export function DishRows({
     );
   }
 
+  const identity = saved.length > 0;
+  const savedById = new Map(saved.map((d) => [d.id, d]));
+  const { removed } = dishChanges(rows, saved);
+
   return (
     <div className="flex flex-col gap-3">
       {/* Where the decision is made, not in a help page. Without it the only
@@ -385,12 +485,20 @@ export function DishRows({
       <p className="text-sm text-muted">
         Leave a price empty when the caterer has not said yet. The dish still publishes and people
         can order it; it is billed once you set the price.
+        {identity &&
+          " A number is a dish already saved: publishing updates it in place and its orders stay. New is added."}
       </p>
 
       <div
         aria-hidden="true"
-        className="hidden gap-3 px-1 text-xs font-semibold text-subtle sm:grid sm:grid-cols-[minmax(0,1fr)_10rem_2.75rem]"
+        className={cn(
+          "hidden gap-3 px-1 text-xs font-semibold text-subtle sm:grid",
+          identity
+            ? "sm:grid-cols-[3.5rem_minmax(0,1fr)_10rem_2.75rem]"
+            : "sm:grid-cols-[minmax(0,1fr)_10rem_2.75rem]",
+        )}
       >
+        {identity && <span />}
         <span>Dish</span>
         <span>Price</span>
         <span />
@@ -402,14 +510,40 @@ export function DishRows({
           const read = reading(row);
           const pending = unpriced(row);
           const label = rowLabel(row, i);
+          const was = row.id === null ? undefined : savedById.get(row.id);
+          // Offered where the name alone does not say which dish this is: a
+          // new row while something is about to be removed, and a row whose
+          // name no longer matches the dish it updates.
+          const renamed = was !== undefined && nameKey(was.name) !== nameKey(row.name);
+          const sameAs = identity && ((was === undefined && removed.length > 0) || renamed);
           return (
             <li
               key={row.key}
               className={cn(
                 "rounded-lg border border-border bg-surface-raised p-3 sm:border-0 sm:bg-transparent sm:p-0",
-                "grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_10rem_2.75rem] sm:items-start",
+                "grid grid-cols-1 gap-3 sm:items-start",
+                identity
+                  ? "sm:grid-cols-[3.5rem_minmax(0,1fr)_10rem_2.75rem]"
+                  : "sm:grid-cols-[minmax(0,1fr)_10rem_2.75rem]",
               )}
             >
+              {identity && (
+                <div className="-mb-1 flex items-center sm:mb-0 sm:h-11">
+                  {was === undefined ? (
+                    <Badge id={`${row.key}-identity`} variant="outline">
+                      New
+                      <span className="sr-only"> dish, added when you publish</span>
+                    </Badge>
+                  ) : (
+                    <span id={`${row.key}-identity`} className="tabular text-xs text-muted">
+                      <span className="sr-only">Saved dish </span>
+                      {`#${was.id}`}
+                      <span className="sr-only">, updated in place</span>
+                    </span>
+                  )}
+                </div>
+              )}
+
               <div className="flex flex-col gap-1">
                 <label
                   htmlFor={`${row.key}-name`}
@@ -420,13 +554,23 @@ export function DishRows({
                 <input
                   id={`${row.key}-name`}
                   aria-label={`Dish ${i + 1} name`}
+                  aria-describedby={identity ? `${row.key}-identity` : undefined}
                   value={row.name}
                   onChange={(e) => onChange(row.key, { name: e.target.value })}
                   className="h-11 w-full rounded-md border border-border bg-surface-raised px-3 text-base"
                 />
                 <FieldFlags flags={flags.filter((f) => f.field === "name")} />
-                {takerNote(row, takers) !== null && (
-                  <p className="text-xs text-muted">{takerNote(row, takers)}</p>
+                {sameAs && (
+                  <SameDishAs
+                    row={row}
+                    label={label}
+                    current={renamed ? was : undefined}
+                    removed={removed}
+                    onPick={(id) => onChange(row.key, { id })}
+                  />
+                )}
+                {takerNote(row.id, takers) !== null && (
+                  <p className="text-xs text-muted">{takerNote(row.id, takers)}</p>
                 )}
               </div>
 
@@ -468,7 +612,7 @@ export function DishRows({
                   // The trigger refuses this anyway. Saying so here, with the
                   // names, turns a refusal somebody has to read twice into the
                   // list of people they now have to ring.
-                  reason={removeReason(row, takers)}
+                  reason={removeReason(row.id, takers)}
                   onClick={() => onRemove(row.key)}
                 >
                   <Trash2Icon />
@@ -478,7 +622,12 @@ export function DishRows({
               {/* Only what is about the row as a whole. Everything that is
                   about one box now renders under that box. */}
               {row.source !== null && (
-                <p className="text-xs text-subtle sm:col-span-3 sm:-mt-1 sm:pl-1">
+                <p
+                  className={cn(
+                    "text-xs text-subtle sm:-mt-1 sm:pl-1",
+                    identity ? "sm:col-span-3 sm:col-start-2" : "sm:col-span-3",
+                  )}
+                >
                   {`From the message: ${row.source}`}
                 </p>
               )}
@@ -487,5 +636,118 @@ export function DishRows({
         })}
       </ul>
     </div>
+  );
+}
+
+/**
+ * Which saved dish a row stands for, when its name does not say.
+ *
+ * A native select: the choices are the handful of dishes about to be removed,
+ * too few to search, and a phone's own picker is the best one there is.
+ * Picking one turns a delete-and-insert into a rename, so the orders on the
+ * old dish stay with it.
+ */
+function SameDishAs({
+  row,
+  label,
+  current,
+  removed,
+  onPick,
+}: {
+  row: DishRow;
+  label: string;
+  /** The saved dish this row already renames, if any. */
+  current: SavedDish | undefined;
+  removed: SavedDish[];
+  onPick: (id: number | null) => void;
+}) {
+  const options = current === undefined ? removed : [current, ...removed];
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <label htmlFor={`${row.key}-same`} className="text-xs text-muted">
+        Same dish as
+      </label>
+      <select
+        id={`${row.key}-same`}
+        aria-label={`${label} is the same dish as`}
+        value={row.id === null ? "" : String(row.id)}
+        onChange={(e) => onPick(e.target.value === "" ? null : Number(e.target.value))}
+        className="h-11 min-w-0 max-w-full rounded-md border border-border bg-surface-raised px-2 text-sm text-text sm:h-9"
+      >
+        <option value="">None, a new dish</option>
+        {options.map((d) => (
+          <option key={d.id} value={String(d.id)}>
+            {d.name}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+/**
+ * Saved dishes that are no longer in the list, which publishing deletes.
+ *
+ * Listed rather than implied, because a re-parse removes a dish by leaving it
+ * out, and nothing on the rows can show an absence. Struck through, as a
+ * skipped day is on the board: the strike says "not this one".
+ */
+export function RemovedDishes({
+  removed,
+  takers,
+  currency,
+  onKeep,
+}: {
+  removed: SavedDish[];
+  takers: Map<number, string[]>;
+  currency: Currency;
+  onKeep: (dish: SavedDish) => void;
+}) {
+  if (removed.length === 0) return null;
+  return (
+    <section aria-labelledby="removed-heading" className="flex flex-col gap-2">
+      <h3 id="removed-heading" className="text-sm font-semibold">
+        Will be removed
+      </h3>
+      <p className="text-sm text-muted">
+        {removed.length === 1
+          ? "Saved, but not in the list above, so publishing deletes it."
+          : "Saved, but not in the list above, so publishing deletes them."}
+      </p>
+      <ul
+        aria-labelledby="removed-heading"
+        className="divide-y divide-border rounded-lg border border-border bg-surface-raised"
+      >
+        {removed.map((dish) => {
+          const reason = removeReason(dish.id, takers);
+          return (
+            <li key={dish.id} className="flex items-start justify-between gap-3 px-3 py-2">
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm">
+                  <span className="text-muted line-through">{dish.name}</span>
+                  <span className="tabular text-xs text-subtle">
+                    {` #${dish.id} · ${
+                      dish.priceMinor === null ? PRICE_PENDING : formatMoney(dish.priceMinor, currency)
+                    }`}
+                  </span>
+                </span>
+                {reason !== null && (
+                  <span className="text-xs text-danger-subtle-fg">{`${reason}.`}</span>
+                )}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-11 shrink-0 sm:h-9"
+                aria-label={`Keep ${dish.name}`}
+                onClick={() => onKeep(dish)}
+              >
+                Keep
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

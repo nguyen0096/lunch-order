@@ -8,9 +8,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/ui";
+import { changeSummary, type SavedDish } from "./DishRows.js";
 import {
   cutoffLabel,
-  dishes as dishCount,
   dishesHave,
   longDay,
   people,
@@ -36,7 +36,7 @@ export function PublishDialog({
   org,
   serviceDate,
   status,
-  dishes,
+  changes,
   unpriced,
   impact,
   cutoffAt,
@@ -49,7 +49,8 @@ export function PublishDialog({
   serviceDate: string;
   /** The menu's status now, null when the date has no menu yet. */
   status: MenuStatus | null;
-  dishes: number;
+  /** What publishing does to the saved dishes, from `dishChanges`. */
+  changes: { updated: number; added: number; removed: SavedDish[] };
   /** How many of those the caterer has not priced. Normal, and consequential. */
   unpriced: number;
   impact: PublishImpact | null;
@@ -68,11 +69,15 @@ export function PublishDialog({
         <DialogHeader>
           <DialogTitle>{`Publish the menu for ${longDay(serviceDate)}?`}</DialogTitle>
           <DialogDescription>
-            {`${dishCount(dishes)}, orders close ${cutoffLabel(cutoffAt, org.timezone)}.`}
+            {`${changeSummary({ ...changes, removed: changes.removed.length })}, orders close ${cutoffLabel(cutoffAt, org.timezone)}.`}
           </DialogDescription>
         </DialogHeader>
 
         <div className="flex flex-col gap-3 text-sm">
+          {changes.removed.length > 0 && (
+            <p>{`Removed: ${changes.removed.map((d) => d.name).join(", ")}.`}</p>
+          )}
+
           {republish ? (
             <p>
               {`This menu is already published, so nobody new is ordered for. Changing a price sets what the next person pays; the ${people(

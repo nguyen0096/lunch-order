@@ -7,6 +7,12 @@ import type { EditableMenu, PublishImpact } from "../src/web/api.js";
 import type { CatererOrder } from "../src/shared/catererOrder.js";
 import { cutoffLabel, longDay, shortDay, weekdayName } from "../src/web/components/menu/labels.js";
 import {
+  adoptIds,
+  changeSummary,
+  dishChanges,
+  type DishRow,
+} from "../src/web/components/menu/DishRows.js";
+import {
   addDays,
   isoWeekday,
   todayIn,
@@ -1570,5 +1576,318 @@ describe("Menu, keeping what is on screen", () => {
     await act(async () => answerFirst(menu()));
     expect(screen.getByLabelText("Dish 1 name")).toHaveValue("Bánh mì");
     expect(screen.queryByDisplayValue("Cơm gà")).not.toBeInTheDocument();
+  });
+});
+
+/* ------------------------------------------------------ which dish a row is */
+
+// `publish_menu` updates a dish whose id comes back, inserts a row with none,
+// and deletes every saved dish whose id is missing. So the id on each row is
+// the whole difference between "Cơm gà now costs 48k" and "Cơm gà was deleted
+// and a stranger with the same name took its place", and only the second is
+// refused once somebody has ordered it.
+describe("Which saved dish each row is", () => {
+  async function reparse(user: ReturnType<typeof fakeClockUser>, message: string) {
+    await user.click(screen.getByLabelText("The caterer’s message"));
+    await user.paste(message);
+    await user.click(screen.getByRole("button", { name: "Parse" }));
+  }
+
+  async function publishAndSend(user: ReturnType<typeof fakeClockUser>) {
+    await user.click(publishButton());
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await waitFor(() => expect(publishMenu).toHaveBeenCalledTimes(1));
+    return publishMenu.mock.calls[0]![0].dishes;
+  }
+
+  /** The tag a row carries, read from what the name box is described by. */
+  function identityOf(name: string): string {
+    const box = screen.getByDisplayValue(name);
+    const id = box.getAttribute("aria-describedby");
+    if (id === null) throw new Error(`${name} has no identity tag`);
+    return document.getElementById(id)?.textContent ?? "";
+  }
+
+  const removedList = () => screen.queryByRole("list", { name: "Will be removed" });
+
+  it("keeps the id when the same dish comes back at a new price", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 48k\n- Bún bò 50k");
+
+    expect(identityOf("Cơm gà")).toBe("Saved dish #101, updated in place");
+    expect(identityOf("Bún bò")).toBe("Saved dish #102, updated in place");
+    expect(removedList()).not.toBeInTheDocument();
+    expect(await publishAndSend(user)).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 48_000 },
+      { id: 102, name: "Bún bò", priceMinor: 50_000 },
+    ]);
+  });
+
+  it("matches a name written in other case, spacing or Unicode form", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    // Upper case with doubled spaces, and the decomposed form an iOS keyboard
+    // sends: neither is a different dish to the unique index. The parser
+    // composes and collapses on the way in, so the case survives to the match.
+    const decomposed = "bún BÒ".normalize("NFD");
+    expect(decomposed).not.toBe("bún BÒ");
+    await reparse(user, `- CƠM GÀ   45k\n- ${decomposed} 50k`);
+
+    expect(identityOf("CƠM GÀ")).toBe("Saved dish #101, updated in place");
+    expect(identityOf("Bún BÒ")).toBe("Saved dish #102, updated in place");
+    expect(removedList()).not.toBeInTheDocument();
+
+    const sent = await publishAndSend(user);
+    expect(sent.map((d) => d.id)).toEqual([101, 102]);
+  });
+
+  it("makes a reworded dish New and lists the old one as removed", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 55k");
+
+    expect(identityOf("Bún bò Huế")).toBe("New dish, added when you publish");
+    const removed = within(removedList()!).getAllByRole("listitem");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toHaveTextContent("Bún bò");
+    expect(removed[0]).toHaveTextContent("#102");
+
+    const sent = await publishAndSend(user);
+    expect(sent).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 45_000 },
+      { id: undefined, name: "Bún bò Huế", priceMinor: 55_000 },
+    ]);
+    // Nothing carries 102, which is what makes publish_menu delete it.
+    expect(sent.some((d) => d.id === 102)).toBe(false);
+  });
+
+  it("Keep puts a removed dish back with its id, and focus on it", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Bún bò Huế 55k");
+    expect(within(removedList()!).getAllByRole("listitem")).toHaveLength(2);
+
+    await user.click(screen.getByRole("button", { name: "Keep Bún bò" }));
+
+    expect(identityOf("Bún bò")).toBe("Saved dish #102, updated in place");
+    expect(screen.getByDisplayValue("Bún bò")).toHaveFocus();
+    expect(screen.queryByRole("button", { name: "Keep Bún bò" })).not.toBeInTheDocument();
+    expect(within(removedList()!).getAllByRole("listitem")).toHaveLength(1);
+
+    await user.click(screen.getByRole("button", { name: "Keep Cơm gà" }));
+    expect(removedList()).not.toBeInTheDocument();
+
+    // Each at its saved place where the list is long enough to have one,
+    // with its saved price.
+    expect(await publishAndSend(user)).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 45_000 },
+      { id: undefined, name: "Bún bò Huế", priceMinor: 55_000 },
+      { id: 102, name: "Bún bò", priceMinor: 50_000 },
+    ]);
+  });
+
+  it("Same dish as gives a new row the old id, so a reworded dish is a rename", async () => {
+    const user = fakeClockUser();
+    serve({
+      menu: menu({ status: "published" }),
+      takers: new Map([[102, ["Tèo"]]]),
+    });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+    // The row that would otherwise orphan Tèo's order is where the choice is.
+    expect(screen.queryByLabelText("Cơm gà is the same dish as")).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText("Bún bò Huế is the same dish as"), "Bún bò");
+
+    expect(identityOf("Bún bò Huế")).toBe("Saved dish #102, updated in place");
+    expect(removedList()).not.toBeInTheDocument();
+    // The orders came with the id, and the screen says so on the row.
+    expect(screen.getByText("Ordered by Tèo")).toBeInTheDocument();
+    expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
+
+    expect(await publishAndSend(user)).toEqual([
+      { id: 101, name: "Cơm gà", priceMinor: 45_000 },
+      { id: 102, name: "Bún bò Huế", priceMinor: 50_000 },
+    ]);
+  });
+
+  it("Same dish as can be taken back, and the old dish is listed again", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+    const pick = screen.getByLabelText("Bún bò Huế is the same dish as");
+    await user.selectOptions(pick, "Bún bò");
+    await user.selectOptions(screen.getByLabelText("Bún bò Huế is the same dish as"), "None, a new dish");
+
+    expect(identityOf("Bún bò Huế")).toBe("New dish, added when you publish");
+    expect(within(removedList()!).getByText("Bún bò")).toBeInTheDocument();
+  });
+
+  it("keeps the id when a name is edited by hand, and says which dish it was", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    const name = screen.getByLabelText("Dish 1 name");
+    await user.clear(name);
+    await user.type(name, "Cơm gà xối mỡ");
+
+    expect(identityOf("Cơm gà xối mỡ")).toBe("Saved dish #101, updated in place");
+    expect(screen.getByLabelText("Cơm gà xối mỡ is the same dish as")).toHaveDisplayValue("Cơm gà");
+    expect(removedList()).not.toBeInTheDocument();
+
+    expect(await publishAndSend(user)).toEqual([
+      { id: 101, name: "Cơm gà xối mỡ", priceMinor: 45_000 },
+      { id: 102, name: "Bún bò", priceMinor: 50_000 },
+    ]);
+  });
+
+  it("names who ordered a removed dish, and holds Publish with the reason", async () => {
+    const user = fakeClockUser();
+    serve({
+      menu: menu({ status: "published" }),
+      takers: new Map([[102, ["Quy", "Tèo"]]]),
+    });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+
+    const removed = within(removedList()!).getByRole("listitem");
+    expect(removed).toHaveTextContent(
+      "Ordered by Quy and Tèo. Removing a dish somebody chose will be refused.",
+    );
+    expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText(
+        '"Bún bò" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish',
+      ).length,
+    ).toBeGreaterThan(0);
+    await user.click(publishButton());
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(publishMenu).not.toHaveBeenCalled();
+  });
+
+  it("recognises a dish an earlier parse dropped when a later one brings it back", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k");
+    expect(within(removedList()!).getByText("Bún bò")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("The caterer’s message"));
+    await reparse(user, "- Cơm gà 45k\n- Bún bò 52k");
+
+    expect(identityOf("Bún bò")).toBe("Saved dish #102, updated in place");
+    expect(removedList()).not.toBeInTheDocument();
+  });
+
+  it("summarises the publish as updated, new and removed", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+
+    // One kept, one added, one dropped.
+    await reparse(user, "- Cơm gà 48k\n- Phở bò 40k");
+    await user.click(publishButton());
+    const dialog = await screen.findByRole("dialog");
+
+    expect(
+      within(dialog).getByText(/^1 dish updated, 1 new, 1 removed, orders close /),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Removed: Bún bò.")).toBeInTheDocument();
+  });
+
+  it("draws no identity column for a day with nothing saved", async () => {
+    const user = fakeClockUser();
+    serve();
+    renderMenu();
+    await ready();
+
+    await reparse(user, "- Cơm gà 45k\n- Bún bò 50k");
+
+    expect(screen.getByLabelText("Dish 1 name")).not.toHaveAttribute("aria-describedby");
+    expect(document.querySelector('[id$="-identity"]')).toBeNull();
+    await user.click(publishButton());
+    expect(
+      within(await screen.findByRole("dialog")).getByText(/^2 new dishes, orders close /),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("The identity rules, on their own", () => {
+  const saved = [
+    { id: 101, name: "Cơm gà", priceMinor: 45_000, position: 0 },
+    { id: 102, name: "Bún bò", priceMinor: 50_000, position: 1 },
+  ];
+  const row = (name: string, id: number | null = null): DishRow => ({
+    key: name,
+    id,
+    name,
+    price: "",
+    source: null,
+    seeded: [],
+    seededPrice: "",
+  });
+
+  it("matches across case, outer spaces and Unicode form, and nothing looser", () => {
+    const out = adoptIds(
+      [row("  CƠM GÀ "), row("Bún bò".normalize("NFD")), row("Cơm gà rán")],
+      [],
+      saved,
+    );
+    expect(out.map((r) => r.id)).toEqual([101, 102, null]);
+  });
+
+  it("gives an id to one row only, even when two rows share its name", () => {
+    const out = adoptIds([row("Cơm gà"), row("cơm gà")], [], saved);
+    expect(out.map((r) => r.id)).toEqual([101, null]);
+  });
+
+  it("prefers the name on screen to the saved one", () => {
+    // 101 renamed by hand to "Cơm gà rán"; a parse bringing "Cơm gà rán" keeps 101.
+    const out = adoptIds([row("Cơm gà rán")], [row("Cơm gà rán", 101)], saved);
+    expect(out.map((r) => r.id)).toEqual([101]);
+  });
+
+  it("counts updated, new and removed against the saved menu", () => {
+    const c = dishChanges([row("Cơm gà", 101), row("Phở bò")], saved);
+    expect(c.updated).toBe(1);
+    expect(c.added).toBe(1);
+    expect(c.removed.map((d) => d.id)).toEqual([102]);
+  });
+
+  it.each([
+    [{ updated: 2, added: 1, removed: 1 }, "2 dishes updated, 1 new, 1 removed"],
+    [{ updated: 1, added: 0, removed: 0 }, "1 dish updated"],
+    [{ updated: 0, added: 3, removed: 0 }, "3 new dishes"],
+    [{ updated: 0, added: 1, removed: 2 }, "1 new dish, 2 removed"],
+    [{ updated: 0, added: 0, removed: 1 }, "1 dish removed"],
+    [{ updated: 3, added: 0, removed: 2 }, "3 dishes updated, 2 removed"],
+  ])("summarises %o as %s", (c, text) => {
+    expect(changeSummary(c)).toBe(text);
   });
 });
