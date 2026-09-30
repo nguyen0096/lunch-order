@@ -467,7 +467,8 @@ each writing `payment_corrections` with who did it and why:
   bank reported did arrive, so it is moved, never voided.
 - **Waive** stops asking for one person's week: `status = 'waived'`, `paid_at`
   null, skipped by the allocation entirely, so it consumes none of their
-  credit. There is still no un-waive on this screen.
+  credit. There is still no un-waive on this screen. If a re-bill deleted the
+  week while the dialog was open, the refusal says so and the list reloads.
 
 The person's dialog lists the payments on their account, newest first, with
 Move on each and Void on the manual ones.

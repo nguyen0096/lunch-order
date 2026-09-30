@@ -162,7 +162,14 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
   const waive = useAction(
     async (row: PersonRow) => {
       if (row.statement === null) throw new Error("There is no statement for that week.");
-      await waiveStatement({ statementId: row.statement.id });
+      try {
+        await waiveStatement({ statementId: row.statement.id });
+      } catch (e) {
+        // A re-bill can delete or change the week while the dialog is open, so
+        // the list on screen is what is stale.
+        void load();
+        throw e;
+      }
       return row;
     },
     {

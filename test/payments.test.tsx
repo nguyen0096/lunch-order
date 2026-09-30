@@ -1480,6 +1480,22 @@ describe("Payments, waiving", () => {
     // Waiving is not a payment, and must never go in as one.
     expect(recordPayment).not.toHaveBeenCalled();
   });
+
+  it("says the week is gone and reloads the list when a re-bill deleted it", async () => {
+    serve();
+    const message = "that week has nothing on it any more, so there is nothing to waive";
+    waiveStatement.mockRejectedValue({ code: "P0002", message });
+    renderPayments();
+    const dialog = await openSettle("Tèo");
+    const loadsBefore = fetchPayments.mock.calls.length;
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Waive this week" }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Waive" }));
+
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith(message));
+    await waitFor(() => expect(fetchPayments.mock.calls.length).toBeGreaterThan(loadsBefore));
+    expect(success).not.toHaveBeenCalledWith("Waived Tèo's week");
+  });
 });
 
 describe("Payments, putting a mistake right", () => {
