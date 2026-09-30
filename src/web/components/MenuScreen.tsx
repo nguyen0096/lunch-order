@@ -744,6 +744,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
       {menu !== null && (status === "published" || status === "locked") && rows.length > 0 && (
         <CatererOrderNote
           orgId={org.id}
+          companyName={org.name}
           menuId={menu.id}
           serviceDate={serviceDate}
           items={menu.items.map((i) => ({ id: i.id, name: i.name }))}

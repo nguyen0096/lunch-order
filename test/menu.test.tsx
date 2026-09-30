@@ -33,6 +33,8 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     fetchPublishImpact: vi.fn(),
     fetchDishTakers: vi.fn(),
     fetchCatererOrder: vi.fn(),
+    fetchCatererTemplate: vi.fn(),
+    setCatererTemplate: vi.fn(),
     publishMenu: vi.fn(),
     assistParse: vi.fn(),
     cancelMenu: vi.fn(),
@@ -44,6 +46,8 @@ const fetchMenuCalendar = vi.mocked(api.fetchMenuCalendar);
 const fetchPublishImpact = vi.mocked(api.fetchPublishImpact);
 const fetchDishTakers = vi.mocked(api.fetchDishTakers);
 const fetchCatererOrder = vi.mocked(api.fetchCatererOrder);
+const fetchCatererTemplate = vi.mocked(api.fetchCatererTemplate);
+const setCatererTemplate = vi.mocked(api.setCatererTemplate);
 const publishMenu = vi.mocked(api.publishMenu);
 const cancelMenu = vi.mocked(api.cancelMenu);
 const assistParse = vi.mocked(api.assistParse);
@@ -142,8 +146,10 @@ function serve(
     impact?: PublishImpact;
     takers?: Map<number, string[]>;
     caterer?: CatererOrder;
+    template?: string | null;
   } = {},
 ) {
+  fetchCatererTemplate.mockResolvedValue(over.template ?? null);
   fetchMenuEditor.mockResolvedValue(over.menu === undefined ? null : over.menu);
   fetchMenuCalendar.mockResolvedValue(new Map());
   fetchPublishImpact.mockResolvedValue(over.impact ?? impact());
@@ -896,21 +902,44 @@ describe("The order for the caterer", () => {
     unchosen: 0,
   };
 
-  it("writes the order out ready to paste, with the notes under their dish", async () => {
+  const box = () => screen.findByRole("textbox", { name: "The message to the caterer" });
+
+  it("fills the message from the default template, ready to paste", async () => {
     serve({ menu: menu({ status: "published" }), caterer: CATERER });
     renderMenu();
     await ready();
 
-    const note = await screen.findByRole("heading", { name: "The order for the caterer" });
-    expect(note).toBeInTheDocument();
-    // The text exactly as it goes into the chat, not a tidied-up list.
-    const pasted = screen.getByText(/\u0110\u1eb7t c\u01a1m/);
-    expect(pasted.textContent).toContain("- C\u01a1m g\u00e0: 2 ph\u1ea7n");
-    expect(pasted.textContent).toContain("  + T\u00e8o: \u00edt c\u01a1m");
-    expect(pasted.textContent).toContain("T\u1ed5ng: 3 ph\u1ea7n");
+    expect(await box()).toHaveValue(
+      "\u0110\u1eb7t c\u01a1m " + DATE.slice(8) + "/" + DATE.slice(5, 7) +
+        "\n- C\u01a1m g\u00e0: 2\n- B\u00fan b\u00f2: 1\nT\u1ed5ng: 3 ph\u1ea7n",
+    );
   });
 
-  it("copies the message rather than a prettified version of it", async () => {
+  it("fills the message from the office's own template", async () => {
+    serve({
+      menu: menu({ status: "published" }),
+      caterer: CATERER,
+      template: "{companyName}: {dishes} ({total}, {unchosen})",
+    });
+    renderMenu();
+    await ready();
+
+    expect(await box()).toHaveValue(
+      "Test Office: - C\u01a1m g\u00e0: 2\n- B\u00fan b\u00f2: 1 (3, 0)",
+    );
+  });
+
+  it("lists the notes beside the message, which leaves them out", async () => {
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    expect((await box()).textContent).not.toContain("\u00edt c\u01a1m");
+    const item = screen.getByText("\u00edt c\u01a1m", { exact: false });
+    expect(item.closest("li")!.textContent).toBe("C\u01a1m g\u00e0 · T\u00e8o: \u00edt c\u01a1m");
+  });
+
+  it("copies the message as the admin edited it", async () => {
     const user = fakeClockUser();
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
@@ -921,9 +950,80 @@ describe("The order for the caterer", () => {
     renderMenu();
     await ready();
 
-    await user.click(await screen.findByRole("button", { name: "Copy the message" }));
+    const text = await box();
+    await user.clear(text);
+    await user.type(text, "Tèo ít cơm");
+    await user.click(screen.getByRole("button", { name: "Copy the message" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
-    expect(writeText.mock.calls[0]![0]).toContain("  + T\u00e8o: \u00edt c\u01a1m");
+    expect(writeText.mock.calls[0]![0]).toBe("Tèo ít cơm");
+  });
+
+  it("goes back to the template, with the latest orders, on Reset", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    const text = await box();
+    await user.clear(text);
+    await user.type(text, "scratch");
+    fetchCatererOrder.mockResolvedValue({
+      ...CATERER,
+      lines: [{ ...CATERER.lines[0]!, count: 4 }],
+    });
+    await user.click(screen.getByRole("button", { name: "Reset" }));
+    await waitFor(() => expect((text as HTMLTextAreaElement).value).toContain("- C\u01a1m g\u00e0: 4"));
+  });
+
+  it("saves an edited template and refills the message from it", async () => {
+    const user = fakeClockUser();
+    setCatererTemplate.mockResolvedValue(undefined);
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    await user.click(await screen.findByRole("button", { name: "Edit template" }));
+    const dialog = await screen.findByRole("dialog");
+    const field = within(dialog).getByRole("textbox", { name: "Template" });
+    fireEvent.change(field, { target: { value: "Hi {companyName}\n{dishes}" } });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(setCatererTemplate).toHaveBeenCalledWith(ORG.id, "Hi {companyName}\n{dishes}"));
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "The message to the caterer" })).toHaveValue(
+        "Hi Test Office\n- C\u01a1m g\u00e0: 2\n- B\u00fan b\u00f2: 1",
+      ),
+    );
+  });
+
+  it("will not save a template without {dishes}, and says why", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+
+    await user.click(await screen.findByRole("button", { name: "Edit template" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Template" }), {
+      target: { value: "Đặt cơm {servingDate}" },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(setCatererTemplate).not.toHaveBeenCalled();
+    expect(within(dialog).getAllByText(/needs \{dishes\}/).length).toBeGreaterThan(0);
+  });
+
+  it("offers nothing to send when nobody has ordered", async () => {
+    serve({
+      menu: menu({ status: "published" }),
+      caterer: { serviceDate: DATE, lines: [{ ...CATERER.lines[1]!, count: 0 }], unchosen: 0 },
+    });
+    renderMenu();
+    await ready();
+
+    expect(
+      await screen.findByText(/Nobody has ordered for this day/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Copy the message" })).not.toBeInTheDocument();
   });
 
   it("warns that a head with no dish is missing from the count", async () => {
@@ -1014,6 +1114,7 @@ describe("Changing the menu's status", () => {
     fetchPublishImpact.mockResolvedValue(impact(over));
     fetchDishTakers.mockResolvedValue(new Map());
     fetchCatererOrder.mockResolvedValue({ serviceDate: DATE, lines: [], unchosen: 0 });
+    fetchCatererTemplate.mockResolvedValue(null);
   }
 
   const cancelButton = () => screen.getByRole("button", { name: "Cancel lunch" });

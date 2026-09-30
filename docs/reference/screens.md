@@ -590,6 +590,49 @@ What publishing, editing and cancelling do is in
 | parse found nothing | the raw lines, offered as manual rows. Never a dead end |
 | cutoff after the meal, or being moved into the past | Publish unavailable, carrying the reason. The database refuses neither |
 
+### The order for the caterer
+
+Below the editor once the day's menu is published or locked: the message the
+admin pastes into the caterer's chat, in Vietnamese because the caterer reads
+it. It is offered before the cutoff too, marked as a count that can still
+change.
+
+The office's **template** fills an editable text box. The admin adds what is
+special about the day, typically the notes, then presses **Copy the message**,
+which copies the box exactly as edited. Nothing keeps the edit: it is copied
+at once. **Reset** reads the orders again and refills the box from the
+template, discarding the edit.
+
+The template's placeholders are data only, so every word the caterer reads is
+one the office wrote:
+
+| Placeholder | Becomes |
+| --- | --- |
+| `{companyName}` | the office's name |
+| `{servingDate}` | the day, `24/09` |
+| `{dishes}` | one line per dish ordered, `- Cơm gà: 3`. A dish nobody ordered is left out |
+| `{total}` | portions in all |
+| `{unchosen}` | people eating with no dish chosen, as a number, `0` included |
+
+The default is `Đặt cơm {servingDate}` / `{dishes}` / `Tổng: {total} phần`.
+**Edit template** opens a dialog with the template, what each placeholder
+means, a preview built from the day on screen, **Restore the default**, and
+**Save**. Saving refills the box from the new template. The default is stored
+as nothing, so an office that restores it follows any later improvement to it.
+
+Every note on the day is listed under the box as dish, person and note, since
+the message does not carry them.
+
+| State | |
+| --- | --- |
+| loading | nothing yet |
+| failed to load | the error and Try again |
+| nobody has ordered | "Nobody has ordered for this day, so there is nothing to send the caterer", with no box and no Copy |
+| box emptied | Copy carries "The message is empty. Reset fills it in again." |
+| browser refuses the clipboard | Copy carries the reason; select and copy by hand |
+| people eating with no dish | a warning with the count, which the total leaves out, whether or not the template uses `{unchosen}` |
+| template without `{dishes}`, or with an unknown placeholder | Save carries the reason, and the database refuses it too |
+
 ## People (admin)
 
 **Job.** Get somebody in, and notice somebody who should not be.

@@ -6,6 +6,7 @@
 
 import { supabase } from "../supabase.js";
 import { parsePaymentConfig, type PaymentConfig } from "../../shared/payment.js";
+import { catererTemplateProblem } from "../../shared/catererOrder.js";
 
 /* -------------------------------------------------- profile and membership */
 
@@ -165,6 +166,30 @@ export async function setDefaultCutoffLocalTime(
   orgId: number, localTime: string,
 ): Promise<void> {
   await updateOrg(orgId, { default_cutoff_local_time: localTime });
+}
+
+/** The office's wording for the caterer's order. Null means the app default. */
+export async function fetchCatererTemplate(orgId: number): Promise<string | null> {
+  const { data, error } = await supabase
+    .from("organizations")
+    .select("caterer_message_template")
+    .eq("id", orgId)
+    .single();
+  if (error) throw error;
+  return (data.caterer_message_template as string | null) ?? null;
+}
+
+/**
+ * Null goes back to the default. The database refuses a template without
+ * `{dishes}` or with a placeholder it does not know, so this checks first only
+ * to say which.
+ */
+export async function setCatererTemplate(orgId: number, template: string | null): Promise<void> {
+  if (template !== null) {
+    const problem = catererTemplateProblem(template);
+    if (problem !== null) throw new Error(`${problem}.`);
+  }
+  await updateOrg(orgId, { caterer_message_template: template });
 }
 
 /* --------------------------------------------------------------- short code */

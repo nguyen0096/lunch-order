@@ -622,6 +622,15 @@ same file. `src/web/api/` splits it by domain and `api.ts` re-exports, which
 means no call site changed and none has to change again. All 38 exports were
 diffed before and after.
 
+**The caterer's order is a template the office words, and the admin edits it
+each day.** The message was a literal, so an office that greets its caterer or
+signs off retyped it daily. Placeholders carry data only (the product owner's
+rule): `{unchosen}` is a number, not a sentence, and `{dishes}` has no notes,
+because the admin words the notes for the caterer, often merging or dropping
+them. The notes are listed beside the box instead. The edited text is not kept,
+because it is copied as soon as it is written, and a day nobody ordered for has
+no message, because nothing is sent.
+
 ## Process
 
 **A failed migration does not fail CI.** Migrations reach the database through
