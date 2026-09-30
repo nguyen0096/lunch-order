@@ -55,6 +55,11 @@ vi.mock("../src/web/components/BoardScreen.js", async () => {
   return { BoardScreen };
 });
 
+vi.mock("../src/web/components/OrdersScreen.js", async () => {
+  const { createElement } = await import("react");
+  return { OrdersScreen: ({ org }: { org: Org }) => createElement("h1", null, `Orders of ${org.name}`) };
+});
+
 const fetchMe = vi.mocked(api.fetchMe);
 
 const ORG: Org = {
@@ -187,5 +192,27 @@ describe("App, routes", () => {
     });
 
     expect(await board("Other Office")).toHaveValue("");
+  });
+
+  it("sends Corrections to Orders, keeping the week and adding nothing for Back", async () => {
+    at("/#/o/test-office/corrections?week=2026-09-21");
+    const before = window.history.length;
+    fetchMe.mockResolvedValue({ ...ME, orgs: [{ ...ME.orgs[0]!, role: "admin" }] });
+    render(<App />);
+    emit("INITIAL_SESSION", "me");
+
+    expect(await screen.findByRole("heading", { name: "Orders of Test Office" })).toBeInTheDocument();
+    expect(window.location.hash).toBe("#/o/test-office/orders?week=2026-09-21");
+    expect(window.history.length).toBe(before);
+  });
+
+  it("still takes a member's old orders link to the board", async () => {
+    at("/#/o/test-office/orders");
+    fetchMe.mockResolvedValue(ME);
+    render(<App />);
+    emit("INITIAL_SESSION", "me");
+
+    expect(await board("Test Office")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /Orders of/ })).not.toBeInTheDocument();
   });
 });

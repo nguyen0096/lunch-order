@@ -170,16 +170,16 @@ export function SettleWeek({
           Paste the caterer&rsquo;s weekend message. It is read here, checked against what the
           board recorded, and nothing is written until you confirm.
         </p>
-        {/* The one way in to corrections, and it belongs here: this is where
-            somebody is standing when they notice the week records a lunch
-            nobody ate. Quiet, because settling is the act on this screen. */}
+        {/* This is where somebody is standing when they notice the week
+            records a lunch nobody ate, so Orders opens on this week. Quiet,
+            because settling is the act on this screen. */}
         <p className="max-w-prose text-sm text-muted">
-          Settling bills what the week records now. If a day of it is wrong,{" "}
+          Settling bills what the week records now, so put a wrong day right first: a meal nobody
+          ordered in the app, one that did not happen, a dish that was never on the menu, or a
+          price the caterer changed.{" "}
           <Button asChild variant="link" size="sm" className="h-auto px-0">
-            <a href={`#/o/${slug}/corrections`}>put it right in Corrections</a>
-          </Button>{" "}
-          first: a meal nobody ordered in the app, one that did not happen, a dish that was never
-          on the menu, or a price the caterer changed.
+            <a href={`#/o/${slug}/orders?week=${period.periodStart}`}>Put a day right</a>
+          </Button>
         </p>
       </div>
 

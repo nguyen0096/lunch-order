@@ -1938,6 +1938,14 @@ describe("Checking the caterer's message against the board", () => {
 });
 
 describe("Settling the week", () => {
+  it("offers Put a day right, opening Orders on the week being settled", async () => {
+    serveSettlement();
+    renderPayments();
+    await readTheMessage();
+    const link = screen.getByRole("link", { name: "Put a day right" });
+    expect(link.getAttribute("href")).toMatch(/^#\/o\/[^/]+\/orders\?week=\d{4}-\d{2}-\d{2}$/);
+  });
+
   it("names every price, the meals it moves and the figure the week lands on", async () => {
     serveSettlement();
     renderPayments();

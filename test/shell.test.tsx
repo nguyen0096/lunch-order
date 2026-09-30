@@ -78,11 +78,25 @@ describe("AppShell navigation", () => {
 
   it("adds the admin chores under their own heading, not into the same list", () => {
     shell("admin");
+    expect(links("Orders")).toHaveLength(2);
     expect(links("Menu")).toHaveLength(2);
     expect(links("People")).toHaveLength(2);
     expect(links("Payments")).toHaveLength(2);
-    expect(links("Messages")).toHaveLength(2);
     expect(screen.getByText("Admin")).toBeInTheDocument();
+  });
+
+  it("puts Orders first among the chores, in the sidebar and the tab bar alike", () => {
+    shell("admin");
+    for (const nav of screen.getAllByRole("navigation", { name: "Main" })) {
+      const names = within(nav).getAllByRole("link").map((a) => a.textContent);
+      expect(names).toEqual(["Board", "Bill", "Orders", "Menu", "People", "Payments"]);
+    }
+    expect(links("Orders")[0]).toHaveAttribute("href", "#/o/test-office/orders");
+  });
+
+  it("keeps Messages out of the nav on every width", () => {
+    shell("admin");
+    expect(links("Messages")).toHaveLength(0);
   });
 
   it("treats an owner as an admin", () => {
@@ -130,6 +144,31 @@ describe("AppShell account menu", () => {
 
     await userEvent.click(within(panel as HTMLElement).getByRole("button", { name: "Sign out" }));
     expect(onSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("carries Messages for an admin, in the sidebar's menu and the phone header's", async () => {
+    shell("admin", "messages");
+    const triggers = screen.getAllByRole("button", { name: /Account: Nguyễn Neyu/ });
+    expect(triggers).toHaveLength(2);
+    for (const trigger of triggers) {
+      await userEvent.click(trigger);
+      const panel = (await screen.findByText("neyu@example.com")).closest(
+        "[data-slot='popover-content']",
+      ) as HTMLElement;
+      const messages = within(panel).getByRole("link", { name: "Messages" });
+      expect(messages).toHaveAttribute("href", "#/o/test-office/messages");
+      expect(messages).toHaveAttribute("aria-current", "page");
+      await userEvent.keyboard("{Escape}");
+    }
+  });
+
+  it("offers a member no Messages at all", async () => {
+    shell("member");
+    await userEvent.click(screen.getAllByRole("button", { name: /Account: Nguyễn Neyu/ })[0]!);
+    const panel = (await screen.findByText("neyu@example.com")).closest(
+      "[data-slot='popover-content']",
+    ) as HTMLElement;
+    expect(within(panel).queryByRole("link", { name: "Messages" })).not.toBeInTheDocument();
   });
 });
 
@@ -328,6 +367,8 @@ describe("switchTarget", () => {
     expect(switchTarget("menu", "member")).toBe("board");
     expect(switchTarget("people", "member")).toBe("board");
     expect(switchTarget("messages", "member")).toBe("board");
+    expect(switchTarget("orders", "admin")).toBe("orders");
+    expect(switchTarget("orders", "member")).toBe("board");
   });
 
   it("sends a page that does not exist to the board", () => {

@@ -278,6 +278,8 @@ export async function fetchDishTakers(menuId: number): Promise<DishTakers> {
  * matters most is the order with NO dish on it: that person is a real head the
  * caterer cannot cook for, and a query that joined through `order_items` would
  * drop them silently. Counted separately and said out loud in the message.
+ *
+ * Portions, not orders: a line of three portions is three boxes to cook.
  */
 export async function fetchCatererOrder(args: {
   orgId: number;
@@ -287,14 +289,14 @@ export async function fetchCatererOrder(args: {
 }): Promise<CatererOrder> {
   const { data, error } = await supabase
     .from("orders")
-    .select("profile_id, order_items ( menu_item_id, note )")
+    .select("profile_id, order_items ( menu_item_id, quantity, note )")
     .eq("menu_id", args.menuId)
     .eq("status", "placed");
   if (error) throw error;
 
   const rows = (data ?? []) as Array<{
     profile_id: string;
-    order_items: Array<{ menu_item_id: number | null; note: string | null }> | null;
+    order_items: Array<{ menu_item_id: number | null; quantity: number | null; note: string | null }> | null;
   }>;
 
   const ids = [...new Set(rows.map((r) => r.profile_id))];
@@ -329,7 +331,7 @@ export async function fetchCatererOrder(args: {
       // -- the trigger refuses it -- but an order for another day's item would
       // be a bug worth not hiding behind a crash.
       if (line === undefined) continue;
-      line.count += 1;
+      line.count += Math.max(1, item.quantity ?? 1);
       const note = item.note?.trim();
       if (note) {
         line.notes.push({ text: note, who: names.get(row.profile_id) || "Chưa có tên" });

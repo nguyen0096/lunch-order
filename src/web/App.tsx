@@ -9,9 +9,9 @@ import { BillScreen } from "./components/BillScreen.js";
 import { BoardScreen } from "./components/BoardScreen.js";
 import { BugReportsScreen } from "./components/BugReportsScreen.js";
 import { ComingSoon } from "./components/ComingSoon.js";
-import { CorrectionsScreen } from "./components/CorrectionsScreen.js";
 import { MenuScreen } from "./components/MenuScreen.js";
 import { MessagesScreen } from "./components/MessagesScreen.js";
+import { OrdersScreen } from "./components/OrdersScreen.js";
 import { PaymentsScreen } from "./components/PaymentsScreen.js";
 import { PeopleScreen } from "./components/PeopleScreen.js";
 import { SettingsScreen } from "./components/SettingsScreen.js";
@@ -22,10 +22,11 @@ import { isAdmin, type Me, type Org } from "../shared/types.js";
 /**
  * Pinned chat links and bookmarks outlive a rename, so the pages the old
  * five-tab app used still resolve. Transfers has no destination to go to: its
- * job is now an action on the board cell it concerns.
+ * job is now an action on the board cell it concerns. `orders` was the old
+ * app's name for the board and is the admin's Orders screen now, so it still
+ * leads a member to the board (`pageFor`).
  */
 const RENAMED: Record<string, string> = {
-  orders: "board",
   today: "board",
   transfers: "board",
   prefs: "settings",
@@ -89,6 +90,13 @@ export function App({ oauthError = null }: { oauthError?: string | null }) {
   useEffect(() => {
     if (redirectTo !== null) go({ slug: redirectTo, page: "board" }, { replace: true });
   }, [redirectTo, go]);
+
+  // Corrections became Orders; the week a link asked for comes along.
+  useEffect(() => {
+    if (route.page !== "corrections" || route.slug === null) return;
+    const query = route.query.toString();
+    replaceHash(`#/o/${route.slug}/orders${query === "" ? "" : `?${query}`}`);
+  }, [route]);
 
   /**
    * A new office exists in the database and nowhere in this tab. Refetching
@@ -162,7 +170,7 @@ export function App({ oauthError = null }: { oauthError?: string | null }) {
 
   if (!active || redirectTo !== null) return null;
 
-  const page = RENAMED[route.page] ?? route.page;
+  const page = pageFor(RENAMED[route.page] ?? route.page, active.role);
 
   return (
     <AppShell
@@ -186,6 +194,13 @@ export function App({ oauthError = null }: { oauthError?: string | null }) {
 }
 
 type ActiveOrg = Me["orgs"][number];
+
+/** An old `orders` link, from before it was the admin's screen, still reaches the board. */
+function pageFor(page: string, role: ActiveOrg["role"]): string {
+  if (page === "orders" && !isAdmin(role)) return "board";
+  if (page === "corrections") return "orders";
+  return page;
+}
 
 /**
  * Chooses the screen. A separate function taking what it needs, rather than a
@@ -216,9 +231,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
     page === "people" ||
     page === "payments" ||
     page === "messages" ||
-    // Reached from Payments rather than from the nav: correcting a finished
-    // day is a weekend job, not part of the daily furniture.
-    page === "corrections"
+    page === "orders"
   ) {
     // The database refuses admin writes regardless of role, but a member who
     // follows an admin link deserves an explanation rather than a dead page.
@@ -232,7 +245,7 @@ function renderPage(page: string, me: Me, active: ActiveOrg) {
     if (page === "menu") return <MenuScreen {...props} />;
     if (page === "payments") return <PaymentsScreen {...props} />;
     if (page === "messages") return <MessagesScreen {...props} />;
-    if (page === "corrections") return <CorrectionsScreen {...props} />;
+    if (page === "orders") return <OrdersScreen {...props} />;
     return <PeopleScreen {...props} />;
   }
 

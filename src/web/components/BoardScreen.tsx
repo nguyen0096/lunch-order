@@ -466,7 +466,9 @@ export function BoardScreen({ me, org }: ScreenProps) {
     for (const [key, cell] of board.cells) {
       if (cell.status !== "placed") continue;
       const date = key.slice(key.indexOf("|") + 1);
-      perDay.set(date, (perDay.get(date) ?? 0) + 1);
+      // Portions, because portions are what the caterer delivers; an admin
+      // can record more than one on somebody's order.
+      perDay.set(date, (perDay.get(date) ?? 0) + (cell.portions ?? 1));
     }
     return perDay;
   }, [board]);
@@ -684,7 +686,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
               </span>
             ))}
           </span>
-          <span className="tabular">{totals.get(day.serviceDate) ?? 0} eating</span>
+          <span className="tabular">{portionsWord(totals.get(day.serviceDate) ?? 0)}</span>
         </div>
         <ul>
           {board.members.map((member) => (
@@ -1068,7 +1070,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
 // names at a width a dish name can be read in. Off where there is no
 // matchMedia, which keeps the grid under test.
 const NARROW = "(max-width: 39.99rem)";
-function useNarrow(): boolean {
+export function useNarrow(): boolean {
   const [narrow, setNarrow] = useState(
     () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NARROW).matches,
   );
@@ -1094,18 +1096,22 @@ type StripMark = "ordered" | "predicted" | "skipped" | "none";
  * and the chip that has one is the chip whose list is on screen. `Today` takes
  * the weekday's place, so it never competes with the stage for the same line.
  */
-function DayStrip({
+export function DayStrip({
   days,
   today,
   selected,
   mine,
+  count,
   tag,
   onSelect,
 }: {
   days: BoardDay[];
   today: string;
   selected: string;
-  mine: (day: BoardDay) => StripMark;
+  /** My own state per day, in my row's language. */
+  mine?: (day: BoardDay) => StripMark;
+  /** A count per day instead, for a screen that has no "my row". */
+  count?: (day: BoardDay) => { value: number; said: string };
   tag: (day: BoardDay) => string | null;
   onSelect: (serviceDate: string) => void;
 }) {
@@ -1127,7 +1133,8 @@ function DayStrip({
     <div ref={strip} role="group" aria-label="Day" className="-m-1 flex gap-0.5 overflow-x-auto p-1">
       {days.map((d) => {
         const { dow, dom } = columnLabel(d.serviceDate);
-        const mark = mine(d);
+        const mark = mine?.(d) ?? "none";
+        const counted = count?.(d) ?? null;
         const isToday = d.serviceDate === today;
         const on = d.serviceDate === selected;
         const stage = tag(d);
@@ -1138,7 +1145,12 @@ function DayStrip({
             data-strip-date={d.serviceDate}
             aria-pressed={on}
             aria-current={isToday ? "date" : undefined}
-            aria-label={[`${dow} ${dom}`, isToday ? "today" : null, stage?.toLowerCase(), STRIP_SAID[mark]]
+            aria-label={[
+              `${dow} ${dom}`,
+              isToday ? "today" : null,
+              stage?.toLowerCase(),
+              counted === null ? STRIP_SAID[mark] : counted.said,
+            ]
               .filter((x) => x != null)
               .join(", ")}
             className={cn(
@@ -1151,7 +1163,7 @@ function DayStrip({
               on && (mark === "ordered" ? "hover:bg-accent-subtle" : "hover:bg-transparent"),
               // As wide as its stage word and never under 44px, which the
               // date's own floor below guarantees.
-              on && stage !== null && "min-w-fit",
+              on && stage !== null && counted === null && "min-w-fit",
             )}
             onClick={() => onSelect(d.serviceDate)}
           >
@@ -1166,7 +1178,11 @@ function DayStrip({
             >
               {dom}
             </span>
-            <span className="block text-xs font-medium">{on && stage !== null ? stage : "\u00A0"}</span>
+            {counted === null ? (
+              <span className="block text-xs font-medium">{on && stage !== null ? stage : "\u00A0"}</span>
+            ) : (
+              <span className="block text-xs text-muted tabular">{counted.value}</span>
+            )}
           </Button>
         );
       })}
@@ -1270,7 +1286,21 @@ function MenuPanel({
 // has to be read whole. The row grows to fit instead. The 12rem cap is what
 // makes it wrap on a wide screen too: uncapped, one long name set its whole
 // column to the name's length.
-const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
+export const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
+
+/** `6 portions`, `1 portion`: what a day's heading and total count. */
+export function portionsWord(n: number): string {
+  return `${n} ${n === 1 ? "portion" : "portions"}`;
+}
+
+/** ` × 2` after a dish, only where somebody has more than one portion. */
+function Times({ n }: { n: number | undefined }) {
+  return n !== undefined && n > 1 ? <span className="tabular">{` × ${n}`}</span> : null;
+}
+
+function portionsSaid(n: number | undefined): string {
+  return n !== undefined && n > 1 ? `, ${n} portions` : "";
+}
 
 /**
  * How someone wants their dish, under the dish in their cell.
@@ -1282,7 +1312,7 @@ const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
  * speaks the note whole, the title shows it to a pointer, and the cell's
  * dialog prints it.
  */
-function CellNote({ note }: { note: string }) {
+export function CellNote({ note }: { note: string }) {
   return (
     <span
       title={note}
@@ -1294,7 +1324,7 @@ function CellNote({ note }: { note: string }) {
 }
 
 // Names wrap rather than truncate, inside a cap that keeps the days in view.
-const WHO_WIDTH = "max-w-40";
+export const WHO_WIDTH = "max-w-40";
 
 // An empty cell you can use has to outweigh one you cannot. Action draws
 // unavailable as a dashed border-strong edge, which is right for a button
@@ -1351,7 +1381,7 @@ function MyCell({
       ? "Standing"
       : "Order lunch";
   const state = cell
-    ? `${cell.dishName ?? "eating, no dish chosen"}${cell.note !== null ? `, ${cell.note}` : ""}`
+    ? `${cell.dishName ?? "eating, no dish chosen"}${portionsSaid(cell.portions)}${cell.note !== null ? `, ${cell.note}` : ""}`
     : projected
       ? "from your standing order"
       : "not eating";
@@ -1466,6 +1496,7 @@ function MyCell({
         <>
           <span className={cn(CELL_TEXT, offeredTo !== null && "line-through")}>
             {label}
+            <Times n={cell.portions} />
           </span>
           {cell.note !== null && <CellNote note={cell.note} />}
           {offeredTo !== null && (
@@ -1571,7 +1602,9 @@ function TheirCell({
   // a check is only legible next to a column head naming the one dish, and a
   // screen reader is not reading the column head.
   const described = `${member.name}, ${formatDay(day.serviceDate)}: ${
-    dish !== null && gone === null ? `eating ${dish}${note !== null ? `, ${note}` : ""}` : MARK_LABEL[mark]
+    dish !== null && gone === null
+      ? `eating ${dish}${portionsSaid(cell?.portions)}${note !== null ? `, ${note}` : ""}`
+      : MARK_LABEL[mark]
   }`;
   const spoken =
     gone !== null
@@ -1603,9 +1636,15 @@ function TheirCell({
       ) : dish !== null ? (
         <>
           {onlyDish ? (
-            <CheckIcon className="size-4" aria-hidden="true" />
+            <span className="flex items-center gap-0.5">
+              <CheckIcon className="size-4" aria-hidden="true" />
+              <Times n={cell?.portions} />
+            </span>
           ) : (
-            <span className={CELL_TEXT}>{dish}</span>
+            <span className={CELL_TEXT}>
+              {dish}
+              <Times n={cell?.portions} />
+            </span>
           )}
           {showNote && <CellNote note={note} />}
         </>
@@ -1705,7 +1744,7 @@ function IncomingOffer({
 }
 
 /** Shaped like the layout it stands in for, so nothing jumps when the data lands. */
-function BoardSkeleton({ narrow, days }: { narrow: boolean; days: number }) {
+export function BoardSkeleton({ narrow, days }: { narrow: boolean; days: number }) {
   if (narrow) {
     return (
       <div className="flex flex-col gap-4">

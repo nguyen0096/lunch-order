@@ -8,7 +8,7 @@ import { useCallback, useEffect, useState } from "react";
  * rewrite rule for deep links out of a chat message.
  *
  * The hash may carry its own query string: pasting
- * `#/o/acme/orders?now=2026-09-10` is the natural thing to type, and without
+ * `#/o/acme/board?now=2026-09-10` is the natural thing to type, and without
  * splitting it off the page name becomes "orders?now=2026-09-10" and matches
  * nothing.
  */
@@ -63,8 +63,8 @@ export function replaceHash(hash: string): void {
 
 /**
  * Everything after `?`, whether it sits before or inside the hash. Both forms
- * occur in practice: `/?now=X#/o/a/orders` is what a purist writes,
- * `#/o/a/orders?now=X` is what anyone actually types.
+ * occur in practice: `/?now=X#/o/a/board` is what a purist writes,
+ * `#/o/a/board?now=X` is what anyone actually types.
  */
 export function allParams(loc: Location = window.location): URLSearchParams {
   const out = new URLSearchParams(loc.search);

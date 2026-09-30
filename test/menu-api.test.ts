@@ -1,4 +1,5 @@
-import { DishInUseError, fetchDishTakers, publishMenu } from "../src/web/api/menu.js";
+import { DishInUseError, fetchCatererOrder, fetchDishTakers, publishMenu } from "../src/web/api/menu.js";
+import { catererMessage } from "../src/shared/catererOrder.js";
 import { humanError } from "../src/web/api/core.js";
 
 // What the Menu screen reads about a dish's orders, and what it hears when
@@ -60,6 +61,33 @@ describe("fetchDishTakers", () => {
     // system's hold depends on the day's stage, which only the screen knows.
     expect(client.filters).toEqual(["menu_id=5"]);
     expect(client.selects.join(" ")).toMatch(/auto_assigned/);
+  });
+});
+
+describe("fetchCatererOrder", () => {
+  it("counts portions, so a line of three is three boxes, in the dishes and the total", async () => {
+    client.from.mockImplementation((table: string) =>
+      table === "orders"
+        ? query([
+            { profile_id: "duc", order_items: [{ menu_item_id: 101, quantity: 3, note: "ít cơm" }] },
+            { profile_id: "teo", order_items: [{ menu_item_id: 101, quantity: 1, note: null }] },
+            { profile_id: "vy", order_items: [{ menu_item_id: 102, quantity: 2, note: null }] },
+            { profile_id: "an", order_items: [] },
+          ])
+        : query([{ profile_id: "duc", display_name: "Đức" }]),
+    );
+
+    const order = await fetchCatererOrder({
+      orgId: 7,
+      menuId: 5,
+      serviceDate: "2026-10-02",
+      items: [{ id: 101, name: "Cơm gà" }, { id: 102, name: "Phở" }],
+    });
+
+    expect(order.lines.map((l) => [l.name, l.count])).toEqual([["Cơm gà", 4], ["Phở", 2]]);
+    expect(order.unchosen).toBe(1);
+    expect(client.selects.join(" ")).toMatch(/quantity/);
+    expect(catererMessage(order, { companyName: "Acme" })).toBe("Đặt cơm 02/10\n- Cơm gà: 4\n- Phở: 2\nTổng: 6 phần");
   });
 });
 

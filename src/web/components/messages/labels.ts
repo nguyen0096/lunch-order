@@ -8,7 +8,7 @@
  */
 
 import type { Audience, AnnouncementResult, NotificationKind } from "../../api.js";
-import { peopleWord } from "../corrections/model.js";
+import { peopleWord } from "../orders/model.js";
 
 /** What a kind takes a timing in, if anything. */
 export type Timing = "minutes" | "hour" | "none";

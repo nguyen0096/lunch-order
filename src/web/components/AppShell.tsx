@@ -6,6 +6,7 @@ import {
   BugIcon,
   ChefHatIcon,
   ChevronsUpDownIcon,
+  ClipboardListIcon,
   InboxIcon,
   LogOutIcon,
   MegaphoneIcon,
@@ -34,7 +35,7 @@ export type Page =
   | "people"
   | "payments"
   | "messages"
-  | "corrections"
+  | "orders"
   | "bug-reports"
   | "settings";
 
@@ -48,13 +49,13 @@ const MEMBER: Destination[] = [
   { page: "bill", label: "Bill", icon: <ReceiptTextIcon /> },
 ];
 
+// Messages is in the account menu, not here: it is the least frequent of the
+// chores, and a sixth admin tab did not fit a phone's bar.
 const ADMIN: Destination[] = [
+  { page: "orders", label: "Orders", icon: <ClipboardListIcon /> },
   { page: "menu", label: "Menu", icon: <ChefHatIcon /> },
   { page: "people", label: "People", icon: <UsersIcon /> },
   { page: "payments", label: "Payments", icon: <BanknoteIcon /> },
-  // Here, unlike Corrections, because deciding what the office hears is
-  // something an admin comes back to rather than a rare weekend job.
-  { page: "messages", label: "Messages", icon: <MegaphoneIcon /> },
 ];
 
 /**
@@ -108,6 +109,7 @@ export function AppShell({
   const [reporting, setReporting] = useState(false);
   const report = () => setReporting(true);
   const bugReportsHref = role === "owner" ? href("bug-reports") : undefined;
+  const messagesHref = admin ? href("messages") : undefined;
 
   // Belonging to two offices is what makes the name a control. Belonging to one
   // is the ordinary case, and a menu holding a single entry is a promise the
@@ -162,6 +164,8 @@ export function AppShell({
           email={email}
           settingsHref={href("settings")}
           bugReportsHref={bugReportsHref}
+          messagesHref={messagesHref}
+          messagesCurrent={page === "messages"}
           onReportBug={report}
           onSignOut={onSignOut}
           onCreateOffice={switchable ? undefined : create}
@@ -191,6 +195,8 @@ export function AppShell({
             email={email}
             settingsHref={href("settings")}
             bugReportsHref={bugReportsHref}
+            messagesHref={messagesHref}
+            messagesCurrent={page === "messages"}
             onReportBug={report}
             onSignOut={onSignOut}
             onCreateOffice={switchable ? undefined : create}
@@ -258,7 +264,7 @@ export function switchTarget(page: string, role: Role): Page {
       page === "people" ||
       page === "payments" ||
       page === "messages" ||
-      page === "corrections") &&
+      page === "orders") &&
     isAdmin(role)
   ) {
     return page;
@@ -422,6 +428,8 @@ function AvatarMenu({
   email,
   settingsHref,
   bugReportsHref,
+  messagesHref,
+  messagesCurrent,
   onReportBug,
   onSignOut,
   onCreateOffice,
@@ -433,6 +441,9 @@ function AvatarMenu({
   settingsHref: string;
   /** An owner's only. The table refuses everybody else, so nobody else is offered it. */
   bugReportsHref?: string;
+  /** An admin's only: what the office hears, the least frequent of the chores. */
+  messagesHref?: string;
+  messagesCurrent: boolean;
   onReportBug: () => void;
   onSignOut: () => void;
   /** Absent when the switcher already carries it, so it has one home at a time. */
@@ -475,6 +486,18 @@ function AvatarMenu({
             Settings
           </a>
         </Button>
+        {messagesHref && (
+          <Button asChild variant="ghost" className="w-full justify-start">
+            <a
+              href={messagesHref}
+              aria-current={messagesCurrent ? "page" : undefined}
+              onClick={() => setOpen(false)}
+            >
+              <MegaphoneIcon />
+              Messages
+            </a>
+          </Button>
+        )}
         {bugReportsHref && (
           <Button asChild variant="ghost" className="w-full justify-start">
             <a href={bugReportsHref} onClick={() => setOpen(false)}>

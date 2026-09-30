@@ -39,6 +39,7 @@ import { WeekNav } from "./WeekNav.js";
 import { DayStages } from "./DayStages.js";
 import { CatererOrderNote } from "./menu/CatererOrderNote.js";
 import { weekRangeLabel } from "./boardModel.js";
+import { allParams } from "../useHashRoute.js";
 import {
   cutoffInstant,
   cutoffProblem,
@@ -106,7 +107,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const { code, minorUnits, locale } = org.currency;
   const currency = useMemo(() => ({ code, minorUnits, locale }), [code, minorUnits, locale]);
 
-  const [serviceDate, setServiceDate] = useState(() => nextServiceDay(today));
+  const [serviceDate, setServiceDate] = useState(() => openingDate(today));
 
   // The week on screen. It follows the service date rather than being chosen
   // separately: typing a date into the field is a way of changing week too,
@@ -131,7 +132,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const defaultCutoffTime = org.defaultCutoffLocalTime.slice(0, 5);
   const [cutoff, setCutoff] = useState<LocalCutoff & { pinned: boolean }>(() => ({
     ...defaultCutoff({
-      serviceDate: nextServiceDay(today),
+      serviceDate: openingDate(today),
       defaultTime: defaultCutoffTime,
       timeZone: org.timezone,
       now: appNow(),
@@ -937,6 +938,17 @@ function nextServiceDay(today: string): string {
   let day = addDays(today, 1);
   while (isoWeekday(day) > 5) day = addDays(day, 1);
   return day;
+}
+
+/**
+ * The day a `?date=` link names, which is how Orders sends an admin here to
+ * add a day it has no menu for, or the next service day otherwise. A date
+ * that does not survive a round trip, such as 2026-02-31, is ignored.
+ */
+function openingDate(today: string): string {
+  const asked = allParams().get("date");
+  if (asked !== null && /^\d{4}-\d{2}-\d{2}$/.test(asked) && addDays(asked, 0) === asked) return asked;
+  return nextServiceDay(today);
 }
 
 function emptyHeading(a: {

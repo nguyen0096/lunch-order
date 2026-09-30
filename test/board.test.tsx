@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { toast } from "sonner";
 import { BoardScreen } from "../src/web/components/BoardScreen.js";
-import { cellKey, type Board, type BoardDay, type TransferRow } from "../src/web/api.js";
+import { cellKey, type Board, type BoardCell, type BoardDay, type TransferRow } from "../src/web/api.js";
 import * as api from "../src/web/api.js";
 import { columnLabel, longDayLabel } from "../src/web/components/boardModel.js";
 import { formatMoney } from "../src/shared/money.js";
@@ -483,6 +483,29 @@ describe("Board, asymmetric rows", () => {
 
     const total = (await screen.findByText("Total")).closest("tr")!;
     expect(within(total).getAllByText("2")).not.toHaveLength(0);
+  });
+
+  it("counts portions, so an admin's order of three is three boxes", async () => {
+    const cells = myCell();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "admin",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 120_000,
+      transferredToName: null,
+      portions: 3,
+    });
+    serve(makeBoard({ cells }));
+    renderBoard();
+
+    const total = (await screen.findByText("Total")).closest("tr")!;
+    const wed = within(total).getAllByRole("cell")[
+      screen.getAllByRole("columnheader").findIndex((h) => h.getAttribute("data-service-date") === WED)
+    ]!;
+    expect(wed).toHaveTextContent("4");
   });
 });
 
@@ -1851,6 +1874,53 @@ describe("Board, on a phone", () => {
     expect(within(list).getByRole("button", { name: CHOOSE_LABEL })).toBeInTheDocument();
     expect(within(list).getByRole("button", { name: DICE_LABEL })).toBeInTheDocument();
     expect(chip(WED)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("counts the day's portions in the list heading, and shows × N on a cell of more than one", async () => {
+    const cells = new Map<string, BoardCell>([
+      [
+        cellKey("teo", WED),
+        {
+          orderId: 8,
+          status: "placed",
+          source: "admin",
+          itemId: 7,
+          dishName: "Phở bò",
+          note: null,
+          amountMinor: 80_000,
+          transferredToName: null,
+          portions: 2,
+        },
+      ],
+    ]);
+    serve(makeBoard({ cells }));
+    renderBoard();
+
+    const list = await listFor(WED);
+    expect(within(list).getByText("2 portions")).toBeInTheDocument();
+    const theirs = within(list).getByRole("button", {
+      name: `Tèo, ${formatDay(WED)}: eating Phở bò, 2 portions. Hand a meal over`,
+    });
+    expect(theirs).toHaveTextContent("Phở bò × 2");
+  });
+
+  it("says one portion, not one portions", async () => {
+    const cells = new Map<string, BoardCell>([
+      [
+        cellKey("teo", WED),
+        {
+          orderId: 8, status: "placed", source: "member", itemId: 7, dishName: "Phở bò",
+          note: null, amountMinor: 40_000, transferredToName: null, portions: 1,
+        },
+      ],
+    ]);
+    serve(makeBoard({ cells }));
+    renderBoard();
+
+    const list = await listFor(WED);
+    expect(within(list).getByText("1 portion")).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: `Tèo, ${formatDay(WED)}: eating Phở bò. Hand a meal over` }))
+      .not.toHaveTextContent("×");
   });
 
   it("stands in for the list while loading, not for the grid", async () => {

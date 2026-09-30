@@ -177,6 +177,12 @@ export type BoardCell = {
   amountMinor: number | null;
   /** Set when this meal was handed to someone else and they accepted. */
   transferredToName: string | null;
+  /**
+   * Portions on the order, at least 1: an order with no dish is still one
+   * person eating. Absent on a cell drawn before the write returns, which is
+   * one portion, the only thing the Board writes.
+   */
+  portions?: number;
 };
 
 export type Board = {
@@ -234,7 +240,7 @@ export async function fetchBoard(args: {
     supabase
       .from("orders")
       .select(`id, profile_id, service_date, status, source,
-               order_items ( menu_item_id, item_name_snapshot, line_total_minor, note )`)
+               order_items ( menu_item_id, item_name_snapshot, line_total_minor, quantity, note )`)
       .eq("org_id", args.orgId)
       .gte("service_date", args.from)
       .lte("service_date", args.to),
@@ -314,6 +320,7 @@ export async function fetchBoard(args: {
     menu_item_id: number | null;
     item_name_snapshot: string;
     line_total_minor: number | null;
+    quantity: number | null;
     note: string | null;
   };
   const cells = new Map<string, BoardCell>();
@@ -329,6 +336,7 @@ export async function fetchBoard(args: {
       note: lines[0]?.note ?? null,
       amountMinor: lines.length > 0 ? amount : null,
       transferredToName: transferTo.get(o.id) ?? null,
+      portions: Math.max(1, lines.reduce((sum, l) => sum + (l.quantity ?? 1), 0)),
     });
   }
 
@@ -374,7 +382,7 @@ export type TransferRow = {
   id: number;
   orderId: number;
   serviceDate: string;
-  status: "pending" | "accepted" | "declined" | "cancelled";
+  status: "pending" | "accepted" | "declined" | "cancelled" | "undone";
   fromProfileId: string;
   fromName: string;
   toProfileId: string;

@@ -2,7 +2,7 @@ import { useId } from "react";
 import { REASON_MAX } from "../../api.js";
 
 /**
- * Why this correction was made, if there is anything to say.
+ * Why this change was made, if there is anything to say.
  *
  * Optional, and never nagged at. A correction made on a Saturday with the
  * caterer still on the phone is worth recording whether or not there was time
@@ -31,7 +31,7 @@ export function ReasonField({
         onChange={(e) => onChange(e.target.value)}
         className="h-11 w-full min-w-0 rounded-md border border-border bg-surface-raised px-3 text-base"
       />
-      <p className="text-xs text-subtle">Kept with the correction, for whoever reads the day later.</p>
+      <p className="text-xs text-subtle">Kept with the change, for whoever reads the day later.</p>
     </div>
   );
 }

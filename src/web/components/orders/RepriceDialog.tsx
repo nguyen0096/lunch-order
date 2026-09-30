@@ -31,12 +31,15 @@ export function RepriceDialog({
   dish,
   meals,
   currency,
+  ahead = false,
   pending,
   error,
   onOpenChange,
   onReprice,
 }: {
   open: boolean;
+  /** A day not served yet, where the price is a new one rather than a charge. */
+  ahead?: boolean;
   serviceDate: string;
   dish: { id: number; name: string; priceMinor: number | null };
   /** Every meal recorded on the day, so the impact is counted off the record. */
@@ -59,7 +62,9 @@ export function RepriceDialog({
 
   const problem =
     read === null
-      ? "Say what the caterer charged"
+      ? ahead
+        ? "Say what the new price is"
+        : "Say what the caterer charged"
       : read.minor === dish.priceMinor
         ? "That is the price it already carries"
         : null;
@@ -85,7 +90,7 @@ export function RepriceDialog({
 
           <div className="flex flex-col gap-1.5">
             <label htmlFor="reprice-price" className="text-xs font-medium text-subtle">
-              What the caterer charged
+              {ahead ? "New price" : "What the caterer charged"}
             </label>
             <input
               id="reprice-price"
@@ -148,7 +153,7 @@ export function RepriceDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Cancel
+            Close
           </Button>
           <Action
             reason={problem}

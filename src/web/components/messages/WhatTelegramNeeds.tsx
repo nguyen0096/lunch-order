@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Badge, Button } from "@/ui";
 import { Section } from "../settings/Section.js";
-import { peopleWord } from "../corrections/model.js";
+import { peopleWord } from "../orders/model.js";
 import type { AnnouncementPerson } from "../../api.js";
 
 /**

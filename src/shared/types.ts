@@ -7,7 +7,7 @@ import type { Currency } from "./money.js";
 
 export type Role = "member" | "admin" | "owner";
 export type MenuStatus = "draft" | "published" | "locked" | "cancelled";
-export type TransferStatus = "pending" | "accepted" | "declined" | "cancelled";
+export type TransferStatus = "pending" | "accepted" | "declined" | "cancelled" | "undone";
 
 export type Org = {
   id: number;
