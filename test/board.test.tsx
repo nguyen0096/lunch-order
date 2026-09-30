@@ -850,21 +850,22 @@ describe("Board, once lunch is over", () => {
 });
 
 describe("Board, a meal somebody gave me", () => {
-  it("shows the meal on my own row and offers no second lunch", async () => {
-    const accepted: TransferRow = {
-      id: 4,
-      orderId: 8,
-      serviceDate: WED,
-      status: "accepted",
-      fromProfileId: "teo",
-      fromName: "Tèo",
-      toProfileId: "me",
-      toName: "Neyu",
-      dishName: "Phở bò",
-      amountMinor: 40_000,
-      reason: null,
-      createdAt: "2026-09-22T09:00:00Z",
-    };
+  const accepted: TransferRow = {
+    id: 4,
+    orderId: 8,
+    serviceDate: WED,
+    status: "accepted",
+    fromProfileId: "teo",
+    fromName: "Tèo",
+    toProfileId: "me",
+    toName: "Neyu",
+    dishName: "Phở bò",
+    amountMinor: 40_000,
+    reason: null,
+    createdAt: "2026-09-22T09:00:00Z",
+  };
+
+  function teoGaveMe() {
     const cells = new Map<string, import("../src/web/api.js").BoardCell>();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -881,6 +882,51 @@ describe("Board, a meal somebody gave me", () => {
       ...noTransfers(),
       live: new Map([[8, accepted]]),
     }));
+  }
+
+  it("says the giver's meal went to you, not to your own name", async () => {
+    teoGaveMe();
+    renderBoard();
+
+    const theirs = await screen.findByRole("button", {
+      name: `Tèo, ${formatDay(WED)}: passed on to you. Hand a meal over`,
+    });
+    expect(within(theirs).getByText("to you")).toBeInTheDocument();
+    expect(screen.queryByText("to Neyu")).not.toBeInTheDocument();
+
+    await user.click(theirs);
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Tèo passed this meal to you, so you are billed for it.",
+    );
+  });
+
+  it("still names a colleague a meal went to", async () => {
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: "Dinh",
+    });
+    serve(makeBoard({ cells }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      live: new Map([[8, { ...accepted, toProfileId: "dinh", toName: "Dinh" }]]),
+    }));
+    renderBoard();
+
+    const theirs = await screen.findByRole("button", {
+      name: `Tèo, ${formatDay(WED)}: passed on to Dinh. Hand a meal over`,
+    });
+    expect(within(theirs).getByText("to Dinh")).toBeInTheDocument();
+  });
+
+  it("shows the meal on my own row and offers no second lunch", async () => {
+    teoGaveMe();
     renderBoard();
 
     const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: Phở bò, from Tèo` });
@@ -1544,6 +1590,49 @@ describe("Board, long dish names", () => {
     throw new Error(`${name} is not inside ${stop}`);
   }
 
+  /** Something between the text and its container lets it break inside a word. */
+  function expectWraps(el: HTMLElement, stop: string) {
+    for (let at: HTMLElement | null = el; at !== null; at = at.parentElement) {
+      if (at.classList.contains("wrap-anywhere")) return;
+      if (at.matches(stop)) break;
+    }
+    throw new Error(`${el.textContent} cannot wrap inside a word`);
+  }
+
+  function teoHas(dishName: string, extra: Partial<import("../src/web/api.js").BoardCell> = {}) {
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 6,
+      dishName,
+      note: null,
+      amountMinor: 50_000,
+      transferredToName: null,
+      ...extra,
+    });
+    return cells;
+  }
+
+  function transfer(over: Partial<TransferRow>): TransferRow {
+    return {
+      id: 3,
+      orderId: 8,
+      serviceDate: WED,
+      status: "pending",
+      fromProfileId: "teo",
+      fromName: "Tèo",
+      toProfileId: "me",
+      toName: "Neyu",
+      dishName: WORD,
+      amountMinor: 50_000,
+      reason: null,
+      createdAt: "2026-09-22T09:00:00Z",
+      ...over,
+    };
+  }
+
   it("shows a long dish name in full in every cell, the menu panel and the dialog", async () => {
     const cells = myCell({ itemId: 5, dishName: LONG });
     cells.set(cellKey("teo", WED), {
@@ -1561,10 +1650,12 @@ describe("Board, long dish names", () => {
 
     const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: ${LONG}` });
     expectWhole(within(mine).getByText(LONG), LONG, "td");
+    expect(within(mine).getByText(LONG)).toHaveClass("wrap-anywhere");
     const theirs = screen.getByRole("button", {
       name: `Tèo, ${formatDay(WED)}: eating ${WORD}. Hand a meal over`,
     });
     expectWhole(within(theirs).getByText(WORD), WORD, "td");
+    expect(within(theirs).getByText(WORD)).toHaveClass("wrap-anywhere");
 
     const panel = screen.getByRole("region", { name: `Menu for ${longDayLabel(WED)}` });
     expectWhole(within(panel).getByText(LONG), LONG, "li");
@@ -1578,5 +1669,507 @@ describe("Board, long dish names", () => {
       LONG,
       "[role=dialog]",
     );
+  });
+
+  it("shows a colleague's long dish in full in the handover sheet", async () => {
+    serve(makeBoard({ wed: menuDay({ dishes: LONG_DISHES }), cells: teoHas(WORD) }));
+    renderBoard();
+
+    await user.click(
+      await screen.findByRole("button", { name: `Tèo, ${formatDay(WED)}: eating ${WORD}. Hand a meal over` }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    const dish = within(dialog).getByText(WORD);
+    expectWhole(dish, WORD, "[role=dialog]");
+    expectWraps(dish, "[role=dialog]");
+  });
+
+  it("shows an offer of a long dish in full, and the meal once it is mine", async () => {
+    serve(makeBoard({ wed: menuDay({ dishes: LONG_DISHES }), cells: teoHas(WORD) }));
+    const offer = transfer({});
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      incoming: [offer],
+      live: new Map([[8, offer]]),
+    }));
+    const view = renderBoard();
+
+    const said = await screen.findByText(`Tèo offers you ${WORD}`);
+    expectWhole(said, `Tèo offers you ${WORD}`, "td");
+    expectWraps(said, "td");
+    view.unmount();
+
+    serve(makeBoard({ wed: menuDay({ dishes: LONG_DISHES }), cells: teoHas(WORD, { transferredToName: "Neyu" }) }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      live: new Map([[8, transfer({ status: "accepted" })]]),
+    }));
+    renderBoard();
+    const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: ${WORD}, from Tèo` });
+    expectWhole(within(mine).getByText(WORD), WORD, "td");
+    expect(within(mine).getByText(WORD)).toHaveClass("wrap-anywhere");
+  });
+
+  it("shows a long dish in full in the phone's list too", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      serve(makeBoard({ wed: menuDay({ dishes: LONG_DISHES }), cells: teoHas(WORD) }));
+      renderBoard();
+      const list = await screen.findByRole("region", { name: `Who is eating on ${longDayLabel(WED)}` });
+      const theirs = within(list).getByText(WORD);
+      expectWhole(theirs, WORD, "li");
+      expect(theirs).toHaveClass("wrap-anywhere");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("Board, on a phone", () => {
+  /**
+   * A matchMedia that answers "narrow" until told otherwise. jsdom has none,
+   * which is what keeps every other test in this file on the grid.
+   */
+  let narrow = true;
+  const listeners = new Set<() => void>();
+  function resize(toNarrow: boolean) {
+    narrow = toNarrow;
+    act(() => listeners.forEach((l) => l()));
+  }
+  beforeEach(() => {
+    narrow = true;
+    listeners.clear();
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      get matches() {
+        return query.includes("max-width") && narrow;
+      },
+      media: query,
+      addEventListener: (_: string, l: () => void) => listeners.add(l),
+      removeEventListener: (_: string, l: () => void) => listeners.delete(l),
+    }));
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const listFor = (d: string) => screen.findByRole("region", { name: `Who is eating on ${longDayLabel(d)}` });
+  const chip = (d: string) => document.querySelector<HTMLElement>(`[data-strip-date="${d}"]`)!;
+
+  function swipe(el: HTMLElement, dx: number, dy = 0, fingers = 1) {
+    const at = (x: number, y: number) => ({ clientX: x, clientY: y });
+    fireEvent.touchStart(el, { touches: Array.from({ length: fingers }, () => at(200, 300)) });
+    fireEvent.touchEnd(el, { touches: [], changedTouches: [at(200 + dx, 300 + dy)] });
+  }
+
+  it("shows one day as a list instead of the grid, opening on the day to order", async () => {
+    serve(makeBoard());
+    renderBoard();
+
+    const list = await listFor(WED);
+    expect(screen.queryByRole("table")).toBeNull();
+    for (const m of MEMBERS) expect(within(list).getByText(m.name)).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: CHOOSE_LABEL })).toBeInTheDocument();
+    expect(within(list).getByRole("button", { name: DICE_LABEL })).toBeInTheDocument();
+    expect(chip(WED)).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("stands in for the list while loading, not for the grid", async () => {
+    fetchBoard.mockReturnValue(new Promise(() => {}));
+    fetchTransfers.mockReturnValue(new Promise(() => {}));
+    renderBoard();
+    expect(await screen.findAllByRole("status")).not.toHaveLength(0);
+    expect(screen.queryByRole("table")).toBeNull();
+  });
+
+  it("reports a failed read and offers a retry, as the grid does", async () => {
+    fetchBoard.mockRejectedValue({ message: "JWT expired" });
+    fetchTransfers.mockResolvedValue(noTransfers());
+    renderBoard();
+    expect(await screen.findByText("JWT expired")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+  });
+
+  it("marks today and the picked day for a screen reader, and says each day's stage", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+
+    const group = screen.getByRole("group", { name: "Day" });
+    expect(within(group).getAllByRole("button").length).toBe(5);
+    const tue = chip(TODAY);
+    expect(tue).toHaveAttribute("aria-current", "date");
+    expect(tue).toHaveAttribute("aria-pressed", "false");
+    const { dow, dom } = columnLabel(TODAY);
+    expect(tue).toHaveAccessibleName(`${dow} ${dom}, today, no menu, not eating`);
+    expect(tue).toHaveTextContent("Today");
+  });
+
+  it("shows the stage word on the picked day only", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+
+    // Monday and Tuesday both have no menu; only the picked one says so.
+    await user.click(chip(MONDAY));
+    expect(within(chip(MONDAY)).getByText("No menu")).toBeInTheDocument();
+    expect(within(chip(TODAY)).queryByText("No menu")).toBeNull();
+    expect(await listFor(MONDAY)).toBeInTheDocument();
+  });
+
+  it("orders from the list in one tap on the dice", async () => {
+    const db = serve(makeBoard());
+    renderBoard();
+
+    await user.click(await screen.findByRole("button", { name: DICE_LABEL }));
+    await waitFor(() => expect(setOrder).toHaveBeenCalledTimes(1));
+    expect(db.board.cells.get(cellKey("me", WED))?.status).toBe("placed");
+    expect(chip(WED)).toHaveAccessibleName(expect.stringContaining("you are eating"));
+  });
+
+  it("opens the chooser from the plus, as a target of its own", async () => {
+    serve(makeBoard());
+    renderBoard();
+
+    await user.click(await screen.findByRole("button", { name: CHOOSE_LABEL }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    expect(setOrder).not.toHaveBeenCalled();
+  });
+
+  it("moves the list and the menu to the day picked in the strip, keeping focus on it", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+
+    await user.click(chip(THU));
+    expect(await listFor(THU)).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `Menu for ${longDayLabel(THU)}` })).toBeInTheDocument();
+    expect(chip(THU)).toHaveAttribute("aria-pressed", "true");
+    expect(chip(THU)).toHaveFocus();
+  });
+
+  it("moves a day on a sideways swipe, and not on a scroll or a pinch", async () => {
+    serve(makeBoard());
+    renderBoard();
+    const list = await listFor(WED);
+
+    // Each is checked on its own, so one guard cannot stand in for another.
+    const still = () => expect(list).toHaveAttribute("aria-label", `Who is eating on ${longDayLabel(WED)}`);
+    swipe(list, -40, 200); // too short
+    still();
+    swipe(list, -80, 300); // far enough, but mostly a vertical scroll
+    still();
+    swipe(list, -120, 0, 2); // a pinch
+    still();
+    swipe(list, -30);
+    still();
+
+    swipe(list, -120, 10);
+    expect(await listFor(THU)).toBeInTheDocument();
+    swipe(list, 120);
+    expect(await listFor(WED)).toBeInTheDocument();
+  });
+
+  it("moves focus to the list when a swipe takes away the cell that had it", async () => {
+    serve(makeBoard());
+    renderBoard();
+    const list = await listFor(WED);
+
+    within(list).getByRole("button", { name: DICE_LABEL }).focus();
+    swipe(list, -120);
+    expect(await listFor(THU)).toHaveFocus();
+  });
+
+  it("does not swipe from the strip", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+
+    swipe(screen.getByRole("group", { name: "Day" }), -120);
+    expect(await listFor(WED)).toBeInTheDocument();
+  });
+
+  it("keeps the picked day and an open dialog across the breakpoint, both ways", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+    await user.click(chip(THU));
+    await listFor(THU);
+
+    resize(false);
+    expect(await screen.findByRole("table")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: `Menu for ${longDayLabel(THU)}` })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: headName(THU, "no menu") })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.click(screen.getByRole("button", { name: CHOOSE_LABEL }));
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    resize(true);
+    // The open dialog hides the page from the accessibility tree, so by attribute.
+    await waitFor(() =>
+      expect(document.querySelector("[data-board-list]")).toHaveAttribute(
+        "aria-label",
+        `Who is eating on ${longDayLabel(THU)}`,
+      ),
+    );
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  it("stops listening for the breakpoint once it is gone", async () => {
+    serve(makeBoard());
+    const view = renderBoard();
+    await listFor(WED);
+    expect(listeners.size).toBeGreaterThan(0);
+    view.unmount();
+    expect(listeners.size).toBe(0);
+  });
+
+  it("keeps a slow order on its own day while the reader moves to another", async () => {
+    serve(makeBoard());
+    let refuse: (e: unknown) => void = () => {};
+    setOrder.mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)));
+    renderBoard();
+
+    await user.click(await screen.findByRole("button", { name: DICE_LABEL }));
+    await user.click(chip(THU));
+    const thu = await listFor(THU);
+    // Thursday's row of mine is Thursday's, not the Wednesday order in flight.
+    expect(within(thu).getByRole("button", { name: `${formatDay(THU)}: not eating. Plan to eat` })).toBeInTheDocument();
+
+    await act(async () => refuse({ message: "ordering for 24/09 closed" }));
+    await waitFor(() => expect(failure).toHaveBeenCalledWith("ordering for 24/09 closed"));
+    await user.click(chip(WED));
+    expect(within(await listFor(WED)).getByRole("button", { name: DICE_LABEL })).toBeInTheDocument();
+  });
+
+  it("draws the week now shown when the week left behind answers last", async () => {
+    let answerFirst: (b: Board) => void = () => {};
+    fetchTransfers.mockImplementation(async () => noTransfers());
+    fetchBoard.mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)));
+    const next = makeBoard();
+    fetchBoard.mockResolvedValue({
+      ...next,
+      days: next.days.map((d) => ({ ...d, serviceDate: addDays(d.serviceDate, 7) })),
+    });
+    renderBoard();
+
+    await user.click(screen.getByRole("button", { name: "Next week" }));
+    const nextWed = addDays(WED, 7);
+    expect(await listFor(nextWed)).toBeInTheDocument();
+
+    await act(async () => answerFirst(makeBoard()));
+    expect(await listFor(nextWed)).toBeInTheDocument();
+    expect(chip(WED)).toBeNull();
+  });
+
+  it("opens on the week a link names", async () => {
+    serve(makeBoard());
+    const target = addDays(MONDAY, 7 * 30 + 2);
+    window.location.hash = `#/o/test-office/board?week=${target}`;
+    try {
+      renderBoard();
+      await waitFor(() =>
+        expect(fetchBoard).toHaveBeenLastCalledWith(
+          expect.objectContaining({ from: addDays(MONDAY, 7 * 30) }),
+        ),
+      );
+    } finally {
+      window.location.hash = "";
+    }
+  });
+
+  it("skips and plans a day ahead from the list", async () => {
+    const base = makeBoard({ wed: null });
+    let current: Board = { ...base, weekdays: new Set([4]) };
+    const reproject = (b: Board): Board => ({
+      ...b,
+      projected: api.projectBoard(b, { meProfileId: "me", today: TODAY }),
+    });
+    current = reproject(current);
+    fetchBoard.mockImplementation(async () => current);
+    fetchTransfers.mockImplementation(async () => noTransfers());
+    setStandingException.mockImplementation(async (args) => {
+      const exceptions = new Map(current.exceptions);
+      if (args.action === null) exceptions.delete(args.serviceDate);
+      else exceptions.set(args.serviceDate, args.action);
+      current = reproject({ ...current, exceptions });
+    });
+    renderBoard();
+    await listFor(TODAY);
+
+    await user.click(chip(THU));
+    const thu = await listFor(THU);
+    await user.click(within(thu).getByRole("button", { name: `${formatDay(THU)}: from your standing order. Skip this day` }));
+    const skipped = await within(thu).findByRole("button", { name: `${formatDay(THU)}: skipped. Take the skip back` });
+    expect(within(skipped).getByText("Skipped")).toHaveClass("line-through");
+    expect(chip(THU)).toHaveAccessibleName(expect.stringContaining("skipped"));
+
+    await user.click(chip(addDays(THU, 1)));
+    const fri = await listFor(addDays(THU, 1));
+    await user.click(within(fri).getByRole("button", { name: `${formatDay(addDays(THU, 1))}: not eating. Plan to eat` }));
+    expect(await within(fri).findByRole("button", { name: `${formatDay(addDays(THU, 1))}: planned. Take the plan back` })).toHaveTextContent("Planned");
+  });
+
+  it("says a colleague's day in the same words, and hands a meal over from it", async () => {
+    const cells = myCell();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: null,
+    });
+    serve(makeBoard({ cells }));
+    renderBoard();
+    const list = await listFor(WED);
+
+    expect(within(list).getByText("Phở bò")).toBeInTheDocument();
+    await user.click(
+      within(list).getByRole("button", { name: `Dinh, ${formatDay(WED)}: not eating. Hand a meal over` }),
+    );
+    await user.click(
+      within(await screen.findByRole("dialog")).getByRole("button", { name: "Give Dinh my Cơm gà" }),
+    );
+    await waitFor(() =>
+      expect(createTransfer).toHaveBeenCalledWith(expect.objectContaining({ orderId: 42, toProfileId: "dinh" })),
+    );
+  });
+
+  it("answers an incoming offer from the list", async () => {
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: null,
+    });
+    const offer: TransferRow = {
+      id: 3,
+      orderId: 8,
+      serviceDate: WED,
+      status: "pending",
+      fromProfileId: "teo",
+      fromName: "Tèo",
+      toProfileId: "me",
+      toName: "Neyu",
+      dishName: "Phở bò",
+      amountMinor: 40_000,
+      reason: null,
+      createdAt: "2026-09-22T09:00:00Z",
+    };
+    serve(makeBoard({ cells }));
+    fetchTransfers.mockImplementation(async () => ({
+      ...noTransfers(),
+      incoming: [offer],
+      live: new Map([[8, offer]]),
+    }));
+    renderBoard();
+    const list = await listFor(WED);
+
+    expect(within(list).getByText("Tèo offers you Phở bò")).toBeInTheDocument();
+    await user.click(within(list).getByRole("button", { name: "Decline" }));
+    await waitFor(() => expect(decideTransfer).toHaveBeenCalledWith(3, "declined"));
+  });
+
+  it("shows a meal given to me on my row, and \"to you\" on the giver's", async () => {
+    const cells = new Map<string, import("../src/web/api.js").BoardCell>();
+    cells.set(cellKey("teo", WED), {
+      orderId: 8,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: "Neyu",
+    });
+    const accepted: TransferRow = {
+      id: 4,
+      orderId: 8,
+      serviceDate: WED,
+      status: "accepted",
+      fromProfileId: "teo",
+      fromName: "Tèo",
+      toProfileId: "me",
+      toName: "Neyu",
+      dishName: "Phở bò",
+      amountMinor: 40_000,
+      reason: null,
+      createdAt: "2026-09-22T09:00:00Z",
+    };
+    serve(makeBoard({ cells }));
+    fetchTransfers.mockImplementation(async () => ({ ...noTransfers(), live: new Map([[8, accepted]]) }));
+    renderBoard();
+    const list = await listFor(WED);
+
+    expect(within(list).getByRole("button", { name: `${formatDay(WED)}: Phở bò, from Tèo` })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    const theirs = within(list).getByRole("button", {
+      name: `Tèo, ${formatDay(WED)}: passed on to you. Hand a meal over`,
+    });
+    expect(within(theirs).getByText("to you")).toBeInTheDocument();
+    expect(within(list).queryByText("to Neyu")).toBeNull();
+    expect(chip(WED)).toHaveAccessibleName(expect.stringContaining("you are eating"));
+  });
+
+  it("carries the reason on a day that cannot be ordered, and says a cancelled day is", async () => {
+    serve(makeBoard({ wed: menuDay({ status: "cancelled" }) }));
+    renderBoard();
+    await listFor(TODAY);
+    await user.click(chip(WED));
+    expect(within(chip(WED)).getByText("Cancelled")).toBeInTheDocument();
+    const mine = within(await listFor(WED)).getByRole("button", { name: EMPTY_LABEL });
+    expect(mine).toHaveAttribute("aria-disabled", "true");
+  });
+
+  it("says a draft is a draft, and a week with no menus says so above the list", async () => {
+    serve(makeBoard({ wed: menuDay({ status: "draft" }) }));
+    const view = renderBoard();
+    await listFor(TODAY);
+    await user.click(chip(WED));
+    expect(within(chip(WED)).getByText("Draft")).toBeInTheDocument();
+    view.unmount();
+
+    serve(makeBoard({ wed: null }));
+    renderBoard();
+    expect(await screen.findByRole("heading", { name: "No menus this week" })).toBeInTheDocument();
+    expect(await listFor(TODAY)).toBeInTheDocument();
+  });
+
+  it("says Cooking and Served once the day moves on", async () => {
+    serve(makeBoard({ wed: menuDay({ status: "locked", orderCutoffAt: PAST_CUTOFF }) }));
+    vi.setSystemTime(zonedTimeToInstant(WED, "18:00", TZ));
+    renderBoard();
+    await listFor(WED);
+    await user.click(chip(WED));
+    expect(within(chip(WED)).getByText("Served")).toBeInTheDocument();
+    expect(within(await listFor(WED)).getByText(/Served/)).toBeInTheDocument();
+  });
+
+  it("pages weeks and keeps the list", async () => {
+    serve(makeBoard());
+    renderBoard();
+    await listFor(WED);
+    await user.click(screen.getByRole("button", { name: "Next week" }));
+    await waitFor(() =>
+      expect(fetchBoard).toHaveBeenLastCalledWith(expect.objectContaining({ from: addDays(MONDAY, 7) })),
+    );
+    expect(screen.getByRole("button", { name: "This week" })).toBeInTheDocument();
+    expect(screen.queryByRole("table")).toBeNull();
   });
 });

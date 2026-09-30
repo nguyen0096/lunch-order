@@ -82,9 +82,12 @@ type Focus = { profileId: string; serviceDate: string };
  * so a day you cannot order on recedes into `surface-sunken` and today is a
  * word in the column head. Colour is spent on ordered cells alone.
  *
- * What is on the menu lives in the panel below the grid, not in the cells: a
+ * What is on the menu lives in the panel above the grid, not in the cells: a
  * week of people by days cannot also carry five days of dish lists, and a cell
  * that shows the menu is a cell that cannot show the order.
+ *
+ * Below 640px the grid gives way to one day at a time: a strip of the week, that
+ * day's menu, and a list of everyone. Both draw their cells with `renderCell`.
  */
 export function BoardScreen({ me, org }: ScreenProps) {
   const today = todayIn(org.timezone, appNow());
@@ -102,6 +105,9 @@ export function BoardScreen({ me, org }: ScreenProps) {
   // that day, and falls back on its own when the week changes under it.
   const [panelDate, setPanelDate] = useState<string | null>(null);
   const [now, setNow] = useState(() => appNow());
+  const narrow = useNarrow();
+  const swipeFrom = useRef<{ x: number; y: number } | null>(null);
+  const listRef = useRef<HTMLElement>(null);
 
   // The board as it stands, for the optimistic snapshot. Reading it inside a
   // state updater would capture whatever React chose to replay.
@@ -494,6 +500,12 @@ export function BoardScreen({ me, org }: ScreenProps) {
   // somebody who has scrolled it themselves.
   const scrolledFor = useRef<string | null>(null);
   useEffect(() => {
+    // The list has no columns. Forgetting the week means the grid, once the
+    // screen widens again, opens on the day the list was showing.
+    if (narrow) {
+      scrolledFor.current = null;
+      return;
+    }
     if (board === null || scrolledFor.current === from || panelDay === null) return;
     const target = panelDay;
 
@@ -514,15 +526,29 @@ export function BoardScreen({ me, org }: ScreenProps) {
       // which is relative to the nearest positioned ancestor. That is not the
       // scroller here, so any page padding or offset ancestor between them was
       // being added to scrollLeft and the grid overshot the target day.
+      //
+      // Flush against it: the 8px of breathing room this used to leave was an
+      // unreadable sliver of the day before.
       const sticky = gridRef.current?.querySelector<HTMLElement>("thead th:first-child");
-      const gap = (sticky?.getBoundingClientRect().width ?? 0) + 8;
-      const delta =
-        column.getBoundingClientRect().left - scroller.getBoundingClientRect().left - gap;
+      const gap = sticky?.getBoundingClientRect().width ?? 0;
+      const origin = scroller.getBoundingClientRect().left + gap;
+      // Today first when today and the target both fit: on a narrow grid that
+      // is the day being handed out and the day being ordered, side by side.
+      const todayColumn =
+        target.serviceDate > today
+          ? gridRef.current?.querySelector<HTMLElement>(`[data-service-date="${today}"]`)
+          : null;
+      const fromToday =
+        todayColumn &&
+        column.getBoundingClientRect().right - todayColumn.getBoundingClientRect().left <=
+          scroller.clientWidth - gap;
+      const lead = fromToday ? todayColumn : column;
+      const delta = lead.getBoundingClientRect().left - origin;
       scroller.scrollLeft = Math.max(0, scroller.scrollLeft + delta);
       scrolledFor.current = from;
     });
     return () => cancelAnimationFrame(frame);
-  }, [board, from, panelDay]);
+  }, [board, from, panelDay, today, narrow]);
 
   const nav = (
     <WeekNav
@@ -557,7 +583,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
     return (
       <section className="flex flex-col gap-4">
         {nav}
-        <BoardSkeleton />
+        <BoardSkeleton narrow={narrow} days={days.length} />
       </section>
     );
   }
@@ -582,6 +608,184 @@ export function BoardScreen({ me, org }: ScreenProps) {
       })()
     : null;
 
+  // What my own row says about a day, reduced to what a strip chip can carry.
+  const myMark = (d: BoardDay): StripMark => {
+    const mine = board.cells.get(cellKey(me.profileId, d.serviceDate)) ?? null;
+    if (mine?.status === "placed" || receivedByDate.has(d.serviceDate)) return "ordered";
+    const p = planState({
+      day: d,
+      today,
+      hasOrderRow: mine !== null,
+      weekdays: board.weekdays,
+      exception: board.exceptions.get(d.serviceDate) ?? null,
+    });
+    if (p === "skipped") return "skipped";
+    if (p === "standing" || p === "planned") return "predicted";
+    if (mine === null && board.projected.has(d.serviceDate)) return "predicted";
+    return "none";
+  };
+
+  // A sideways swipe on the list moves one day, which is what the grid's
+  // horizontal scroll was for. It is an enhancement only: the strip is how a
+  // keyboard or a screen reader changes day.
+  const step = (day: BoardDay, by: number) => {
+    const at = days.findIndex((d) => d.serviceDate === day.serviceDate);
+    const next = days[at + by];
+    if (!next) return;
+    setPanelDate(next.serviceDate);
+    // A cell that had focus may not exist on the next day, so focus moves to
+    // the list, whose name is the day it now shows.
+    if (listRef.current?.contains(document.activeElement)) listRef.current.focus();
+  };
+
+  /**
+   * The phone's Board: one day, everybody in it, a row each. The grid turned
+   * on its side, so a name and a dish both get the width of the screen
+   * instead of 88px and 76px.
+   */
+  const dayList = (day: BoardDay) => {
+    const tag = columnTag({ day, org, now });
+    const tags = [day.serviceDate === today ? "Today" : null, tag].filter((t) => t !== null);
+    return (
+      <section
+        ref={listRef}
+        data-board-list
+        tabIndex={-1}
+        aria-label={`Who is eating on ${longDayLabel(day.serviceDate)}`}
+        className="overflow-hidden rounded-lg border border-border bg-surface-raised outline-none"
+        onTouchStart={(e) => {
+          const t = e.touches[0];
+          // One finger, on the list itself: a pinch is a zoom, and React
+          // bubbles touches out of a portalled tooltip into this handler too.
+          const own = e.currentTarget.contains(e.target as Node);
+          swipeFrom.current = t && own && e.touches.length === 1 ? { x: t.clientX, y: t.clientY } : null;
+        }}
+        onTouchCancel={() => {
+          swipeFrom.current = null;
+        }}
+        onTouchEnd={(e) => {
+          const from = swipeFrom.current;
+          const t = e.changedTouches[0];
+          swipeFrom.current = null;
+          if (!from || !t) return;
+          const dx = t.clientX - from.x;
+          // Mostly sideways and deliberate, so a vertical scroll never pages.
+          if (Math.abs(dx) < 60 || Math.abs(t.clientY - from.y) > Math.abs(dx) / 2) return;
+          step(day, dx < 0 ? 1 : -1);
+        }}
+      >
+        <div className="flex items-baseline justify-between gap-3 border-b border-border px-3 py-2 text-xs font-semibold text-muted">
+          <span>
+            {columnLabel(day.serviceDate).dow} {columnLabel(day.serviceDate).dom}
+            {tags.map((t) => (
+              <span key={t} className="font-medium">
+                {" \u00B7 "}
+                {t}
+              </span>
+            ))}
+          </span>
+          <span className="tabular">{totals.get(day.serviceDate) ?? 0} eating</span>
+        </div>
+        <ul>
+          {board.members.map((member) => (
+            <li
+              key={member.profileId}
+              className="grid grid-cols-[minmax(0,5fr)_minmax(0,6fr)] items-start gap-3 border-b border-border px-3 py-1.5 last:border-b-0"
+            >
+              <span className="py-2.5 text-sm leading-5 font-medium wrap-break-word">
+                {member.name}
+                {member.isMe && <span className="text-muted"> (you)</span>}
+              </span>
+              <div className="text-center">{renderCell(member, day, true)}</div>
+            </li>
+          ))}
+        </ul>
+      </section>
+    );
+  };
+
+  // One cell, drawn the same in the grid and in the phone's day list. `wide`
+  // is the list, where a cell has room to lay its controls side by side.
+  const renderCell = (member: BoardMember, day: BoardDay, wide = false) => {
+    const key = cellKey(member.profileId, day.serviceDate);
+    const cell = board.cells.get(key) ?? null;
+    const live = cell?.status === "placed" ? cell : null;
+    const offer = live ? transfers?.live.get(live.orderId) ?? null : null;
+    const incoming = live ? incomingByOrder.get(live.orderId) ?? null : null;
+    const orderReason = cellReason({
+      day,
+      now,
+      timeZone: org.timezone,
+    });
+    const over = lunchIsOver({ day, org, now });
+    const planned = member.isMe
+      ? planState({
+          day,
+          today,
+          hasOrderRow: cell !== null,
+          weekdays: board.weekdays,
+          exception: board.exceptions.get(day.serviceDate) ?? null,
+        })
+      : null;
+
+    return (
+      incoming !== null ? (
+        <IncomingOffer
+          wide={wide}
+          offer={incoming}
+          reason={
+            over
+              ? `Lunch on ${formatDay(day.serviceDate)} is over, so this offer can no longer be answered`
+              : null
+          }
+          pending={busy}
+          onDecide={(status) => void enqueue(() => decide.run({ id: incoming.id, status }))}
+        />
+      ) : member.isMe ? (
+        <MyCell
+          wide={wide}
+          day={day}
+          cell={live}
+          received={receivedByDate.get(day.serviceDate) ?? null}
+          projected={board.projected.has(day.serviceDate)}
+          plan={planned}
+          offeredTo={offer?.toName ?? null}
+          // A meal is always worth opening, to read the note or
+          // take an offer back, whatever the ordering window says.
+          reason={live !== null || planned !== null ? null : orderReason}
+          pending={busy}
+          onOpen={() =>
+            setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
+          }
+          onPlan={() => {
+            if (planned !== null) {
+              setException(day.serviceDate, planToggle(planned), true);
+            }
+          }}
+          onOrder={() => {
+            const dish = pickDish(day.dishes);
+            if (dish === null) return;
+            order(day, member, cell, dish, { randomised: day.dishes.length > 1 });
+          }}
+        />
+      ) : (
+        // Empty or not: an empty cell is where "I am out, you
+        // have mine" usually lands, so it can never be inert.
+        <TheirCell
+          wide={wide}
+          member={member}
+          day={day}
+          cell={live}
+          offeredTo={offer?.toName ?? null}
+          toMe={offer?.toProfileId === me.profileId}
+          onTap={() =>
+            setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
+          }
+        />
+      )
+    );
+  };
+
   return (
     <section ref={gridRef} className="flex flex-col gap-4">
       {nav}
@@ -597,6 +801,17 @@ export function BoardScreen({ me, org }: ScreenProps) {
           The alternative was to hide colleagues behind a button, which costs
           345px of the screen's stated purpose to relocate a 242px panel, and
           makes the board's own hero depend on a setting. */}
+      {narrow && panelDay && (
+        <DayStrip
+          days={days}
+          today={today}
+          selected={panelDay.serviceDate}
+          mine={(d) => myMark(d)}
+          tag={(d) => columnTag({ day: d, org, now })}
+          onSelect={setPanelDate}
+        />
+      )}
+
       {days.every((d) => d.menuId === null) ? (
         <EmptyState heading="No menus this week">
           An admin pastes the caterer's message on the Menu screen and publishes it, and these
@@ -613,165 +828,122 @@ export function BoardScreen({ me, org }: ScreenProps) {
         )
       )}
 
-
-      <Table containerClassName="bg-surface-raised">
-        <TableHeader>
-          <TableRow>
-            <TableHead className="sticky left-0 z-3 bg-surface-raised">Who</TableHead>
-            {days.map((d) => {
-              const { dow, dom } = columnLabel(d.serviceDate);
-              const isToday = d.serviceDate === today;
-              const tag = columnTag({ day: d, org, now });
-              // Today and the day's state are different axes and both can hold
-              // at once, which by mid-afternoon they usually do.
-              const tags = [isToday ? "Today" : null, tag].filter((t) => t !== null);
-              return (
-                <TableHead
-                  key={d.serviceDate}
-                  scope="col"
-                  data-service-date={d.serviceDate}
-                  aria-current={isToday ? "date" : undefined}
-                  className={cn(
-                    "min-w-28 p-0 text-center",
-                    // Which column the menu below is describing. A neutral rule
-                    // rather than a tint: the accent is spoken for by ordered.
-                    panelDay?.serviceDate === d.serviceDate && "border-b-2 border-b-border-strong",
-                  )}
-                >
-                  {/* Available on every day, including one with no menu: the
-                      panel then says so, which teaches more than a refusal.
-
-                      `h-full` and a line that is always rendered: with neither,
-                      only the column carrying a third line filled its cell, so
-                      hovering the head moved the highlight around by a few
-                      pixels from one day to the next. */}
-                  <Button
-                    variant="ghost"
-                    aria-pressed={panelDay?.serviceDate === d.serviceDate}
-                    aria-label={`${dow} ${dom}${tags
-                      .map((t) => `, ${t.toLowerCase()}`)
-                      .join("")}: show this day's menu`}
-                    className="h-full w-full flex-col gap-0 rounded-none px-3 py-2 text-muted"
-                    onClick={() => setPanelDate(d.serviceDate)}
-                  >
-                    <span className="block text-xs font-semibold">{dow}</span>
-                    <span className="block text-base font-semibold text-text tabular">{dom}</span>
-                    {/* A word, not a colour. One grey stood for "no menu",
-                        "closed" and "cancelled" at once, and read as none of
-                        them. The non-breaking space keeps every head the same
-                        height when a day has nothing to say. */}
-                    <span className="block text-xs font-medium">
-                      {tags.length === 0 ? "\u00A0" : tags.join(" · ")}
-                    </span>
-                  </Button>
-                </TableHead>
-              );
-            })}
-          </TableRow>
-        </TableHeader>
-
-        <TableBody>
-          {board.members.map((member) => (
-            <TableRow key={member.profileId}>
-              <TableCell className="sticky left-0 z-2 max-w-40 truncate bg-surface-raised py-3 align-top font-medium">
-                {member.name}
-                {member.isMe && <span className="text-muted"> (you)</span>}
-              </TableCell>
-
-              {days.map((day) => {
-                const key = cellKey(member.profileId, day.serviceDate);
-                const cell = board.cells.get(key) ?? null;
-                const live = cell?.status === "placed" ? cell : null;
-                const offer = live ? transfers?.live.get(live.orderId) ?? null : null;
-                const incoming = live ? incomingByOrder.get(live.orderId) ?? null : null;
-                const orderReason = cellReason({
-                  day,
-                  now,
-                  timeZone: org.timezone,
-                });
-                const over = lunchIsOver({ day, org, now });
-                const planned = member.isMe
-                  ? planState({
-                      day,
-                      today,
-                      hasOrderRow: cell !== null,
-                      weekdays: board.weekdays,
-                      exception: board.exceptions.get(day.serviceDate) ?? null,
-                    })
-                  : null;
-
+      {/* Capped at the screen, so the heads can stick. A container that
+          scrolls sideways also becomes the one `sticky top-0` is measured
+          against, and an uncapped one never scrolls vertically, so the heads
+          rode off the top with the page and the columns lost their dates.
+          Below 768px the cap leaves room for the header and the tab bar. */}
+      {narrow && panelDay ? (
+        dayList(panelDay)
+      ) : (
+        <Table containerClassName="max-h-[calc(100dvh-8rem)] bg-surface-raised md:max-h-[calc(100dvh-4rem)]">
+          <TableHeader>
+            <TableRow>
+              <TableHead className={cn("sticky left-0 z-3 bg-surface-raised", WHO_WIDTH)}>Who</TableHead>
+              {days.map((d) => {
+                const { dow, dom } = columnLabel(d.serviceDate);
+                const isToday = d.serviceDate === today;
+                const tag = columnTag({ day: d, org, now });
+                // Today and the day's state are different axes and both can hold
+                // at once, which by mid-afternoon they usually do.
+                const tags = [isToday ? "Today" : null, tag].filter((t) => t !== null);
                 return (
-                  <TableCell key={day.serviceDate} className="p-1 text-center align-top">
-                    {incoming !== null ? (
-                      <IncomingOffer
-                        offer={incoming}
-                        reason={
-                          over
-                            ? `Lunch on ${formatDay(day.serviceDate)} is over, so this offer can no longer be answered`
-                            : null
-                        }
-                        pending={busy}
-                        onDecide={(status) => void enqueue(() => decide.run({ id: incoming.id, status }))}
-                      />
-                    ) : member.isMe ? (
-                      <MyCell
-                        day={day}
-                        cell={live}
-                        received={receivedByDate.get(day.serviceDate) ?? null}
-                        projected={board.projected.has(day.serviceDate)}
-                        plan={planned}
-                        offeredTo={offer?.toName ?? null}
-                        // A meal is always worth opening, to read the note or
-                        // take an offer back, whatever the ordering window says.
-                        reason={live !== null || planned !== null ? null : orderReason}
-                        pending={busy}
-                        onOpen={() =>
-                          setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
-                        }
-                        onPlan={() => {
-                          if (planned !== null) {
-                            setException(day.serviceDate, planToggle(planned), true);
-                          }
-                        }}
-                        onOrder={() => {
-                          const dish = pickDish(day.dishes);
-                          if (dish === null) return;
-                          order(day, member, cell, dish, { randomised: day.dishes.length > 1 });
-                        }}
-                      />
-                    ) : (
-                      // Empty or not: an empty cell is where "I am out, you
-                      // have mine" usually lands, so it can never be inert.
-                      <TheirCell
-                        member={member}
-                        day={day}
-                        cell={live}
-                        offeredTo={offer?.toName ?? null}
-                        onTap={() =>
-                          setFocus({ profileId: member.profileId, serviceDate: day.serviceDate })
-                        }
-                      />
+                  <TableHead
+                    key={d.serviceDate}
+                    scope="col"
+                    data-service-date={d.serviceDate}
+                    aria-current={isToday ? "date" : undefined}
+                    className={cn(
+                      // 76px below 1024px, so a tablet shows most of the week.
+                      // The floor is what holds it: every cell wraps, so
+                      // without one a column shrinks to a single letter.
+                      "min-w-19 p-0 text-center lg:min-w-28",
+                      // Which column the menu below is describing. A neutral rule
+                      // rather than a tint: the accent is spoken for by ordered.
+                      panelDay?.serviceDate === d.serviceDate && "border-b-2 border-b-border-strong",
                     )}
-                  </TableCell>
+                  >
+                    {/* Available on every day, including one with no menu: the
+                        panel then says so, which teaches more than a refusal.
+
+                        `h-full` and a line that is always rendered: with neither,
+                        only the column carrying a third line filled its cell, so
+                        hovering the head moved the highlight around by a few
+                        pixels from one day to the next. */}
+                    <Button
+                      variant="ghost"
+                      aria-pressed={panelDay?.serviceDate === d.serviceDate}
+                      aria-label={`${dow} ${dom}${tags
+                        .map((t) => `, ${t.toLowerCase()}`)
+                        .join("")}: show this day's menu`}
+                      className="h-full w-full flex-col gap-0 rounded-none px-1 py-2 whitespace-normal text-muted lg:px-3"
+                      onClick={() => setPanelDate(d.serviceDate)}
+                    >
+                      {/* One line below 1024px, so the two tag words below can
+                          have a line each without the head growing taller. */}
+                      <span className="flex items-baseline gap-1 lg:flex-col lg:items-center lg:gap-0">
+                        <span className="block text-xs font-semibold">{dow}</span>
+                        <span className="block text-base font-semibold text-text tabular">{dom}</span>
+                      </span>
+                      {/* A word, not a colour. One grey stood for "no menu",
+                          "closed" and "cancelled" at once, and read as none of
+                          them. The non-breaking space keeps every head the same
+                          height when a day has nothing to say. Below 1024px
+                          each word takes a line: `Today · Cooking` on one line was
+                          what set the column's width. */}
+                      <span className="block min-h-8 text-xs font-medium lg:min-h-0 lg:whitespace-nowrap">
+                        {tags.length === 0
+                          ? "\u00A0"
+                          : tags.map((t, i) => (
+                              <span key={t} className="block lg:inline">
+                                {i > 0 && <span className="hidden lg:inline"> · </span>}
+                                {t}
+                              </span>
+                            ))}
+                      </span>
+                    </Button>
+                  </TableHead>
                 );
               })}
             </TableRow>
-          ))}
-        </TableBody>
+          </TableHeader>
 
-        <TableFooter>
-          <TableRow>
-            <TableCell className="sticky left-0 z-2 bg-surface-raised font-medium">
-              Total
-            </TableCell>
-            {days.map((d) => (
-              <TableCell key={d.serviceDate} className="text-center font-medium tabular">
-                {totals.get(d.serviceDate) ?? 0}
-              </TableCell>
+          <TableBody>
+            {board.members.map((member) => (
+              <TableRow key={member.profileId}>
+                <TableCell
+                  className={cn(
+                    "sticky left-0 z-2 bg-surface-raised py-3 align-top font-medium wrap-break-word",
+                    WHO_WIDTH,
+                  )}
+                >
+                  {member.name}
+                  {member.isMe && <span className="text-muted"> (you)</span>}
+                </TableCell>
+
+                {days.map((day) => (
+                  <TableCell key={day.serviceDate} className="p-1 text-center align-top">
+                    {renderCell(member, day)}
+                  </TableCell>
+                ))}
+              </TableRow>
             ))}
-          </TableRow>
-        </TableFooter>
-      </Table>
+          </TableBody>
+
+          <TableFooter>
+            <TableRow>
+              <TableCell className={cn("sticky left-0 z-2 bg-surface-raised font-medium", WHO_WIDTH)}>
+                Total
+              </TableCell>
+              {days.map((d) => (
+                <TableCell key={d.serviceDate} className="text-center font-medium tabular">
+                  {totals.get(d.serviceDate) ?? 0}
+                </TableCell>
+              ))}
+            </TableRow>
+          </TableFooter>
+        </Table>
+      )}
 
       {focused?.member && focused.day && focused.member.isMe && (
         <DishDialog
@@ -861,6 +1033,11 @@ export function BoardScreen({ me, org }: ScreenProps) {
               ? transfers?.live.get(focusedLive.orderId) ?? null
               : null
           }
+          passedToMe={
+            focusedLive !== null &&
+            focusedLive.transferredToName !== null &&
+            transfers?.live.get(focusedLive.orderId)?.toProfileId === me.profileId
+          }
           mayWithdraw={
             focusedLive
               ? transfers?.live.get(focusedLive.orderId)?.fromProfileId === me.profileId
@@ -887,12 +1064,136 @@ export function BoardScreen({ me, org }: ScreenProps) {
 
 /* ------------------------------------------------------------------ pieces */
 
+// Narrower than Tailwind's `sm`, where the grid cannot show a day beside the
+// names at a width a dish name can be read in. Off where there is no
+// matchMedia, which keeps the grid under test.
+const NARROW = "(max-width: 39.99rem)";
+function useNarrow(): boolean {
+  const [narrow, setNarrow] = useState(
+    () => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NARROW).matches,
+  );
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(NARROW);
+    const on = () => setNarrow(query.matches);
+    on();
+    query.addEventListener("change", on);
+    return () => query.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
+type StripMark = "ordered" | "predicted" | "skipped" | "none";
+
+/**
+ * The week, as the day picker for the phone. Each day carries my own state in
+ * the same language as my row on the grid: the accent fill for an order, a
+ * dashed edge for a prediction, a strike for a skip.
+ *
+ * Only the selected day shows its stage word. Seven of them do not fit at 320,
+ * and the chip that has one is the chip whose list is on screen. `Today` takes
+ * the weekday's place, so it never competes with the stage for the same line.
+ */
+function DayStrip({
+  days,
+  today,
+  selected,
+  mine,
+  tag,
+  onSelect,
+}: {
+  days: BoardDay[];
+  today: string;
+  selected: string;
+  mine: (day: BoardDay) => StripMark;
+  tag: (day: BoardDay) => string | null;
+  onSelect: (serviceDate: string) => void;
+}) {
+  const strip = useRef<HTMLDivElement>(null);
+  // Only a seven-day week at 320 overflows. Scrolled by hand rather than with
+  // scrollIntoView, which would also scroll the page back up to the strip.
+  useEffect(() => {
+    const box = strip.current;
+    const chip = box?.querySelector<HTMLElement>(`[data-strip-date="${selected}"]`);
+    if (!box || !chip || box.scrollWidth <= box.clientWidth) return;
+    const b = box.getBoundingClientRect();
+    const c = chip.getBoundingClientRect();
+    if (c.left < b.left) box.scrollLeft -= b.left - c.left;
+    else if (c.right > b.right) box.scrollLeft += c.right - b.right;
+  }, [selected]);
+
+  return (
+    // The padding is room for the focus outline, which a scrolling box clips.
+    <div ref={strip} role="group" aria-label="Day" className="-m-1 flex gap-0.5 overflow-x-auto p-1">
+      {days.map((d) => {
+        const { dow, dom } = columnLabel(d.serviceDate);
+        const mark = mine(d);
+        const isToday = d.serviceDate === today;
+        const on = d.serviceDate === selected;
+        const stage = tag(d);
+        return (
+          <Button
+            key={d.serviceDate}
+            variant="ghost"
+            data-strip-date={d.serviceDate}
+            aria-pressed={on}
+            aria-current={isToday ? "date" : undefined}
+            aria-label={[`${dow} ${dom}`, isToday ? "today" : null, stage?.toLowerCase(), STRIP_SAID[mark]]
+              .filter((x) => x != null)
+              .join(", ")}
+            className={cn(
+              "h-auto min-w-11 flex-1 flex-col gap-0 rounded-md border px-0 py-1.5 text-muted",
+              STRIP_FILL[mark],
+              on && "border-2 border-border-strong text-text",
+              // Tapping the picked day again does nothing, so it does not
+              // answer a hover either, which a mouse left on it after a click
+              // read as a second state.
+              on && (mark === "ordered" ? "hover:bg-accent-subtle" : "hover:bg-transparent"),
+              // As wide as its stage word and never under 44px, which the
+              // date's own floor below guarantees.
+              on && stage !== null && "min-w-fit",
+            )}
+            onClick={() => onSelect(d.serviceDate)}
+          >
+            <span className={cn("block text-xs font-semibold", isToday && "text-text")}>
+              {isToday ? "Today" : dow}
+            </span>
+            <span
+              className={cn(
+                "block min-w-10 text-base font-semibold text-text tabular",
+                mark === "skipped" && "line-through",
+              )}
+            >
+              {dom}
+            </span>
+            <span className="block text-xs font-medium">{on && stage !== null ? stage : "\u00A0"}</span>
+          </Button>
+        );
+      })}
+    </div>
+  );
+}
+
+const STRIP_FILL: Record<StripMark, string> = {
+  ordered: "border-transparent bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70",
+  predicted: "border-dashed border-border-strong",
+  skipped: "border-dashed border-border text-subtle",
+  none: "border-border",
+};
+
+const STRIP_SAID: Record<StripMark, string> = {
+  ordered: "you are eating",
+  predicted: "from your standing order",
+  skipped: "skipped",
+  none: "not eating",
+};
+
 /**
  * What is on offer that day, without a tap.
  *
  * The grid answers who is eating and cannot also carry five days of dish
- * lists, so the menu lives under it, in the room the desktop board was
- * wasting. The column heads switch which day it shows. With this here, a cell
+ * lists, so the menu lives beside it, above the grid. The column heads, or the
+ * strip on a phone, switch which day it shows. With this here, a cell
  * can go back to being nothing but an action.
  */
 function MenuPanel({
@@ -971,6 +1272,9 @@ function MenuPanel({
 // column to the name's length.
 const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
 
+// Names wrap rather than truncate, inside a cap that keeps the days in view.
+const WHO_WIDTH = "max-w-40";
+
 // An empty cell you can use has to outweigh one you cannot. Action draws
 // unavailable as a dashed border-strong edge, which is right for a button
 // standing on its own and wrong in a grid: against cells that are only a
@@ -999,6 +1303,7 @@ function MyCell({
   onOpen,
   onPlan,
   onOrder,
+  wide = false,
 }: {
   day: BoardDay;
   cell: BoardCell | null;
@@ -1016,6 +1321,8 @@ function MyCell({
   onPlan: () => void;
   /** Order a dish from this day's menu, chosen at random. */
   onOrder: () => void;
+  /** Laid out for the phone's day list, where the cell is a row's width. */
+  wide?: boolean;
 }) {
   const label = cell
     ? cell.dishName ?? "Dish to follow"
@@ -1036,7 +1343,10 @@ function MyCell({
         reason={`${received.fromName} gave you this lunch, so there is nothing to order`}
         variant="ghost"
         aria-label={`${formatDay(day.serviceDate)}: ${received.dishName ?? "eating"}, from ${received.fromName}`}
-        className="h-auto w-full min-w-24 cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg"
+        className={cn(
+          "h-auto min-h-10 w-full cursor-default flex-col items-center gap-0.5 border-solid border-transparent bg-accent-subtle px-2 py-2 text-xs font-medium whitespace-normal text-accent-subtle-fg hover:bg-accent-subtle hover:text-accent-subtle-fg lg:min-w-24",
+          wide && "min-h-11",
+        )}
       >
         <span className={CELL_TEXT}>{received.dishName ?? "Lunch"}</span>
         <span className={cn(CELL_TEXT, "text-xs font-normal")}>
@@ -1056,7 +1366,8 @@ function MyCell({
         title={p.verb}
         aria-label={`${formatDay(day.serviceDate)}: ${p.state}. ${p.verb}`}
         className={cn(
-          "h-auto min-h-9 w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
+          "h-auto min-h-10 w-full flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal has-[>svg]:px-2 lg:min-h-9 lg:min-w-24",
+          wide && "min-h-11",
           p.className,
         )}
         onClick={onPlan}
@@ -1079,14 +1390,19 @@ function MyCell({
     // smudge next to it. A phone has no hover, so each carries its own title
     // for the pointer and its own label for everything else.
     return (
-      <div className="flex w-full min-w-24 items-center gap-1">
+      <div
+        className={cn(
+          "flex w-full gap-1",
+          wide ? "items-center" : "flex-col items-stretch lg:min-w-24 lg:flex-row lg:items-center",
+        )}
+      >
         <Action
           reason={null}
           pending={pending}
           variant="ghost"
           title="Choose a dish"
           aria-label={`${described}. Choose a dish`}
-          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          className={cn(wide ? SPLIT_HALF_WIDE : SPLIT_HALF, OPEN_CELL)}
           onClick={onOpen}
         >
           <PlusIcon className="size-4" aria-hidden="true" />
@@ -1097,7 +1413,7 @@ function MyCell({
           variant="ghost"
           title="Order a random dish"
           aria-label={`${described}. Order a dish at random`}
-          className={cn("h-9 flex-1 px-0", OPEN_CELL)}
+          className={cn(wide ? SPLIT_HALF_WIDE : SPLIT_HALF, OPEN_CELL)}
           onClick={onOrder}
         >
           <Dice5Icon className="size-5" aria-hidden="true" />
@@ -1114,7 +1430,8 @@ function MyCell({
       title={orders ? "Order lunch" : undefined}
       aria-label={orders ? `${described}. Order lunch` : described}
       className={cn(
-        "h-auto w-full min-w-24 flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal",
+        "h-auto min-h-10 w-full flex-col items-center gap-0.5 px-2 py-2 text-xs font-medium whitespace-normal has-[>svg]:px-2 lg:min-h-0 lg:min-w-24",
+        wide && "min-h-11",
         cell
           ? "bg-accent-subtle text-accent-subtle-fg hover:bg-accent-subtle/70"
           : reason === null
@@ -1146,6 +1463,12 @@ function MyCell({
     </Action>
   );
 }
+
+// Stacked below 1024px, where side by side would make each half 32px wide.
+// `has-[>svg]:px-0` because Button's own `has-[>svg]:px-3.5` is a different
+// variant from `px-0`, so it survived the merge and held the cell at 108px.
+const SPLIT_HALF = "h-10 flex-none px-0 has-[>svg]:px-0 lg:h-9 lg:flex-1";
+const SPLIT_HALF_WIDE = "h-11 flex-1 px-0 has-[>svg]:px-0";
 
 /**
  * My day ahead of its menu. Dashed, because each of these is a prediction
@@ -1202,18 +1525,25 @@ function TheirCell({
   day,
   cell,
   offeredTo,
+  toMe,
   onTap,
+  wide = false,
 }: {
   member: BoardMember;
   day: BoardDay;
   cell: BoardCell | null;
   offeredTo: string | null;
+  /** The meal is handed, or on offer, to the reader. */
+  toMe: boolean;
   onTap: () => void;
+  /** Laid out for the phone's day list, where the cell is a row's width. */
+  wide?: boolean;
 }) {
   const mark = cellMark(cell, false);
   // An offer that has not been answered yet sits on a meal they still hold.
-  const pendingWith = mark !== "passed" ? offeredTo : null;
-  const gone = cell?.transferredToName ?? null;
+  // Your own name on somebody else's cell reads as a stranger's.
+  const pendingWith = mark !== "passed" && offeredTo !== null ? (toMe ? "you" : offeredTo) : null;
+  const gone = cell?.transferredToName != null && toMe ? "you" : cell?.transferredToName ?? null;
   const dish = day.dishes.find((d) => d.id === cell?.itemId)?.name ?? null;
   const onlyDish = day.dishes.length === 1;
   // The dish is always spoken, even where a check mark is all that is drawn:
@@ -1241,6 +1571,7 @@ function TheirCell({
         // every filled chip sat 2.15px below the empty targets in the same
         // row, which is what made the grid read as jittery across a week.
         "flex h-auto min-h-9 w-full min-w-16 rounded-md px-1 py-1.5 text-xs font-medium whitespace-normal",
+        wide && "min-h-11 px-2",
         MARK_FILL[mark],
         pendingWith !== null && "border border-dashed border-accent",
       )}
@@ -1302,24 +1633,34 @@ function IncomingOffer({
   reason,
   pending,
   onDecide,
+  wide = false,
 }: {
   offer: TransferRow;
   /** Why neither answer can be given any more, once the day is over. */
   reason: string | null;
   pending: boolean;
   onDecide: (status: "accepted" | "declined") => void;
+  /** Laid out for the phone's day list, where the cell is a row's width. */
+  wide?: boolean;
 }) {
   return (
-    <div className="mx-auto flex max-w-52 min-w-32 flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5">
+    <div
+      className={cn(
+        "flex flex-col items-stretch gap-1 rounded-md border border-accent bg-accent-subtle p-1.5",
+        wide ? "w-full" : "mx-auto max-w-52 lg:min-w-32",
+      )}
+    >
       <span className="text-xs text-accent-subtle-fg wrap-anywhere">
         {offer.fromName} offers you {offer.dishName ?? "their lunch"}
       </span>
-      <div className="flex gap-1">
+      {/* A grid in the list, because Button will not shrink and two of them
+          overflowed the cell at 320. */}
+      <div className={cn("gap-1", wide ? "grid grid-cols-2" : "flex flex-col lg:flex-row")}>
         <Action
           reason={reason}
           pending={pending}
           size="sm"
-          className="flex-1"
+          className={cn("px-2 lg:flex-1 lg:px-3", wide ? "h-11 min-w-0 px-1" : "flex-none")}
           onClick={() => onDecide("accepted")}
         >
           Accept
@@ -1329,7 +1670,7 @@ function IncomingOffer({
           pending={pending}
           size="sm"
           variant="outline"
-          className="flex-1"
+          className={cn("px-2 lg:flex-1 lg:px-3", wide ? "h-11 min-w-0 px-1" : "flex-none")}
           onClick={() => onDecide("declined")}
         >
           Decline
@@ -1339,15 +1680,35 @@ function IncomingOffer({
   );
 }
 
-/** Shaped like the grid, so nothing jumps when the data lands. */
-function BoardSkeleton() {
+/** Shaped like the layout it stands in for, so nothing jumps when the data lands. */
+function BoardSkeleton({ narrow, days }: { narrow: boolean; days: number }) {
+  if (narrow) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="flex gap-0.5">
+          {Array.from({ length: days }, (_, i) => (
+            <Skeleton key={i} className="h-17 flex-1" />
+          ))}
+        </div>
+        <Skeleton className="h-40 w-full" />
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface-raised p-3">
+          {Array.from({ length: 4 }, (_, row) => (
+            <div key={row} className="grid grid-cols-[minmax(0,5fr)_minmax(0,6fr)] items-center gap-3">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-11 w-full" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
   return (
     <Table containerClassName="bg-surface-raised">
       <TableHeader>
         <TableRow>
-          <TableHead className="w-40">Who</TableHead>
+          <TableHead className={WHO_WIDTH}>Who</TableHead>
           {Array.from({ length: 5 }, (_, i) => (
-            <TableHead key={i} className="min-w-28">
+            <TableHead key={i} className="min-w-19 lg:min-w-28">
               <Skeleton className="mx-auto h-8 w-10" />
             </TableHead>
           ))}
