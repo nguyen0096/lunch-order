@@ -139,6 +139,10 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   on it and `FOR NO KEY UPDATE` to change it, never `FOR UPDATE`. The hourly
   tick's plain `UPDATE` of due menus, in scan order, is the one known exception;
   see [Decisions](../decisions.md#platform).
+- **A browser writes no dish.** `menu_items` is written by `publish_menu` and
+  the corrections, each holding the menu before the dish, because a dish
+  change takes its menu from a row trigger and a delete has locked its row
+  before that trigger runs (20261018100100).
 - **A dish choice replaces the dish line.** The line is deleted and a fresh
   `order_items` row written, never updated in place, and the member's own new
   order is `source = 'member'`.

@@ -328,6 +328,27 @@ insert into probe values ('X3 then pricing takes the week',
 insert into probe values ('X3 pricing commits', pg_temp.close('a'), 'ok');
 insert into probe values ('X3 then the record is made', pg_temp.finish('b'), 'ok');
 
+-- x2: TEO's choice of Pho holds the menu; a direct delete of Pho would lock
+-- the dish first and wait on the menu. A browser may not write dishes at all.
+select pg_temp.open('a', null);
+insert into probe values ('X2 TEO''s choice holds the menu',
+  pg_temp.run('a', format('select id::text from public.menus where id = %s for share',
+                          pg_temp.m('x2'))), 'ok');
+select pg_temp.run('a', 'set local role authenticated');
+select pg_temp.run('a', format(
+  $q$set local request.jwt.claims = '{"sub":"%s","role":"authenticated"}'$q$, pg_temp.c('teo')));
+select pg_temp.open('b', 'adm');
+insert into probe values ('X2 an admin deleting the dish directly is refused',
+  pg_temp.run('b', format('delete from public.menu_items where id = %s returning 1::text',
+                          pg_temp.dish('x2', 'Pho'))),
+  '42501 permission denied for table menu_items');
+select pg_temp.close('b', false);
+insert into probe values ('X2 TEO chooses Pho',
+  pg_temp.run('a', format('select order_id::text from public.set_my_order(%s, %s)',
+                          pg_temp.m('x2'), pg_temp.dish('x2', 'Pho'))), 'ok');
+insert into probe values ('X2 the choice commits', pg_temp.close('a'), 'ok');
+insert into probe values ('X2 TEO has Pho', pg_temp.order_of('x2', 'teo'), 'standing placed Pho@50000');
+
 --------------------------------------------------------------------- verdict
 
 select label, got, want, case when got is not distinct from want then 'PASS' else 'FAIL' end as verdict
