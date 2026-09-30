@@ -4,7 +4,7 @@ import { humanError } from "../src/web/api/core.js";
 // What the Menu screen reads about a dish's orders, and what it hears when
 // publishing is refused, with the Supabase client faked at its edge.
 const client = vi.hoisted(() => ({
-  from: vi.fn(), rpc: vi.fn(), filters: [] as string[],
+  from: vi.fn(), rpc: vi.fn(), filters: [] as string[], selects: [] as string[],
 }));
 
 vi.mock("@supabase/supabase-js", async (importOriginal) => {
@@ -15,7 +15,11 @@ vi.mock("@supabase/supabase-js", async (importOriginal) => {
 /** A query builder that records its filters and resolves to `data`. */
 function query(data: unknown) {
   const q: Record<string, unknown> = {};
-  for (const step of ["select", "in", "order"]) q[step] = () => q;
+  for (const step of ["in", "order"]) q[step] = () => q;
+  q.select = (cols: string) => {
+    client.selects.push(cols);
+    return q;
+  };
   q.eq = (col: string, val: unknown) => {
     client.filters.push(`${col}=${String(val)}`);
     return q;
@@ -27,34 +31,35 @@ function query(data: unknown) {
 beforeEach(() => {
   vi.clearAllMocks();
   client.filters = [];
+  client.selects = [];
 });
 
 describe("fetchDishTakers", () => {
-  it("holds every dish with a line somebody wrote, and names only placed orders", async () => {
+  it("holds every dish with a line on it, names only placed orders, and keeps the system's apart", async () => {
     client.from.mockImplementation((table: string) =>
       table === "order_items"
         ? query([
-            { menu_item_id: 101, profile_id: "teo", orders: { status: "placed" } },
-            { menu_item_id: 101, profile_id: "an", orders: { status: "cancelled" } },
-            { menu_item_id: 102, profile_id: "quy", orders: { status: "cancelled" } },
+            { menu_item_id: 101, profile_id: "teo", auto_assigned: false, orders: { status: "placed" } },
+            { menu_item_id: 101, profile_id: "an", auto_assigned: false, orders: { status: "cancelled" } },
+            // Every order on 102 was cancelled: nobody to name, still held.
+            { menu_item_id: 102, profile_id: "quy", auto_assigned: false, orders: { status: "cancelled" } },
+            // Written by the system on a one-dish menu: nobody chose it.
+            { menu_item_id: 103, profile_id: "vy", auto_assigned: true, orders: { status: "placed" } },
           ])
-        : query([{ profile_id: "teo", display_name: "Tèo" }]),
+        : query([
+            { profile_id: "teo", display_name: "Tèo" },
+            { profile_id: "vy", display_name: "Vy" },
+          ]),
     );
 
-    const takers = await fetchDishTakers(5);
+    const { chosen, system } = await fetchDishTakers(5);
 
-    expect(takers.get(101)).toEqual(["Tèo"]);
-    // Ordered and cancelled: nobody to ring, but the line is still on the record.
-    expect(takers.get(102)).toEqual([]);
-    expect(client.filters).toContain("auto_assigned=false");
-    expect(client.filters.some((f) => f.startsWith("orders.status"))).toBe(false);
-  });
-
-  it("holds a dish even when every order on it was cancelled", async () => {
-    client.from.mockImplementation(() =>
-      query([{ menu_item_id: 102, profile_id: "quy", orders: { status: "cancelled" } }]),
-    );
-    expect(await fetchDishTakers(5)).toEqual(new Map([[102, []]]));
+    expect(chosen).toEqual(new Map([[101, ["Tèo"]], [102, []]]));
+    expect(system).toEqual(new Set([103]));
+    // Neither kind of line may be filtered out in the query: whether the
+    // system's hold depends on the day's stage, which only the screen knows.
+    expect(client.filters).toEqual(["menu_id=5"]);
+    expect(client.selects.join(" ")).toMatch(/auto_assigned/);
   });
 });
 

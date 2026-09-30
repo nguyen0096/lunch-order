@@ -90,12 +90,17 @@ describe("the bot's read of a menu", () => {
 });
 
 // A line the system wrote on a one-dish menu is nobody's choice: the Menu
-// screen must not say "Ordered by" for it, nor refuse to remove its dish.
+// screen must not say "Ordered by" for it. Whether it holds its dish depends
+// on the day's stage, so it is read, and kept apart from the choices.
 describe("the Menu screen's count of who chose a dish", () => {
-  it("fetchDishTakers reads only lines somebody wrote", async () => {
-    client.from.mockImplementation(() => query([]));
-    await fetchDishTakers(5);
-    expect(client.filters).toContain("auto_assigned=false");
+  it("fetchDishTakers keeps the system's lines out of who chose", async () => {
+    client.from.mockImplementation(() =>
+      query([{ menu_item_id: 11, profile_id: "vy", auto_assigned: true, orders: { status: "placed" } }]),
+    );
+    const { chosen, system } = await fetchDishTakers(5);
+    expect(chosen.size).toBe(0);
+    expect(system).toEqual(new Set([11]));
+    expect(client.selects.join(" ")).toMatch(/auto_assigned/);
   });
 
   it("the publish impact counts only lines somebody wrote as chosen", async () => {

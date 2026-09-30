@@ -1,6 +1,6 @@
 import { Trash2Icon } from "lucide-react";
 import { Action, Badge, Button, cn } from "@/ui";
-import type { DraftDish } from "../../api.js";
+import type { DishTakers, DraftDish } from "../../api.js";
 import type { ItemWarning, ParsedItem } from "../../../shared/menuParser.js";
 import { dishName } from "../../../shared/dishName.js";
 import {
@@ -354,9 +354,9 @@ export function changeSummary(c: { updated: number; added: number; removed: numb
  * saved yet: a dish being typed has no id and therefore no orders, which is
  * not the same fact as a saved dish nobody wanted.
  */
-function takerNote(id: number | null, takers: Map<number, string[]>): string | null {
+function takerNote(id: number | null, holds: DishTakers): string | null {
   if (id === null) return null;
-  const names = takers.get(id);
+  const names = holds.chosen.get(id);
   if (names === undefined || names.length === 0) return null;
   if (names.length <= 3) return `Ordered by ${listNames(names)}`;
   return `Ordered by ${listNames(names.slice(0, 3))} and ${names.length - 3} more`;
@@ -371,16 +371,24 @@ function listNames(names: string[]): string {
 /**
  * Null when the dish can go; otherwise why the database will refuse it.
  *
- * A dish in `takers` with no names was chosen on orders since cancelled: the
+ * A dish in `chosen` with no names was chosen on orders since cancelled: the
  * lines stay on the record, and the foreign key refuses the delete just the
- * same.
+ * same. A dish in `system` is the one a one-dish menu gave somebody, which the
+ * caller puts there only once the day is past open, when the trigger no
+ * longer clears those lines.
  */
-function removeReason(id: number | null, takers: Map<number, string[]>): string | null {
-  if (id === null || !takers.has(id)) return null;
-  const note = takerNote(id, takers);
-  return note === null
-    ? "Was ordered and cancelled; it stays on the record, so removing it will be refused"
-    : `${note}. Removing a dish somebody chose will be refused`;
+function removeReason(id: number | null, holds: DishTakers): string | null {
+  if (id === null) return null;
+  if (holds.chosen.has(id)) {
+    const note = takerNote(id, holds);
+    return note === null
+      ? "Was ordered and cancelled; it stays on the record, so removing it will be refused"
+      : `${note}. Removing a dish somebody chose will be refused`;
+  }
+  if (holds.system.has(id)) {
+    return "Somebody is down for it as the day's only dish, and ordering has closed, so removing it will be refused";
+  }
+  return null;
 }
 
 /**
@@ -390,13 +398,17 @@ function removeReason(id: number | null, takers: Map<number, string[]>): string 
  */
 export function removedOrderedReason(
   removed: SavedDish[],
-  takers: Map<number, string[]>,
+  holds: DishTakers,
 ): string | null {
-  const held = removed.find((d) => takers.has(d.id));
+  const held = removed.find((d) => holds.chosen.has(d.id) || holds.system.has(d.id));
   if (held === undefined) return null;
-  return takerNote(held.id, takers) === null
-    ? `"${held.name}" was ordered and cancelled; it stays on the record, so it cannot be removed. Keep it, or mark its new row as the same dish`
-    : `"${held.name}" would be removed, and somebody chose it. Keep it, or mark its new row as the same dish`;
+  const then = "Keep it, or mark its new row as the same dish";
+  if (!holds.chosen.has(held.id)) {
+    return `"${held.name}" is down for somebody as the day's only dish, and ordering has closed, so it cannot be removed. ${then}`;
+  }
+  return takerNote(held.id, holds) === null
+    ? `"${held.name}" was ordered and cancelled; it stays on the record, so it cannot be removed. ${then}`
+    : `"${held.name}" would be removed, and somebody chose it. ${then}`;
 }
 
 /**
@@ -490,7 +502,7 @@ export function DishRows({
   saved,
   currency,
   readOnlyReason,
-  takers,
+  holds,
   onChange,
   onRemove,
 }: {
@@ -500,8 +512,8 @@ export function DishRows({
   currency: Currency;
   /** Null when the menu can be edited, otherwise the sentence saying why not. */
   readOnlyReason: string | null;
-  /** Who chose each dish, by `menu_items.id`. Empty until it loads. */
-  takers: Map<number, string[]>;
+  /** What holds each dish on the record, by `menu_items.id`. Empty until it loads. */
+  holds: DishTakers;
   onChange: (key: string, patch: Partial<DishRow>) => void;
   onRemove: (key: string) => void;
 }) {
@@ -517,8 +529,8 @@ export function DishRows({
             >
               <span className="flex flex-col gap-0.5">
                 <span className="font-medium">{row.name}</span>
-                {takerNote(row.id, takers) !== null && (
-                  <span className="text-xs text-muted">{takerNote(row.id, takers)}</span>
+                {takerNote(row.id, holds) !== null && (
+                  <span className="text-xs text-muted">{takerNote(row.id, holds)}</span>
                 )}
               </span>
               {/* Not `formatMoney(x ?? 0)`: on a frozen menu a zero would read
@@ -634,8 +646,8 @@ export function DishRows({
                     onPick={(id) => onChange(row.key, { id, typedMatch: false })}
                   />
                 )}
-                {takerNote(row.id, takers) !== null && (
-                  <p className="text-xs text-muted">{takerNote(row.id, takers)}</p>
+                {takerNote(row.id, holds) !== null && (
+                  <p className="text-xs text-muted">{takerNote(row.id, holds)}</p>
                 )}
               </div>
 
@@ -677,7 +689,7 @@ export function DishRows({
                   // The trigger refuses this anyway. Saying so here, with the
                   // names, turns a refusal somebody has to read twice into the
                   // list of people they now have to ring.
-                  reason={removeReason(row.id, takers)}
+                  reason={removeReason(row.id, holds)}
                   onClick={() => onRemove(row.key)}
                 >
                   <Trash2Icon />
@@ -759,12 +771,12 @@ function SameDishAs({
  */
 export function RemovedDishes({
   removed,
-  takers,
+  holds,
   currency,
   onKeep,
 }: {
   removed: SavedDish[];
-  takers: Map<number, string[]>;
+  holds: DishTakers;
   currency: Currency;
   onKeep: (dish: SavedDish) => void;
 }) {
@@ -784,7 +796,7 @@ export function RemovedDishes({
         className="divide-y divide-border rounded-lg border border-border bg-surface-raised"
       >
         {removed.map((dish) => {
-          const reason = removeReason(dish.id, takers);
+          const reason = removeReason(dish.id, holds);
           return (
             <li key={dish.id} className="flex items-start justify-between gap-3 px-3 py-2">
               <div className="flex min-w-0 flex-col gap-0.5">

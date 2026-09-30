@@ -153,6 +153,8 @@ function serve(
     menu?: EditableMenu | null;
     impact?: PublishImpact;
     takers?: Map<number, string[]>;
+    /** Dishes carrying a line the system wrote on a one-dish menu. */
+    system?: Set<number>;
     caterer?: CatererOrder;
     template?: string | null;
   } = {},
@@ -161,10 +163,15 @@ function serve(
   fetchMenuEditor.mockResolvedValue(over.menu === undefined ? null : over.menu);
   fetchMenuCalendar.mockResolvedValue(new Map());
   fetchPublishImpact.mockResolvedValue(over.impact ?? impact());
-  fetchDishTakers.mockResolvedValue(over.takers ?? new Map());
+  fetchDishTakers.mockResolvedValue(held(over.takers, over.system));
   fetchCatererOrder.mockResolvedValue(
     over.caterer ?? { serviceDate: DATE, lines: [], unchosen: 0 },
   );
+}
+
+/** `fetchDishTakers`' answer: who chose what, and what the system assigned. */
+function held(chosen = new Map<number, string[]>(), system = new Set<number>()) {
+  return { chosen, system };
 }
 
 function renderMenu() {
@@ -1148,7 +1155,7 @@ describe("Changing the menu's status", () => {
     fetchMenuEditor.mockResolvedValueOnce(first).mockResolvedValue(then);
     fetchMenuCalendar.mockResolvedValue(new Map());
     fetchPublishImpact.mockResolvedValue(impact(over));
-    fetchDishTakers.mockResolvedValue(new Map());
+    fetchDishTakers.mockResolvedValue(held());
     fetchCatererOrder.mockResolvedValue({ serviceDate: DATE, lines: [], unchosen: 0 });
     fetchCatererTemplate.mockResolvedValue(null);
   }
@@ -1874,7 +1881,9 @@ describe("Which saved dish each row is", () => {
     await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
     const reads = fetchDishTakers.mock.calls.length;
     // Nobody yet as the dialog opens; Tèo by the time the write lands.
-    fetchDishTakers.mockResolvedValueOnce(new Map()).mockResolvedValue(new Map([[102, ["Tèo"]]]));
+    fetchDishTakers
+      .mockResolvedValueOnce(held())
+      .mockResolvedValue(held(new Map([[102, ["Tèo"]]])));
 
     await user.click(publishButton());
     const dialog = await screen.findByRole("dialog");
@@ -1909,7 +1918,7 @@ describe("Which saved dish each row is", () => {
     expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
 
     // Tèo orders Bún bò while the admin is checking the list.
-    fetchDishTakers.mockResolvedValue(new Map([[102, ["Tèo"]]]));
+    fetchDishTakers.mockResolvedValue(held(new Map([[102, ["Tèo"]]])));
     await user.click(publishButton());
     const dialog = await screen.findByRole("dialog");
 
@@ -1987,6 +1996,84 @@ describe("Which saved dish each row is", () => {
     const third = screen.getByLabelText("Dish 3 name");
     const tag = document.getElementById(third.getAttribute("aria-describedby")!);
     expect(tag?.textContent).toBe("New dish, added when you publish");
+  });
+
+  // On a one-dish menu the system gives the dish to everybody eating without
+  // one. The trigger clears those lines with the dish while the day is open,
+  // and not after, when they hold it like anybody's choice.
+  describe("the one dish the system handed out", () => {
+    const oneDish = () => menu({ status: "published", items: [menu().items[0]!] });
+
+    it("goes with its dish while the day is open", async () => {
+      const user = fakeClockUser();
+      serve({ menu: oneDish(), system: new Set([101]) });
+      renderMenu();
+      await ready();
+
+      await reparse(user, "- Cơm tấm 45k");
+
+      const removed = within(removedList()!).getByRole("listitem");
+      expect(removed).toHaveTextContent("Cơm gà");
+      expect(removed).not.toHaveTextContent(/refused/);
+      expect(publishButton()).not.toHaveAttribute("aria-disabled", "true");
+    });
+
+    it("holds its dish once ordering has closed, and says why", async () => {
+      const user = fakeClockUser();
+      // Cutoff an hour ago, before the kitchen's day starts: stage `locked`
+      // with the menu still published, so the editor is open to changes.
+      serve({
+        menu: menu({
+          status: "published",
+          items: [menu().items[0]!],
+          orderCutoffAt: new Date(Date.now() - 3_600_000).toISOString(),
+        }),
+        system: new Set([101]),
+      });
+      renderMenu();
+      await ready();
+
+      // Not "Ordered by": nobody chose it.
+      expect(screen.queryByText(/Ordered by/)).not.toBeInTheDocument();
+      await reparse(user, "- Cơm tấm 45k");
+
+      expect(within(removedList()!).getByRole("listitem")).toHaveTextContent(
+        "Somebody is down for it as the day's only dish, and ordering has closed, so removing it will be refused.",
+      );
+      expect(publishButton()).toHaveAttribute("aria-disabled", "true");
+      expect(
+        screen.getAllByText(
+          '"Cơm gà" is down for somebody as the day\'s only dish, and ordering has closed, so it cannot be removed. Keep it, or mark its new row as the same dish',
+        ).length,
+      ).toBeGreaterThan(0);
+    });
+  });
+
+  it("lets only the newest read of the orders settle a dialog opened twice", async () => {
+    const user = fakeClockUser();
+    serve({ menu: menu({ status: "published" }) });
+    renderMenu();
+    await ready();
+    await reparse(user, "- Cơm gà 45k\n- Bún bò Huế 50k");
+
+    // The first opening's read hangs; the second's answers that Tèo chose Bún bò.
+    let answerFirst: (t: ReturnType<typeof held>) => void = () => {};
+    fetchDishTakers
+      .mockImplementationOnce(() => new Promise((resolve) => (answerFirst = resolve)))
+      .mockImplementationOnce(() => new Promise(() => {}));
+
+    await user.click(publishButton());
+    await user.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await user.click(publishButton());
+    const dialog = await screen.findByRole("dialog");
+
+    // The stale first read lands: it must neither end the check nor write.
+    await act(async () => answerFirst(held()));
+    const confirm = within(dialog).getByRole("button", { name: "Publish" });
+    expect(confirm).toHaveAttribute("aria-disabled", "true");
+    await user.click(confirm);
+    expect(publishMenu).not.toHaveBeenCalled();
   });
 
 });

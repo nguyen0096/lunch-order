@@ -10,6 +10,7 @@ import {
   humanError,
   publishMenu,
   DishInUseError,
+  type DishTakers,
   type EditableMenu,
   type PublishImpact,
 } from "../api.js";
@@ -140,8 +141,9 @@ export function MenuScreen({ me, org }: ScreenProps) {
 
   const [menu, setMenu] = useState<EditableMenu | null>(null);
   const [impact, setImpact] = useState<PublishImpact | null>(null);
-  // Who chose each dish, by menu_items.id. Empty when the day has no menu yet.
-  const [takers, setTakers] = useState<Map<number, string[]>>(() => new Map());
+  // What holds each dish on the record, by menu_items.id. Empty when the day
+  // has no menu yet.
+  const [takers, setTakers] = useState<DishTakers>(() => noTakers());
   const [calendar, setCalendar] = useState<
     Map<string, { status: string; dishes: number; orderCutoffAt: string | null }>
   >(() => new Map());
@@ -181,7 +183,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
         serviceDate,
         menuId: editable?.id ?? null,
       });
-      const nextTakers = editable === null ? new Map<number, string[]>() : await fetchDishTakers(editable.id);
+      const nextTakers = editable === null ? noTakers() : await fetchDishTakers(editable.id);
       if (mine !== latest.current) return;
       setTakers(nextTakers);
 
@@ -298,22 +300,29 @@ export function MenuScreen({ me, org }: ScreenProps) {
    * the database refused the publish. A failure keeps what is on screen: the
    * database still refuses the write either way.
    */
-  const refreshTakers = useCallback(async () => {
-    if (menu === null) return;
-    const mine = latest.current;
+  //
+  // Only the newest read may write, so a slow answer to a dialog cancelled and
+  // opened again cannot land over the one asked for since. Resolves true when
+  // this read is still the newest.
+  const takersRead = useRef(0);
+  const refreshTakers = useCallback(async (): Promise<boolean> => {
+    const mine = ++takersRead.current;
+    if (menu === null) return true;
+    const load = latest.current;
     try {
       const next = await fetchDishTakers(menu.id);
-      if (mine === latest.current) setTakers(next);
+      if (load === latest.current && mine === takersRead.current) setTakers(next);
     } catch {
       // Keep the list already on screen.
     }
+    return mine === takersRead.current;
   }, [menu]);
 
   const [checking, setChecking] = useState(false);
   const openPublish = useCallback(() => {
     setConfirming(true);
     setChecking(true);
-    void refreshTakers().finally(() => setChecking(false));
+    void refreshTakers().then((newest) => newest && setChecking(false));
   }, [refreshTakers]);
 
   const publish = useAction(
@@ -468,11 +477,20 @@ export function MenuScreen({ me, org }: ScreenProps) {
   const drafts = toDrafts(rows);
   const duplicate = duplicateName(rows);
   const changes = dishChanges(rows, saved);
+
+  // A line the system wrote on a one-dish menu goes with its dish only while
+  // the day is open (`trg_menu_items_hold_menu`); after that it holds the dish
+  // like any other. Judged at the cutoff being published, because
+  // `publish_menu` writes the menu's cutoff before it touches a dish.
+  const openForRemoval =
+    dayStage({ serviceDate, status, orderCutoffAt: cutoffAt, org, now: appNow() }) === "open";
+  const holds: DishTakers = openForRemoval ? { ...takers, system: new Set() } : takers;
+
   const publishReason =
     frozen ??
     publishDisabledReason(drafts, serviceDate) ??
     (duplicate === null ? null : `Two rows are called "${duplicate}". Rename one`) ??
-    removedOrderedReason(changes.removed, takers) ??
+    removedOrderedReason(changes.removed, holds) ??
     renameClash(rows, saved) ??
     cutoffIssue;
 
@@ -792,7 +810,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
                 saved={saved}
                 currency={org.currency}
                 readOnlyReason={frozen}
-                takers={takers}
+                holds={holds}
                 onChange={patchRow}
                 onRemove={removeRow}
               />
@@ -815,7 +833,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
           {frozen === null && (
             <RemovedDishes
               removed={changes.removed}
-              takers={takers}
+              holds={holds}
               currency={org.currency}
               onKeep={keepDish}
             />
@@ -902,6 +920,10 @@ function EditorSkeleton() {
 }
 
 /* ------------------------------------------------------------------- rules */
+
+function noTakers(): DishTakers {
+  return { chosen: new Map(), system: new Set() };
+}
 
 /**
  * Where the editor opens.

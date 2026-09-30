@@ -208,28 +208,37 @@ export async function fetchPublishImpact(args: {
  * and it is the admin who has to ring those people.
  *
  * Read from `order_items` rather than `orders`: an order with no dish chosen
- * belongs to nobody's dish and must not be counted against one. Nor does a
- * line the system wrote on a one-dish menu: nobody chose it, and
- * `trg_menu_items_hold_menu` deletes it with its dish.
+ * belongs to nobody's dish and must not be counted against one.
  *
- * Every other line counts, whatever its order's status. A cancelled order
- * keeps its lines and `order_items_menu_item_fk` restricts the delete, so a
- * dish chosen and then cancelled cannot be removed either. Such a dish is in
- * the map with no names: nobody to ring, but still on the record.
+ * `chosen` is every line a person wrote, whatever its order's status. A
+ * cancelled order keeps its lines and `order_items_menu_item_fk` restricts the
+ * delete, so a dish chosen and then cancelled cannot be removed either. Such a
+ * dish is in the map with no names: nobody to ring, but still on the record.
+ *
+ * `system` is the dishes carrying a line the system wrote on a one-dish menu.
+ * Nobody chose those, so they name nobody, and `trg_menu_items_hold_menu`
+ * deletes them with their dish, but only while the day is open. After that
+ * they hold the dish like any other line, which only the caller, knowing the
+ * day's stage, can decide.
  */
-export async function fetchDishTakers(menuId: number): Promise<Map<number, string[]>> {
+export type DishTakers = { chosen: Map<number, string[]>; system: Set<number> };
+
+export async function fetchDishTakers(menuId: number): Promise<DishTakers> {
   const { data, error } = await supabase
     .from("order_items")
-    .select("menu_item_id, profile_id, orders!inner(status)")
-    .eq("menu_id", menuId)
-    .eq("auto_assigned", false);
+    .select("menu_item_id, profile_id, auto_assigned, orders!inner(status)")
+    .eq("menu_id", menuId);
   if (error) throw error;
 
-  const lines = (data ?? []) as unknown as Array<{
+  const all = (data ?? []) as unknown as Array<{
     menu_item_id: number | null;
     profile_id: string;
+    auto_assigned: boolean;
     orders: { status: string } | Array<{ status: string }> | null;
   }>;
+  const system = new Set<number>();
+  for (const r of all) if (r.auto_assigned && r.menu_item_id !== null) system.add(r.menu_item_id);
+  const lines = all.filter((r) => !r.auto_assigned);
   const placed = (r: (typeof lines)[number]) => {
     const o = Array.isArray(r.orders) ? r.orders[0] : r.orders;
     return o?.status === "placed";
@@ -239,7 +248,7 @@ export async function fetchDishTakers(menuId: number): Promise<Map<number, strin
   for (const r of lines) if (r.menu_item_id !== null) out.set(r.menu_item_id, []);
 
   const ids = [...new Set(lines.filter(placed).map((r) => r.profile_id))];
-  if (ids.length === 0) return out;
+  if (ids.length === 0) return { chosen: out, system };
 
   // Names come from the membership, not the profile: an office knows people by
   // what they are called at work, and that is the column the board uses too.
@@ -259,7 +268,7 @@ export async function fetchDishTakers(menuId: number): Promise<Map<number, strin
     out.get(row.menu_item_id)?.push(name === "" ? "Somebody" : name);
   }
   for (const [, list] of out) list.sort((a, b) => a.localeCompare(b));
-  return out;
+  return { chosen: out, system };
 }
 
 /**

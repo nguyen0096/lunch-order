@@ -604,10 +604,13 @@ publish".
 - **Will be removed** lists, under the table, the saved dishes no row carries,
   struck through, with id and price. A dish with an order line on it cannot
   be deleted (`order_items_menu_item_fk`), and a cancelled order keeps its
-  lines, so every line counts except those the system wrote on a one-dish
-  menu, which go with their dish. One chosen on a placed order names who; one
-  chosen only on cancelled orders says it was ordered and cancelled and stays
-  on the record. Either way Publish carries the reason (`"Bún bò" would be
+  lines, so every line counts. The one exception is a line the system wrote
+  on a one-dish menu, which goes with its dish while the day is open; after
+  the cutoff it holds the dish too, judged at the cutoff being published. One
+  chosen on a placed order names who; one chosen only on cancelled orders
+  says it was ordered and cancelled and stays on the record; one the system
+  gave out says somebody is down for it as the day's only dish and ordering
+  has closed. Either way Publish carries the reason (`"Bún bò" would be
   removed, and somebody chose it. Keep it, or mark its new row as the same
   dish`). **Keep** puts a dish back at its saved place with its id and moves
   focus to its name box.

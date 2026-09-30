@@ -73,7 +73,7 @@ stays open (`hold_period_open_while_unpriced`, 20260928100000).
 | add a dish | yes | no; an off-menu dish only through Corrections | no | `enforce_menu_item_frozen` (20260928100200), `correct_meal_off_menu` |
 | rename or reprice | yes. Orders already placed keep the name and price they took | fill in a missing price only; other repricing through Corrections | no | `enforce_menu_item_frozen`, `snapshot_order_item` (orders), `reprice_dish` |
 | leave the price empty | yes; orders for it are held out of billing until priced | | | `v_order_charges.unpriced` (20260928100000) |
-| remove | only if no order line names it, in any order status, other than a line the system wrote ([One-dish menus](#one-dish-menus)) | no | no | `order_items_menu_item_fk` ON DELETE RESTRICT (orders), `trg_menu_items_hold_menu` |
+| remove | only if no order line names it, in any order status, other than a line the system wrote while the day is open ([One-dish menus](#one-dish-menus)) | no | no | `order_items_menu_item_fk` ON DELETE RESTRICT (orders), `trg_menu_items_hold_menu` |
 
 Dish names are unique per menu, ignoring case and outer spaces
 (`menu_items_name_uk`). Every dish on a menu is on offer. How many there are
@@ -210,7 +210,7 @@ a planned day (`force`), or a member eating without naming a dish. Only
 | A decision is cancelling, or any write by the member through `set_my_order`, the one dish or a note included: it writes a fresh, unmarked line, so a later second dish leaves it alone. An admin's correction writes an unmarked line too | `set_my_order`, `private.replace_order_line`, `guard_auto_assigned` |
 | Offering a meal, or an admin recording a pass, is a decision too: the offer clears the mark, and a slot on offer while undecided gets the one dish unmarked. A second dish never takes back a line under a pending or accepted pass, and a declined or withdrawn pass leaves the line unmarked | `trg_transfer_decides`, `private.assign_only_dish` |
 | Only the system writes the mark. A person's own insert or update of a line clears it | `guard_auto_assigned`; no browser UPDATE on the column |
-| A dish whose only lines are marked can be removed: the lines go first, and the dishes left decide whether those orders get the new one dish or a `dish_choice` | `trg_menu_items_hold_menu` |
+| While the day is open, a dish whose only lines are marked can be removed: the lines go first, and the dishes left decide whether those orders get the new one dish or a `dish_choice` | `trg_menu_items_hold_menu` |
 | Nothing converts or reverts outside stage `open`, or on a day in a settled week. A rename or reprice is not a new dish | `private.settle_undecided` |
 | A marked line is priced and billed like any other: the dish's price at conversion | `snapshot_order_item`, `v_order_charges` |
 
