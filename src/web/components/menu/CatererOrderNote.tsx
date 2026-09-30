@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Action, Button, useAction } from "@/ui";
 import { fetchCatererOrder, fetchCatererTemplate, humanError } from "../../api.js";
 import {
@@ -45,27 +45,39 @@ export function CatererOrderNote({
   const [order, setOrder] = useState<CatererOrder | null>(null);
   const [template, setTemplate] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // What the template last produced, so "has the admin edited the box" is a
+  // comparison rather than a flag every keystroke has to maintain.
+  const [generated, setGenerated] = useState("");
+  const [keptEdits, setKeptEdits] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
 
   // Also what Reset does: the orders are read again, because regenerating from
   // a count that moved since the page opened would send the old number.
+  // Changing the day starts a second load before the first lands; only the
+  // latest may fill the box, or it shows the old menu under the new date.
+  const latest = useRef(0);
   const load = useCallback(async () => {
+    const ticket = ++latest.current;
     setLoading(true);
     try {
       const [o, t] = await Promise.all([
         fetchCatererOrder({ orgId, menuId, serviceDate, items }),
         fetchCatererTemplate(orgId),
       ]);
+      if (ticket !== latest.current) return;
+      const text = catererMessage(o, { companyName, template: t });
       setOrder(o);
       setTemplate(t);
-      setDraft(catererMessage(o, { companyName, template: t }));
+      setDraft(text);
+      setGenerated(text);
+      setKeptEdits(false);
       setLoadError(null);
     } catch (e) {
-      setLoadError(humanError(e));
+      if (ticket === latest.current) setLoadError(humanError(e));
     } finally {
-      setLoading(false);
+      if (ticket === latest.current) setLoading(false);
     }
     // `items` is rebuilt on every render of the parent, so it is spread into
     // the dependency list by identity rather than compared by value.
@@ -161,6 +173,12 @@ export function CatererOrderNote({
         </Action>
       </div>
 
+      {keptEdits && (
+        <p className="max-w-prose text-sm text-muted" role="status">
+          The new template is saved. Your edits are kept; Reset rewrites the message from it.
+        </p>
+      )}
+
       {notes.length > 0 && (
         <section className="flex flex-col gap-1">
           <h3 className="text-sm font-semibold">
@@ -199,7 +217,10 @@ export function CatererOrderNote({
           template={template}
           onSaved={(t) => {
             setTemplate(t);
-            setDraft(catererMessage(order, { companyName, template: t }));
+            // An edited box is the admin's work and is kept. An unedited one
+            // is refilled like Reset, orders read again, so the count is current.
+            if (draft === generated) void load();
+            else setKeptEdits(true);
           }}
         />
       )}

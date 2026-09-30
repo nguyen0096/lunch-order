@@ -49,7 +49,10 @@ export const CATERER_TEMPLATE_MAX = 2000;
 /** What an office that never edited its template sends. */
 export const DEFAULT_CATERER_TEMPLATE = "Đặt cơm {servingDate}\n{dishes}\nTổng: {total} phần";
 
-const KNOWN = new Set<string>(CATERER_PLACEHOLDERS.map((p) => p.key));
+const KNOWN_PATTERN = new RegExp(
+  `\\{(${CATERER_PLACEHOLDERS.map((p) => p.key).join("|")})\\}`,
+  "g",
+);
 
 /**
  * `null` when the template can be saved, otherwise the sentence saying what to
@@ -63,9 +66,11 @@ export function catererTemplateProblem(template: string): string | null {
   if (!template.includes("{dishes}")) {
     return "The template needs {dishes}, or the caterer is not told what to cook";
   }
-  for (const m of template.matchAll(/\{([A-Za-z_]+)\}/g)) {
-    if (!KNOWN.has(m[1] as string)) return `{${m[1]}} is not a placeholder. Check the spelling`;
-  }
+  // Known placeholders are removed first, as the database check does, so
+  // `{a{total}b}` is refused here too rather than only by the database.
+  const rest = template.replace(KNOWN_PATTERN, "");
+  const unknown = /\{[A-Za-z_]+\}/.exec(rest);
+  if (unknown !== null) return `${unknown[0]} is not a placeholder. Check the spelling`;
   return null;
 }
 

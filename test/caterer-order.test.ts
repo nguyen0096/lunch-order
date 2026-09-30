@@ -107,6 +107,10 @@ describe("a template an office can save", () => {
     expect(catererTemplateProblem("{dishes} {dish}")).toMatch(/\{dish\} is not a placeholder/);
   });
 
+  it("refuses a placeholder hidden around a known one, as the database does", () => {
+    expect(catererTemplateProblem("{dishes} {a{total}b}")).toMatch(/\{ab\} is not a placeholder/);
+  });
+
   it("lets braces that are not a placeholder through", () => {
     expect(catererTemplateProblem("{dishes} :-{ }")).toBeNull();
   });

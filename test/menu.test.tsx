@@ -975,25 +975,53 @@ describe("The order for the caterer", () => {
     await waitFor(() => expect((text as HTMLTextAreaElement).value).toContain("- C\u01a1m g\u00e0: 4"));
   });
 
-  it("saves an edited template and refills the message from it", async () => {
+  async function saveTemplate(user: ReturnType<typeof fakeClockUser>, value: string) {
+    await user.click(await screen.findByRole("button", { name: "Edit template" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.change(within(dialog).getByRole("textbox", { name: "Template" }), {
+      target: { value },
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(setCatererTemplate).toHaveBeenCalledWith(ORG.id, value));
+  }
+
+  it("saves a template and refills an unedited message from it, with the orders read again", async () => {
+    const user = fakeClockUser();
+    setCatererTemplate.mockResolvedValue(undefined);
+    serve({ menu: menu({ status: "published" }), caterer: CATERER });
+    renderMenu();
+    await ready();
+    await box();
+
+    // Somebody ordered while the page was open.
+    fetchCatererOrder.mockResolvedValue({
+      ...CATERER,
+      lines: [{ ...CATERER.lines[0]!, count: 5 }],
+    });
+    fetchCatererTemplate.mockResolvedValue("Hi {companyName}\n{dishes}");
+    await saveTemplate(user, "Hi {companyName}\n{dishes}");
+
+    await waitFor(() =>
+      expect(screen.getByRole("textbox", { name: "The message to the caterer" })).toHaveValue(
+        "Hi Test Office\n- C\u01a1m g\u00e0: 5",
+      ),
+    );
+  });
+
+  it("keeps the admin's edits when a template is saved, and says Reset applies it", async () => {
     const user = fakeClockUser();
     setCatererTemplate.mockResolvedValue(undefined);
     serve({ menu: menu({ status: "published" }), caterer: CATERER });
     renderMenu();
     await ready();
 
-    await user.click(await screen.findByRole("button", { name: "Edit template" }));
-    const dialog = await screen.findByRole("dialog");
-    const field = within(dialog).getByRole("textbox", { name: "Template" });
-    fireEvent.change(field, { target: { value: "Hi {companyName}\n{dishes}" } });
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    const text = await box();
+    await user.type(text, "\nT\u00e8o \u00edt c\u01a1m");
+    const edited = (text as HTMLTextAreaElement).value;
+    await saveTemplate(user, "Hi {companyName}\n{dishes}");
 
-    await waitFor(() => expect(setCatererTemplate).toHaveBeenCalledWith(ORG.id, "Hi {companyName}\n{dishes}"));
-    await waitFor(() =>
-      expect(screen.getByRole("textbox", { name: "The message to the caterer" })).toHaveValue(
-        "Hi Test Office\n- C\u01a1m g\u00e0: 2\n- B\u00fan b\u00f2: 1",
-      ),
-    );
+    expect(await screen.findByText(/Your edits are kept/)).toBeInTheDocument();
+    expect(text).toHaveValue(edited);
   });
 
   it("will not save a template without {dishes}, and says why", async () => {

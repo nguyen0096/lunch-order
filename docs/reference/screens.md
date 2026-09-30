@@ -632,7 +632,8 @@ one the office wrote:
 The default is `Đặt cơm {servingDate}` / `{dishes}` / `Tổng: {total} phần`.
 **Edit template** opens a dialog with the template, what each placeholder
 means, a preview built from the day on screen, **Restore the default**, and
-**Save**. Saving refills the box from the new template. The default is stored
+**Save**. Saving refills an unedited box the way Reset does, orders read again.
+An edited box is kept, with a line saying Reset applies the new template. The default is stored
 as nothing, so an office that restores it follows any later improvement to it.
 
 Every note on the day is listed under the box as dish, person and note, since
