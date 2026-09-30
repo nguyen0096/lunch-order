@@ -1020,8 +1020,13 @@ describe("Board, the note that goes to the caterer", () => {
     });
     expect(save).toHaveAccessibleDescription("Nothing to save");
   });
+});
 
-  it("shows a colleague's note to the admin who rings the caterer", async () => {
+describe("Board, a colleague's note", () => {
+  // 120 characters, the most the database takes, with no space to break at.
+  const LONG_NOTE = "khôngtrứngítcơmnhiềuraukhônghànhkhôngtiêuthêmnướcmắmđểriêngcanhkhôngcaythêmdưaleochoriêngmộthộpgiúpmìnhnhécảmơnnhiều".padEnd(120, "ạ");
+
+  function teoWants(note: string | null, extra: Partial<import("../src/web/api.js").BoardCell> = {}) {
     const cells = new Map<string, import("../src/web/api.js").BoardCell>();
     cells.set(cellKey("teo", WED), {
       orderId: 8,
@@ -1029,18 +1034,88 @@ describe("Board, the note that goes to the caterer", () => {
       source: "member",
       itemId: 7,
       dishName: "Phở bò",
-      note: "không trứng",
+      note,
       amountMinor: 40_000,
       transferredToName: null,
+      ...extra,
     });
-    serve(makeBoard({ cells }));
-    renderBoard("admin");
+    return cells;
+  }
+  const theirs = (spoken: string) => `Tèo, ${formatDay(WED)}: ${spoken}. Hand a meal over`;
 
-    await user.click(
-      await screen.findByRole("button", { name: `Tèo, ${formatDay(WED)}: eating Phở bò. Hand a meal over` }),
-    );
+  it("shows it to every member under the dish, and says it with the dish", async () => {
+    serve(makeBoard({ cells: teoWants("không trứng") }));
+    renderBoard("member");
+
+    const cell = await screen.findByRole("button", { name: theirs("eating Phở bò, không trứng") });
+    expect(within(cell).getByText("Phở bò")).toBeInTheDocument();
+    expect(within(cell).getByText("không trứng")).toBeInTheDocument();
+
+    await user.click(cell);
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByText("không trứng")).toBeInTheDocument();
+  });
+
+  it("holds a long note to two lines in the cell, and keeps all of it reachable", async () => {
+    expect(LONG_NOTE).toHaveLength(120);
+    serve(makeBoard({ cells: teoWants(LONG_NOTE) }));
+    renderBoard();
+
+    const cell = await screen.findByRole("button", { name: theirs(`eating Phở bò, ${LONG_NOTE}`) });
+    const note = within(cell).getByText(LONG_NOTE);
+    expect(note).toHaveClass("line-clamp-2", "wrap-anywhere");
+    expect(note).toHaveAttribute("title", LONG_NOTE);
+    // The dish is never the thing that gives way.
+    expect(within(cell).getByText("Phở bò").className).not.toMatch(/line-clamp/);
+
+    await user.click(cell);
+    const whole = within(await screen.findByRole("dialog")).getByText(LONG_NOTE);
+    expect(whole.className).not.toMatch(/line-clamp|truncate/);
+    expect(whole).toHaveClass("wrap-anywhere");
+  });
+
+  it("holds my own long note to two lines as well", async () => {
+    serve(makeBoard({ cells: myCell({ note: LONG_NOTE }) }));
+    renderBoard();
+
+    const mine = await screen.findByRole("button", { name: `${formatDay(WED)}: Cơm gà, ${LONG_NOTE}` });
+    expect(within(mine).getByText(LONG_NOTE)).toHaveClass("line-clamp-2");
+  });
+
+  it("sits under the check mark on a day with one dish", async () => {
+    const pho = { id: 7, name: "Phở bò", priceMinor: 40_000 };
+    serve(makeBoard({ wed: menuDay({ dishes: [pho] }), cells: teoWants("ít cơm") }));
+    renderBoard();
+
+    const cell = await screen.findByRole("button", { name: theirs("eating Phở bò, ít cơm") });
+    expect(within(cell).getByText("ít cơm")).toBeInTheDocument();
+    expect(within(cell).queryByText("Phở bò")).toBeNull();
+  });
+
+  it("goes with the dish, so a meal passed on shows neither", async () => {
+    serve(makeBoard({ cells: teoWants("không trứng", { transferredToName: "Dinh" }) }));
+    renderBoard();
+
+    const cell = await screen.findByRole("button", { name: theirs("passed on to Dinh") });
+    expect(within(cell).queryByText("không trứng")).toBeNull();
+  });
+
+  it("shows it in the phone's list too", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      serve(makeBoard({ cells: teoWants(LONG_NOTE) }));
+      renderBoard();
+      const list = await screen.findByRole("region", { name: `Who is eating on ${longDayLabel(WED)}` });
+      const cell = within(list).getByRole("button", { name: theirs(`eating Phở bò, ${LONG_NOTE}`) });
+      expect(within(cell).getByText(LONG_NOTE)).toHaveClass("line-clamp-2");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

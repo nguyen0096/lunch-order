@@ -85,7 +85,7 @@ export function HandoverDialog(props: HandoverDialogProps) {
             wanted it without the egg, so the note has to be readable here. */}
         {theirCell?.note != null && (
           <p className="text-sm text-muted">
-            How they want it: <span className="text-text">{theirCell.note}</span>
+            How they want it: <span className="text-text wrap-anywhere">{theirCell.note}</span>
           </p>
         )}
 

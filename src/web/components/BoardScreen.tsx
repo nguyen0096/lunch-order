@@ -1272,6 +1272,27 @@ function MenuPanel({
 // column to the name's length.
 const CELL_TEXT = "block max-w-[min(100%,12rem)] wrap-anywhere";
 
+/**
+ * How someone wants their dish, under the dish in their cell.
+ *
+ * Unlike the dish, a note is held to two lines: it runs to 120 characters and
+ * a grid column can be 76px wide, so in full it would set the height of every
+ * row it sits on. Two lines hold `ít cơm, không trứng` whole, the ellipsis
+ * says there is more, and the rest is never out of reach: the cell's label
+ * speaks the note whole, the title shows it to a pointer, and the cell's
+ * dialog prints it.
+ */
+function CellNote({ note }: { note: string }) {
+  return (
+    <span
+      title={note}
+      className="line-clamp-2 max-w-[min(100%,12rem)] text-xs font-normal text-muted wrap-anywhere"
+    >
+      {note}
+    </span>
+  );
+}
+
 // Names wrap rather than truncate, inside a cap that keeps the days in view.
 const WHO_WIDTH = "max-w-40";
 
@@ -1446,11 +1467,7 @@ function MyCell({
           <span className={cn(CELL_TEXT, offeredTo !== null && "line-through")}>
             {label}
           </span>
-          {cell.note !== null && (
-            <span className={cn(CELL_TEXT, "text-xs font-normal text-muted")}>
-              {cell.note}
-            </span>
-          )}
+          {cell.note !== null && <CellNote note={cell.note} />}
           {offeredTo !== null && (
             <span className={cn(CELL_TEXT, "text-xs font-normal")}>to {offeredTo}</span>
           )}
@@ -1546,11 +1563,15 @@ function TheirCell({
   const gone = cell?.transferredToName != null && toMe ? "you" : cell?.transferredToName ?? null;
   const dish = day.dishes.find((d) => d.id === cell?.itemId)?.name ?? null;
   const onlyDish = day.dishes.length === 1;
+  // The note travels with the dish: where the cell names no dish, because the
+  // meal is passed or on offer, it names no note either, and the dialog has it.
+  const note = dish !== null && gone === null ? cell?.note ?? null : null;
+  const showNote = note !== null && pendingWith === null;
   // The dish is always spoken, even where a check mark is all that is drawn:
   // a check is only legible next to a column head naming the one dish, and a
   // screen reader is not reading the column head.
   const described = `${member.name}, ${formatDay(day.serviceDate)}: ${
-    dish !== null && gone === null ? `eating ${dish}` : MARK_LABEL[mark]
+    dish !== null && gone === null ? `eating ${dish}${note !== null ? `, ${note}` : ""}` : MARK_LABEL[mark]
   }`;
   const spoken =
     gone !== null
@@ -1570,7 +1591,7 @@ function TheirCell({
         // names a dish and the bottom margin edge when it is empty: measured,
         // every filled chip sat 2.15px below the empty targets in the same
         // row, which is what made the grid read as jittery across a week.
-        "flex h-auto min-h-9 w-full min-w-16 rounded-md px-1 py-1.5 text-xs font-medium whitespace-normal",
+        "flex h-auto min-h-9 w-full min-w-16 flex-col gap-0.5 rounded-md px-1 py-1.5 text-xs font-medium whitespace-normal",
         wide && "min-h-11 px-2",
         MARK_FILL[mark],
         pendingWith !== null && "border border-dashed border-accent",
@@ -1580,11 +1601,14 @@ function TheirCell({
       {gone !== null || pendingWith !== null ? (
         <span className={CELL_TEXT}>to {gone ?? pendingWith}</span>
       ) : dish !== null ? (
-        onlyDish ? (
-          <CheckIcon className="size-4" aria-hidden="true" />
-        ) : (
-          <span className={CELL_TEXT}>{dish}</span>
-        )
+        <>
+          {onlyDish ? (
+            <CheckIcon className="size-4" aria-hidden="true" />
+          ) : (
+            <span className={CELL_TEXT}>{dish}</span>
+          )}
+          {showNote && <CellNote note={note} />}
+        </>
       ) : mark === "eating" ? (
         <span className={cn(CELL_TEXT, "font-normal")}>no dish yet</span>
       ) : mark === "projected" ? (

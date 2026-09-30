@@ -158,6 +158,12 @@ size (`h-11`, `size-11`) and what every Board cell in the list is held to. The
 grid, from 640px up, keeps its denser 36 to 40px cells, since a week of them has
 to fit across.
 
+**Text in a cell.** A name (a dish, a person) wraps whole, even inside one long
+word, and the row grows to fit, because a name has to be read whole. Free text
+someone typed, a note, is held to two lines with an ellipsis, since it can be
+long enough to set the height of a whole row. What is clipped is still there in
+full: in the cell's label, in its title, and in the dialog the cell opens.
+
 The menu is a panel above the grid, not content inside the cells: a week of
 people by days cannot also carry five days of dish lists, and it is what stops
 the cell from having to say what you are about to order. Tapping a column head

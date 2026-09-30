@@ -83,11 +83,25 @@ From 640px up it is the grid below; narrower, it is one day at a time (see
 [on a phone](#on-a-phone)).
 
 **Your row is an action, theirs is a record.** Your own row shows your dish on
-the accent fill, with the note under it, and every empty day on it is a control.
-Everyone else's cell names their dish in an outline, because on the day the food
-arrives somebody has to hand the right box to the right person. On a day with
-one dish the name would repeat down the column and say nothing, so a check mark
-carries it instead. Colour is spent on your own ordered cells and nowhere else.
+the accent fill, and every empty day on it is a control. Everyone else's cell
+names their dish in an outline, because on the day the food arrives somebody has
+to hand the right box to the right person. On a day with one dish the name would
+repeat down the column and say nothing, so a check mark carries it instead.
+Colour is spent on your own ordered cells and nowhere else.
+
+**Every cell shows its note under the dish,** yours and everyone else's, in
+smaller muted type. `ít cơm` is what tells two boxes of Cơm gà apart, so it is
+on the board rather than one tap away. On someone else's cell it is read-only.
+The note goes with the dish: a cell that names no dish (`to Dinh`, or a meal on
+offer) shows no note either, and a one-dish day puts it under the check mark.
+
+A note runs to 120 characters and a grid column can be 76px wide, so in a cell a
+note is **held to two lines and ends in an ellipsis**, while the dish name above
+it still wraps whole. Unclamped, one long note set the height of its whole row.
+Two lines hold `ít cơm, không trứng` whole at every width, and text with no
+space to break at still breaks, inside the word. The rest is never out of
+reach: the cell's label reads the whole note to a screen reader, a pointer gets
+it as the note's title, and the cell's dialog prints it in full.
 
 ```
 Thursday 25 September                     Closes 21:00 24/09
@@ -100,6 +114,7 @@ Cơm gà  45.000 ₫    Bún bò  50.000 ₫     Phở bò  40.000 ₫
 You       ▓Cơm gà▓  ▓Phở bò▓  ▓Bún bò▓   [ + ]   [ + ][⚄]
           ▓ít cơm▓
 Tèo       │Phở bò│  │Cơm gà│  to Dinh    ┌────┐  ┌────┐
+          │không…│
 Dinh      │Cơm gà│  ┌──────┐  │Bún bò│   └────┘  └────┘
           ───────────────────────────────────────────────
 Total     3         2         3           0       0
@@ -187,7 +202,7 @@ whose billing week starts on a Sunday still gets the week its lunches are in.
 | empty cell, menu has several | the dice orders one at random, toast `Ordered Cơm gà · tap to change`; `+` opens the chooser |
 | cell with a dish | tap, dialog opens to pick another or Surprise me |
 | filled cell | clear it from the dialog |
-| a note | `ít cơm`, `không trứng`: a field under the dish, up to 120 characters, saved against the dish and shown under it on your row |
+| a note | `ít cơm`, `không trứng`: a field under the dish, up to 120 characters, saved against the dish and shown under it in the cell, to everyone |
 
 The dice is offered only where there is something to randomise. Randomising is a
 first-class choice, not a fallback: on most days nobody minds which of three
@@ -196,8 +211,8 @@ dish not chosen" therefore never arises from a tap. It survives only for a
 standing order on a menu of several dishes, which is the one case where the
 system genuinely cannot guess; with one dish, the system gives it that dish.
 
-An admin opening a colleague's cell can read that colleague's note, because the
-admin is the person who reads the list down the phone to the caterer.
+Anyone opening a colleague's cell reads that colleague's note in full, under
+`How they want it`, which is where a note clipped in the cell is read whole.
 
 Cells are **optimistic**: they fill immediately and revert with the database's own
 sentence if refused, e.g. `ordering for 23/09 closed at 21:00 22/09`.
