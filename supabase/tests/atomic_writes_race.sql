@@ -268,20 +268,18 @@ insert into probe values ('R2 leaving no placed order on a cancelled day',
 
 ------------------------------------ R3 pricing the week meets a correction
 
--- A correction holds the week's lock and then inserts, which takes the menu
--- FOR KEY SHARE. apply_caterer_prices locks the menus and then waits for the
--- week. Were its menu lock FOR UPDATE, each would wait for the other: 40P01.
+-- A correction holds the menu FOR SHARE and then the week, the same order
+-- apply_caterer_prices takes them in, so pricing waits on the menu rather than
+-- holding it while it waits for the week: no 40P01 either way round.
 select pg_temp.open('a', 'adm');
 select pg_temp.open('b', 'adm');
-select pg_temp.run('a', format($q$select pg_advisory_xact_lock(hashtext('lunch.run_billing'), %s)::text$q$,
-                               pg_temp.c('p_priced')));
+insert into probe values ('R3 the correction goes through and holds the day',
+  pg_temp.run('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+    pg_temp.c('org_a'), pg_temp.c('priced'), pg_temp.c('dinh'), pg_temp.c('i_priced_2'))), 'ok');
 select pg_temp.send('b', format(
   $q$select count(*)::text from public.apply_caterer_prices(%s, '[{"price_minor": 40000, "menu_item_ids": [%s]}]')$q$,
   pg_temp.c('org_a'), pg_temp.c('i_priced_1')));
-insert into probe values ('R3 pricing waits for the week', pg_temp.busy('b'), 'waiting');
-insert into probe values ('R3 the correction goes through while pricing waits',
-  pg_temp.run('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
-    pg_temp.c('org_a'), pg_temp.c('priced'), pg_temp.c('dinh'), pg_temp.c('i_priced_2'))), 'ok');
+insert into probe values ('R3 pricing waits for the correction', pg_temp.busy('b'), 'waiting');
 insert into probe values ('R3 A commits', pg_temp.close('a'), 'ok');
 insert into probe values ('R3 then the pricing goes through', pg_temp.finish('b'), 'ok');
 insert into probe values ('R3 and TEO''s standing line took the price',

@@ -30,12 +30,15 @@ insert into expected (name, anon_may) values
   ('leave_office',        false),
   ('delete_office',       false),
   ('ensure_period',       false),
-  -- The corrections screen. Each one repeats the admin check itself, which is
+  -- The Orders screen. Each one repeats the admin check itself, which is
   -- what the grant does not say.
   ('correct_meal',          false),
   ('correct_meal_off_menu', false),
   ('remove_meal',           false),
   ('reprice_dish',          false),
+  ('record_pass',           false),
+  ('answer_pass',           false),
+  ('undo_pass',             false),
   -- The settings screen. Same shape again: the grant says a signed-in browser
   -- may ask, and each one decides for itself whether this admin gets an answer.
   ('send_announcement',      false),
