@@ -1567,6 +1567,49 @@ describe("Payments, putting a mistake right", () => {
       expect(success).toHaveBeenCalledWith(`Moved ${rawMoney(50_000)} from Tèo to Dinh`),
     );
   });
+
+  const MOVED = "that payment was moved by somebody else just now; reload and try again";
+
+  it("closes the move and reloads the list when somebody else moved the payment first", async () => {
+    serve();
+    fetchPersonPayments.mockResolvedValue([BANK]);
+    movePayment.mockRejectedValue({ code: "55000", message: MOVED });
+    renderPayments();
+    const settle = await openSettle("Tèo");
+
+    await userEvent.click(await within(settle).findByRole("button", { name: "Move" }));
+    const dialog = await screen.findByRole("dialog");
+    await userEvent.click(within(dialog).getByRole("combobox"));
+    await userEvent.click(await screen.findByRole("option", { name: /^Dinh/ }));
+    await userEvent.click(within(dialog).getByRole("button", { name: "Review" }));
+    const loadsBefore = fetchPayments.mock.calls.length;
+    await userEvent.click(within(dialog).getByRole("button", { name: "Move" }));
+
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith(MOVED));
+    await waitFor(() => expect(fetchPayments.mock.calls.length).toBeGreaterThan(loadsBefore));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("reloads the list and the person's payments when a void is refused", async () => {
+    serve();
+    fetchPersonPayments.mockResolvedValue([CASH]);
+    voidPayment.mockRejectedValue({ code: "55000", message: MOVED });
+    renderPayments();
+    const dialog = await openSettle("Tèo");
+
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Void" }));
+    await userEvent.type(within(dialog).getByLabelText("Why"), "Recorded twice");
+    const loadsBefore = fetchPayments.mock.calls.length;
+    const personLoadsBefore = fetchPersonPayments.mock.calls.length;
+    await userEvent.click(within(dialog).getByRole("button", { name: "Void" }));
+
+    await waitFor(() => expect(vi.mocked(toast.error)).toHaveBeenCalledWith(MOVED));
+    await waitFor(() => expect(fetchPayments.mock.calls.length).toBeGreaterThan(loadsBefore));
+    await waitFor(() =>
+      expect(fetchPersonPayments.mock.calls.length).toBeGreaterThan(personLoadsBefore),
+    );
+    expect(success).not.toHaveBeenCalledWith(`Voided ${rawMoney(50_000)}`);
+  });
 });
 
 describe("Payments, nothing offers an undo", () => {

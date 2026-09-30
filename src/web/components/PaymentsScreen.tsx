@@ -130,7 +130,15 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
 
   const apply = useAction(
     async (a: { payment: UnmatchedPayment; person: PaymentsPerson; from: PaymentsPerson | null }) => {
-      await movePayment({ paymentId: a.payment.id, toProfileId: a.person.profileId });
+      try {
+        await movePayment({ paymentId: a.payment.id, toProfileId: a.person.profileId });
+      } catch (e) {
+        // Somebody else may have moved or voided it meanwhile, so the dialog
+        // names a payment that is no longer where it says.
+        setMoving(null);
+        void load();
+        throw e;
+      }
       return a;
     },
     {
@@ -147,7 +155,13 @@ export function PaymentsScreen({ me, org }: ScreenProps) {
 
   const voidOne = useAction(
     async (a: { payment: PersonPayment; reason: string }) => {
-      await voidPayment({ paymentId: a.payment.id, reason: a.reason });
+      try {
+        await voidPayment({ paymentId: a.payment.id, reason: a.reason });
+      } catch (e) {
+        void load();
+        void loadPersonPayments(recordingId);
+        throw e;
+      }
       return a;
     },
     {

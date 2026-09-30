@@ -471,7 +471,10 @@ each writing `payment_corrections` with who did it and why:
   week while the dialog was open, the refusal says so and the list reloads.
 
 The person's dialog lists the payments on their account, newest first, with
-Move on each and Void on the manual ones.
+Move on each and Void on the manual ones. When a move or void is refused (for
+instance because somebody else moved the payment first), the refusal is shown
+and the list reloads; a refused move also closes its dialog, and a refused void
+refreshes the person's payments.
 
 **Two totals, deliberately different.** What people owe is the sum of their
 account balances, each of which counts every unpaid week exactly once. What the
