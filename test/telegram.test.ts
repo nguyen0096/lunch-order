@@ -75,7 +75,7 @@ function menu(over: Partial<Menu> = {}): Menu {
 }
 
 describe("orderingClosedReason agrees with the web app's gating", () => {
-  const statuses: MenuStatus[] = ["draft", "published", "locked", "cancelled"];
+  const statuses: MenuStatus[] = ["published", "locked", "cancelled"];
 
   // No admin axis any more. Both surfaces hold an admin to the same window as
   // everybody else, because the board and the bot are where somebody orders

@@ -17,7 +17,7 @@ import type { Org } from "../../shared/types.js";
  * not a dot on a line.
  */
 const POINTS = [
-  { key: "ordering", label: "Ordering", of: ["draft", "open"] },
+  { key: "ordering", label: "Ordering", of: ["open"] },
   { key: "cooking", label: "Cooking", of: ["locked", "closed"] },
   { key: "served", label: "Served", of: ["done"] },
 ] as const;

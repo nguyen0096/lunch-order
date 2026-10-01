@@ -42,12 +42,12 @@ export type PublishResult = {
 };
 
 /**
- * Create or replace a day's menu, then publish it, in one call to
- * `publish_menu`, which is one transaction. As a dozen requests, a refusal part
- * way left a published menu with some of its dishes changed.
+ * Create or replace a day's published menu in one call to `publish_menu`,
+ * which is one transaction. As a dozen requests, a refusal part way left a
+ * published menu with some of its dishes changed.
  *
- * Publishing is what materializes standing orders, so it happens last and only
- * once the admin has reviewed the parse. The raw pasted text is stored beside
+ * A new day is published by its insert, which materializes standing orders, so
+ * this is called only once the admin has reviewed the parse. The raw pasted text is stored beside
  * the result: the parser will be wrong sometimes and that text is the evidence.
  *
  * The dishes are reconciled in place, not deleted and reinserted: a dish keeps

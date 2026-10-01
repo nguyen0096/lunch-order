@@ -340,7 +340,6 @@ export function orderingClosedReason(args: {
   // ordinary eater, and only a write that says `source = 'admin'` is outside
   // the window. The test that pins these two together is what keeps the bot
   // from quietly offering what the database will refuse.
-  if (menu.status === "draft") return `The menu for ${day} isn't published yet.`;
   if (menu.status === "locked") {
     return `Orders for ${day} are closed and have gone to the caterer.`;
   }

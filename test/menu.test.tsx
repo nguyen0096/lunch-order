@@ -133,7 +133,7 @@ const MESSAGE = [
 function menu(over: Partial<EditableMenu> = {}): EditableMenu {
   return {
     id: 11,
-    status: "draft",
+    status: "published",
     sourceText: "",
     orderCutoffAt: new Date(`${addDays(DATE, -1)}T14:00:00Z`).toISOString(),
     items: [
@@ -263,7 +263,7 @@ describe("No menu for the date", () => {
     expect(
       screen.getByRole("heading", { name: "No menu for this day yet" }),
     ).toBeInTheDocument();
-    expect(screen.queryByText("Draft")).not.toBeInTheDocument();
+    expect(screen.queryByText("Published")).not.toBeInTheDocument();
     expect(publishMenu).not.toHaveBeenCalled();
   });
 
@@ -496,7 +496,7 @@ describe("Changing the service date", () => {
     let other = addDays(DATE, 1);
     while (isoWeekday(other) > 5) other = addDays(other, 1);
 
-    fetchMenuEditor.mockResolvedValue(menu({ status: "draft" }));
+    fetchMenuEditor.mockResolvedValue(menu());
     await pickDay(user, other);
 
     await waitFor(() =>
@@ -709,11 +709,19 @@ describe("When orders close", () => {
 /* -------------------------------------------------------------- publishing */
 
 describe("Publishing", () => {
+  /** A day with no menu yet, given two dishes from a pasted message. */
+  async function newDay(user: ReturnType<typeof fakeClockUser>) {
+    await user.click(screen.getByLabelText("The caterer’s message"));
+    await user.paste("- Cơm gà 45k\n- Bún bò 50k");
+    await user.click(screen.getByRole("button", { name: "Parse" }));
+  }
+
   it("confirms first, naming the date and how many people it notifies", async () => {
     const user = fakeClockUser();
-    serve({ menu: menu(), impact: impact({ standing: 3 }) });
+    serve({ impact: impact({ standing: 3 }) });
     renderMenu();
     await ready();
+    await newDay(user);
 
     await user.click(publishButton());
     const dialog = await screen.findByRole("dialog");
@@ -766,9 +774,10 @@ describe("Publishing", () => {
 
   it("names a message with no standing orders honestly", async () => {
     const user = fakeClockUser();
-    serve({ menu: menu(), impact: impact({ standing: 0 }) });
+    serve({ impact: impact({ standing: 0 }) });
     renderMenu();
     await ready();
+    await newDay(user);
 
     await user.click(publishButton());
     const dialog = await screen.findByRole("dialog");
@@ -794,13 +803,14 @@ describe("Publishing", () => {
 /* ------------------------------------------------------------- menu states */
 
 describe("Every state the menu can be in", () => {
-  it("draft: editable, and says nobody can see it yet", async () => {
-    serve({ menu: menu({ status: "draft" }) });
+  it("published with no orders yet: editable, and nothing to warn about", async () => {
+    serve({ menu: menu() });
     renderMenu();
     await ready();
 
-    expect(screen.getByText("Draft")).toBeInTheDocument();
-    expect(screen.getByText(/Nobody else can see it/)).toBeInTheDocument();
+    expect(screen.getByText("Published")).toBeInTheDocument();
+    expect(screen.queryByText(/already ordered for this day/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Nobody else can see it/)).not.toBeInTheDocument();
     expect(screen.getByLabelText("Price of Cơm gà")).toBeInTheDocument();
     expect(publishButton()).not.toHaveAttribute("aria-disabled");
   });
@@ -874,7 +884,7 @@ describe("Where a row's messages appear", () => {
 
   it("puts a message about the name under the name box", async () => {
     const user = fakeClockUser();
-    serve({ menu: menu({ status: "draft" }) });
+    serve({ menu: menu() });
     renderMenu();
     await ready();
 
@@ -889,7 +899,7 @@ describe("Where a row's messages appear", () => {
 
   it("puts a message about the price under the price box", async () => {
     const user = fakeClockUser();
-    serve({ menu: menu({ status: "draft" }) });
+    serve({ menu: menu() });
     renderMenu();
     await ready();
 
@@ -1082,8 +1092,8 @@ describe("The order for the caterer", () => {
     ).toBeInTheDocument();
   });
 
-  it("is not offered on a day with no published menu, because there is nothing to send", async () => {
-    serve({ menu: menu({ status: "draft" }), caterer: CATERER });
+  it("is not offered on a cancelled day, because there is nothing to send", async () => {
+    serve({ menu: menu({ status: "cancelled" }), caterer: CATERER });
     renderMenu();
     await ready();
 
@@ -1321,22 +1331,13 @@ describe("Changing the menu's status", () => {
 
   /* ------------------------------------------- which states offer which ways */
 
-  it("draft: nothing to un-publish, reopen or cancel", async () => {
-    serve({ menu: menu({ status: "draft" }) });
-    renderMenu();
-    await ready();
-
-    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Cancel lunch" })).not.toBeInTheDocument();
-  });
-
-  it("published: cancel, and nothing to reopen on a day still open", async () => {
+  it("published: cancel, and nothing to un-publish or reopen on a day still open", async () => {
     serve({ menu: menu({ status: "published" }) });
     renderMenu();
     await ready();
 
     expect(cancelButton()).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Un-publish" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Reopen ordering" })).not.toBeInTheDocument();
   });
 

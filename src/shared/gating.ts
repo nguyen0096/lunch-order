@@ -12,14 +12,13 @@ import { zonedTimeToInstant } from "./dates.js";
 export type Notice = { level: "info" | "warn" | "error"; text: string };
 
 /**
- * The five stages a day goes through, plus the three it can sit outside.
+ * The five stages a day goes through, plus the two it can sit outside.
  *
  * Mirrors `private.day_stage`. The database is what actually refuses a write;
  * this is what lets a screen say which stage a day is in without asking.
  */
 export type DayStage =
   | "no_menu"
-  | "draft"
   | "open"
   | "locked"
   | "closed"
@@ -47,7 +46,6 @@ export function dayStage(args: {
   const { serviceDate, status, orderCutoffAt, org, now } = args;
   if (status === null) return "no_menu";
   if (status === "cancelled") return "cancelled";
-  if (status === "draft") return "draft";
 
   const at = (hhmm: string) =>
     zonedTimeToInstant(serviceDate, hhmm, org.timezone).getTime();
@@ -63,8 +61,6 @@ export function stageWord(stage: DayStage): string | null {
   switch (stage) {
     case "no_menu":
       return "No menu";
-    case "draft":
-      return "Draft";
     case "open":
       return null;
     case "locked":
@@ -87,7 +83,6 @@ export function orderDisabledReason(
   if (menu === null) return "Tomorrow's menu isn't up yet";
   if (menu.status === "cancelled") return "Lunch is cancelled for this day";
   // No admin exemption, deliberately. See `cellReason`.
-  if (menu.status === "draft") return "Tomorrow's menu isn't published yet";
   if (menu.status === "locked") return "Orders are closed and have gone to the caterer";
   if (cutoffPassed(menu, now)) return `Ordering closed at ${formatCutoff(menu, timeZone)}`;
   return null;

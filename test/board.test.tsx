@@ -2282,14 +2282,7 @@ describe("Board, on a phone", () => {
     expect(mine).toHaveAttribute("aria-disabled", "true");
   });
 
-  it("says a draft is a draft, and a week with no menus says so above the list", async () => {
-    serve(makeBoard({ wed: menuDay({ status: "draft" }) }));
-    const view = renderBoard();
-    await listFor(TODAY);
-    await user.click(chip(WED));
-    expect(within(chip(WED)).getByText("Draft")).toBeInTheDocument();
-    view.unmount();
-
+  it("says so above the list when a week has no menus", async () => {
     serve(makeBoard({ wed: null }));
     renderBoard();
     expect(await screen.findByRole("heading", { name: "No menus this week" })).toBeInTheDocument();

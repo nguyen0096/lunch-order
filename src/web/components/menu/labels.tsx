@@ -96,13 +96,7 @@ export function readOnlyReason(status: MenuStatus | null): string | null {
 }
 
 export function statusWord(status: MenuStatus): string {
-  return status === "draft"
-    ? "Draft"
-    : status === "published"
-      ? "Published"
-      : status === "locked"
-        ? "Locked"
-        : "Cancelled";
+  return status === "published" ? "Published" : status === "locked" ? "Locked" : "Cancelled";
 }
 
 /**

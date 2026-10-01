@@ -102,7 +102,6 @@ export function cellReason(args: {
   // finished day is a different job, and `enforce_order_window` now asks for
   // it by name: only an order whose `source` is 'admin' steps outside the
   // window, and nothing on this screen writes that.
-  if (day.status === "draft") return "This menu isn't published yet";
   if (day.status === "locked") return "Orders are closed and have gone to the caterer";
   if (day.orderCutoffAt !== null && now.getTime() >= Date.parse(day.orderCutoffAt)) {
     return `Ordering closed at ${cutoffLabel(day.orderCutoffAt, timeZone)}`;
@@ -230,13 +229,11 @@ export function lunchOverReason(serviceDate: string): string {
 }
 
 /**
- * What my own cell says about a day whose menu is not out yet, or null when
- * the day is not one to plan ahead: today or earlier, a menu already
- * published, locked or cancelled, or an order row of mine on it in any
- * status. The same three conditions `set_standing_exception` checks.
- *
- * A draft counts as not out. Publishing is when standing orders are made, so
- * until then an exception still decides what publishing does.
+ * What my own cell says about a day with no menu yet, or null when the day is
+ * not one to plan ahead: today or earlier, any menu on it, or an order row of
+ * mine on it in any status. Publishing is when standing orders are made, so
+ * until then an exception decides what publishing does. `set_standing_exception`
+ * checks the first two; an order row cannot exist without a menu.
  */
 export type PlanState = "standing" | "skipped" | "planned" | "empty";
 
@@ -250,7 +247,7 @@ export function planState(args: {
 }): PlanState | null {
   const { day, today, hasOrderRow, weekdays, exception } = args;
   if (day.serviceDate <= today || hasOrderRow) return null;
-  if (day.menuId !== null && day.status !== "draft") return null;
+  if (day.menuId !== null) return null;
   const byRule = weekdays.has(isoWeekday(day.serviceDate));
   if (byRule) return exception === "skip" ? "skipped" : "standing";
   return exception === "force" ? "planned" : "empty";

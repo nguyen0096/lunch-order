@@ -170,10 +170,6 @@ describe("cellReason", () => {
     expect(ask(day({ dishes: [] }))).toBe("This menu has no dishes on it yet");
   });
 
-  it("refuses a draft for a member", () => {
-    expect(ask(day({ status: "draft" }))).toBe("This menu isn't published yet");
-  });
-
   it("refuses a locked day for a member", () => {
     expect(ask(day({ status: "locked" }))).toBe(
       "Orders are closed and have gone to the caterer",
@@ -187,7 +183,6 @@ describe("cellReason", () => {
   it("holds an admin to the window too, because this board is not for correcting", () => {
     // It used to exempt them, which meant an admin could put a meal on a bill
     // for a day already eaten by tapping their own row.
-    expect(ask(day({ status: "draft" }), AFTER)).toBe("This menu isn't published yet");
     expect(ask(day({ status: "locked" }), AFTER)).toBe(
       "Orders are closed and have gone to the caterer",
     );
@@ -356,10 +351,6 @@ describe("planState, a day ahead of its menu", () => {
     expect(planState({ ...base, weekdays: new Set() })).toBe("empty");
     expect(planState({ ...base, weekdays: new Set(), exception: "force" })).toBe("planned");
     expect(planState({ ...base, weekdays: new Set(), exception: "skip" })).toBe("empty");
-  });
-
-  it("counts a draft as not out yet", () => {
-    expect(planState({ ...base, day: day({ serviceDate: THU, status: "draft" }) })).toBe("standing");
   });
 
   it("leaves a published, locked or cancelled day to ordering", () => {

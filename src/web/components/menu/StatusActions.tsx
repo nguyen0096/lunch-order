@@ -32,10 +32,10 @@ import type { MenuStatus } from "../../../shared/types.js";
  * screen, against what was actually eaten, where it reaches the bill directly
  * rather than by pretending ordering is still open.
  *
- * Un-publishing used to sit here and no longer does. A published menu is
- * editable in place, so the only thing un-publishing added was hiding a day
- * from members -- and a day that is hidden but still being cooked is a state
- * with no meaning to anybody. Calling lunch off is Cancel, which says so.
+ * Un-publishing used to sit here, and there is no draft to go back to any
+ * more: a day has lunch or it does not. A published menu is editable in place,
+ * so un-publishing only ever hid a day that was still being cooked. Calling
+ * lunch off is Cancel, which says so.
  *
  * Cancelling is the only one behind a typed confirmation: no transition leaves
  * `cancelled`, so nothing in this app takes it back, and the day strip above

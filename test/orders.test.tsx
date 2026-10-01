@@ -358,7 +358,7 @@ describe("Orders, what a cell says", () => {
     );
   });
 
-  it("shows the portions a received meal brought", async () => {
+  it("shows the portions of a passed meal, on the giver's cell and the receiver's", async () => {
     const base = week();
     const meals = new Map(base.meals);
     const given = meals.get(cellKey("teo", TUE))!;
@@ -367,6 +367,9 @@ describe("Orders, what a cell says", () => {
     renderScreen();
     await ready();
 
+    const passed = cell(/^Tèo, Tue 29: Cơm tấm sườn, 2 portions, passed to Dinh, who pays\. Open$/);
+    expect(passed).toHaveTextContent(/Cơm tấm sườn × 2\s*to Dinh/);
+    expect(within(passed).getByText("× 2").closest(".line-through")).not.toBeNull();
     expect(cell(/^Dinh, Tue 29: nothing recorded, also has Tèo's meal\. Add a meal$/)).toHaveTextContent("+ 2 from Tèo");
   });
 
@@ -389,7 +392,6 @@ describe("Orders, what a cell says", () => {
         days: days({
           [MON]: { status: "cancelled" },
           [TUE]: { menuId: null, status: null, orderCutoffAt: null, dishes: [] },
-          [FRI]: { status: "draft" },
         }),
         meals: new Map(),
         passes: new Map(),
@@ -404,9 +406,8 @@ describe("Orders, what a cell says", () => {
     expect(
       screen.getAllByText("No menu for Tue 29 Sept. Add the day on the Menu screen to record a lunch on it.").length,
     ).toBeGreaterThan(0);
-    expect(screen.getAllByText("The menu for Fri 2 Oct isn't published yet").length).toBeGreaterThan(0);
 
-    await user.click(cell(/^Dinh, Fri 2: nothing recorded\.?$/));
+    await user.click(cell(/^Dinh, Mon 28: nothing recorded\.?$/));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /^Tue 29.*show this day's prices$/ }));

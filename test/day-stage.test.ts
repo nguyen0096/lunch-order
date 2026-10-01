@@ -43,12 +43,11 @@ describe("The five stages of a day", () => {
   it("reads a day with no menu apart from a day whose menu was called off", () => {
     expect(stage(null, at("2026-09-24T12:00"))).toBe("no_menu");
     expect(stage("cancelled", at("2026-09-24T12:00"))).toBe("cancelled");
-    expect(stage("draft", at("2026-09-24T12:00"))).toBe("draft");
   });
 
   it("says nothing on an open day and something on every other", () => {
     expect(stageWord("open")).toBeNull();
-    for (const s of ["no_menu", "draft", "locked", "closed", "done", "cancelled"] as const) {
+    for (const s of ["no_menu", "locked", "closed", "done", "cancelled"] as const) {
       expect(stageWord(s)).not.toBeNull();
     }
   });

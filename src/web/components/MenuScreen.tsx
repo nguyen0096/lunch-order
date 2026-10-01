@@ -236,7 +236,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
    *
    * Not optimism: the write has already succeeded, and this is the only thing
    * standing between it and a badge that goes on saying "Published" over a
-   * draft for as long as the reload takes. The day strip says the same word
+   * cancelled day for as long as the reload takes. The day strip says the same word
    * about the same day, so it moves too. `applied` is null when the write was
    * refused, which still reloads: a refusal here usually means the day is no
    * longer what this screen thinks it is.
@@ -542,13 +542,7 @@ export function MenuScreen({ me, org }: ScreenProps) {
           <div className="flex flex-wrap items-center gap-2">
             <Badge
               variant={
-                status === "published"
-                  ? "success"
-                  : status === "draft"
-                    ? "accent"
-                    : status === "locked"
-                      ? "neutral"
-                      : "danger"
+                status === "published" ? "success" : status === "locked" ? "neutral" : "danger"
               }
             >
               {statusWord(status)}
@@ -735,13 +729,6 @@ export function MenuScreen({ me, org }: ScreenProps) {
           </h2>
 
           {frozenSentence !== null && <Notice level="info">{frozenSentence}</Notice>}
-
-          {frozen === null && status === "draft" && (
-            <Notice level="info">
-              This menu is a draft. Nobody else can see it, and nobody can order from it, until you
-              publish.
-            </Notice>
-          )}
 
           {frozen === null && status === "published" && impact !== null && impact.orders > 0 && (
             <Notice level="warn">

@@ -97,13 +97,6 @@ export function dayAccess(args: {
       toMenu: true,
     };
   }
-  if (stage === "draft") {
-    return {
-      mode: "inert",
-      reason: `The menu for ${dayWords(day.serviceDate)} isn't published yet`,
-      toMenu: true,
-    };
-  }
   if (stage === "cancelled") {
     return { mode: "inert", reason: `Lunch was cancelled on ${dayWords(day.serviceDate)}`, toMenu: false };
   }
@@ -125,8 +118,6 @@ export function stageSentence(day: BoardDay, org: Clock, now: Date, settled: boo
   switch (stage) {
     case "no_menu":
       return "No menu";
-    case "draft":
-      return "Draft, not published yet";
     case "cancelled":
       return "Lunch was cancelled";
     case "done":

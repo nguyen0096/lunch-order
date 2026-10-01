@@ -62,12 +62,6 @@ describe("orderDisabledReason", () => {
     );
   });
 
-  it("reports a draft menu to a member", () => {
-    expect(orderDisabledReason(menu({ status: "draft" }), BEFORE, TZ)).toBe(
-      "Tomorrow's menu isn't published yet",
-    );
-  });
-
   it("reports a locked menu to a member", () => {
     expect(orderDisabledReason(menu({ status: "locked" }), BEFORE, TZ)).toBe(
       "Orders are closed and have gone to the caterer",
@@ -82,11 +76,10 @@ describe("orderDisabledReason", () => {
     expect(orderDisabledReason(menu(), BEFORE, TZ)).toBeNull();
   });
 
-  it("exempts nobody from draft, locked or the cutoff", () => {
+  it("exempts nobody from locked or the cutoff", () => {
     // It used to exempt admins. That made the board a place where an admin
     // could put a meal on a bill for a day already eaten, by tapping their own
     // row, which is not a power anybody asked for.
-    expect(orderDisabledReason(menu({ status: "draft" }), AFTER, TZ)).not.toBeNull();
     expect(orderDisabledReason(menu({ status: "locked" }), AFTER, TZ)).not.toBeNull();
     expect(orderDisabledReason(menu(), AFTER, TZ)).not.toBeNull();
   });
@@ -150,8 +143,8 @@ describe("notices", () => {
     expect(notices(menu(), null, new Date(CUTOFF))).toEqual([]);
   });
 
-  it("does not warn about a countdown on an unpublished menu", () => {
-    expect(notices(menu({ status: "draft" }), null, BEFORE)).toEqual([]);
+  it("does not warn about a countdown on a cancelled menu", () => {
+    expect(notices(menu({ status: "cancelled" }), null, BEFORE)).toEqual([]);
   });
 
   it("warns about a placed order with no dish chosen", () => {

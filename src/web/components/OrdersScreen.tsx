@@ -877,7 +877,10 @@ function OrderCell({
         ) : null
       ) : passed ? (
         <>
-          <span className={cn(CELL_TEXT, "font-normal line-through")}>{meal.dishName ?? "Lunch"}</span>
+          <span className={cn(CELL_TEXT, "font-normal line-through")}>
+            {meal.dishName ?? "Lunch"}
+            {meal.quantity > 1 && <span className="tabular">{` × ${meal.quantity}`}</span>}
+          </span>
           <span className={CELL_TEXT}>{`to ${nameOf(passed.toProfileId)}`}</span>
         </>
       ) : (
