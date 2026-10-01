@@ -1,4 +1,5 @@
--- Two sessions at once over the Orders screen's pass writes.
+-- Two sessions at once over the Orders screen's pass writes, and cancelling
+-- lunch against a correction in the same week.
 -- Run against a LOCAL scratch database only, as a superuser over TCP (dblink):
 --   psql "$DATABASE_URL" -f supabase/tests/admin_orders_race.sql
 --
@@ -175,6 +176,33 @@ insert into ctx select 't_lan', id::text from public.meal_transfers where order_
 select public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('dt')::date)) is not null;
 select public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('df')::date)) is not null;
 select public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('dc')::date)) is not null;
+
+-- R9 and R10: Monday to Thursday of a week four weeks out, all open, one week.
+insert into ctx
+select 'w' || n, (private.today_in('Asia/Ho_Chi_Minh')
+                  - (extract(isodow from private.today_in('Asia/Ho_Chi_Minh'))::int - 1) + 28 + n - 1)::text
+  from generate_series(1, 4) n;
+insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by, published_at)
+select pg_temp.c('org')::bigint, pg_temp.c('w' || n)::date, 'published', now() + interval '20 days',
+       pg_temp.c('adm')::uuid, now()
+  from generate_series(1, 4) n;
+insert into public.menu_items (menu_id, org_id, name, price_minor, position)
+select m.id, m.org_id, 'Pho', 40000, 0 from public.menus m
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('w1')::date;
+insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
+select m.org_id, m.id, m.service_date, pg_temp.c(w)::uuid, 'member', pg_temp.c(w)::uuid
+  from public.menus m, (values ('teo'), ('dinh')) as x(w)
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('w1')::date;
+insert into public.order_items (order_id, org_id, profile_id, menu_id, menu_item_id)
+select o.id, o.org_id, o.profile_id, o.menu_id, mi.id
+  from public.orders o join public.menu_items mi on mi.menu_id = o.menu_id
+ where o.org_id = pg_temp.c('org')::bigint and o.service_date >= pg_temp.c('w1')::date;
+insert into ctx
+select 'pho_w' || n, mi.id::text from generate_series(1, 4) n
+  join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c('w' || n)::date
+  join public.menu_items mi on mi.menu_id = m.id;
+insert into ctx values ('p_w', public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('w1')::date)::text);
+select public.run_billing(pg_temp.c('p_w')::bigint) is not null;
 
 ------------------------ R1 an admin answers while the member's accept queues
 
@@ -354,6 +382,48 @@ insert into probe values ('R8 and no placed order is left on the cancelled day',
   (select count(*)::text from public.orders o join public.menus m on m.id = o.menu_id
     where m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c('dc')::date
       and o.status = 'placed'), '0');
+
+--------------------- R9, R10 cancelling lunch and a correction share a week
+
+-- Cancelling lunch re-bills its week (20261022100300): it holds the day's
+-- menu, then takes the week, then writes the orders. A correction on another
+-- day of the week holds its own menu and then the week. Either way round, one
+-- waits for the other and neither deadlocks.
+select pg_temp.open('a', 'adm2');
+insert into probe values ('R9 A orders for Vy on Monday and holds the week',
+  pg_temp.run('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+    pg_temp.c('org'), pg_temp.c('w1'), pg_temp.c('vy'), pg_temp.c('pho_w1'))), 'ok');
+select pg_temp.open('b', 'adm');
+select pg_temp.send('b', format($q$update public.menus set status = 'cancelled'
+                                   where org_id = %s and service_date = %L::date$q$, pg_temp.c('org'), pg_temp.c('w2')));
+insert into probe values ('R9 cancelling Tuesday waits for the week', pg_temp.busy('b'), 'waiting');
+insert into probe values ('R9 the correction commits', pg_temp.close('a'), 'ok');
+insert into probe values ('R9 then Tuesday is cancelled, no deadlock', pg_temp.finish('b'), 'ok');
+
+select pg_temp.open('b', 'adm');
+insert into probe values ('R10 B cancels Wednesday first and holds the week',
+  pg_temp.run('b', format($q$update public.menus set status = 'cancelled'
+                             where org_id = %s and service_date = %L::date returning 'x'$q$,
+    pg_temp.c('org'), pg_temp.c('w3'))), 'ok');
+select pg_temp.open('a', 'adm2');
+select pg_temp.send('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+  pg_temp.c('org'), pg_temp.c('w4'), pg_temp.c('vy'), pg_temp.c('pho_w4')));
+insert into probe values ('R10 a correction on Thursday waits for the week', pg_temp.busy('a'), 'waiting');
+insert into probe values ('R10 the cancel commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R10 then the correction goes through, no deadlock', pg_temp.finish('a'), 'ok');
+
+insert into probe values
+  ('R10 the week is billed as it stands: Monday and Thursday, each statement its lines',
+   (select string_agg(m.short_code || ' ' || st.meals_minor || ' ' || st.meal_count
+                      || case when st.meals_minor = (select coalesce(sum(bl.amount_minor), 0)
+                                                       from public.billing_lines bl
+                                                      where bl.billing_period_id = st.billing_period_id
+                                                        and bl.payer_profile_id = st.profile_id)
+                              then '' else ' NOT THE SUM' end, ', ' order by m.short_code)
+      from public.billing_statements st
+      join public.memberships m on m.org_id = st.org_id and m.profile_id = st.profile_id
+     where st.billing_period_id = pg_temp.c('p_w')::bigint),
+   'DINH 80000 2, TEO 80000 2, VY 80000 2');
 
 --------------------------------------------------------------------- verdict
 

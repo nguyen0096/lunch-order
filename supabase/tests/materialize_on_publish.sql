@@ -9,7 +9,8 @@
 -- used to carry: publish_menu still orders for every weekday rule and plan and
 -- for nobody who skipped or left, a one-dish menu still gives those orders its
 -- dish, the hourly tick still announces the day once, and a republish still
--- orders nobody twice and revives no cancelled order.
+-- orders nobody twice and revives no cancelled order. And publish_menu is the
+-- only way a browser begins a day.
 --
 -- IT CALLS `private.run_hourly_tick()`, WHICH LOOPS EVERY ACTIVE OFFICE IN THE
 -- DATABASE. Do not point this file at production.
@@ -254,22 +255,22 @@ insert into probe values
 
 --------------------------------------------- P6 there is no other way to begin
 
+-- publish_menu is the only way a browser begins a day: a direct insert would
+-- be a published day with no dishes, ordered for and announced.
 do $$ begin
   perform pg_temp.act('adm');
-  insert into probe values ('P6 an admin''s insert straight to the table is published too',
+  insert into probe values ('P6 an admin cannot insert a menu straight into the table',
     pg_temp.try(format($q$insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
                           values (%s, %L::date, now() + interval '10 days', %L::uuid)$q$,
-      pg_temp.c('org_a'), pg_temp.c('direct'), pg_temp.c('adm'))), 'ok');
-  insert into probe values ('P6 nor can a day begin locked',
-    pg_temp.try(format($q$insert into public.menus (org_id, service_date, order_cutoff_at, created_by, status)
-                          values (%s, %L::date, now() + interval '10 days', %L::uuid, 'locked')$q$,
-      pg_temp.c('org_a'), pg_temp.c('empty'), pg_temp.c('adm'))),
-    '55000 a menu starts out published; locked is not where a day begins');
-  insert into probe values ('P6 or cancelled',
-    pg_temp.try(format($q$insert into public.menus (org_id, service_date, order_cutoff_at, created_by, status)
-                          values (%s, %L::date, now() + interval '10 days', %L::uuid, 'cancelled')$q$,
-      pg_temp.c('org_a'), pg_temp.c('empty'), pg_temp.c('adm'))),
-    '55000 a menu starts out published; cancelled is not where a day begins');
+      pg_temp.c('org_a'), pg_temp.c('direct'), pg_temp.c('adm'))),
+    '42501 permission denied for table menus');
+  perform pg_temp.act('teo');
+  insert into probe values ('P6 a member neither',
+    pg_temp.try(format($q$insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
+                          values (%s, %L::date, now() + interval '10 days', %L::uuid)$q$,
+      pg_temp.c('org_a'), pg_temp.c('direct'), pg_temp.c('teo'))),
+    '42501 permission denied for table menus');
+  perform pg_temp.act('adm');
   insert into probe values ('P6 and a published day does not go back to draft',
     pg_temp.try(format($q$update public.menus set status = 'draft' where org_id = %s and service_date = %L::date$q$,
       pg_temp.c('org_a'), pg_temp.c('two'))),
@@ -277,9 +278,10 @@ do $$ begin
 end $$;
 reset role;
 insert into probe values
-  ('P6 the direct insert ordered for the rules, as a publish does',
-   pg_temp.orders_on('org_a', 'direct'),
-   'HOA standing placed -; TEO standing placed -'),
+  ('P6 the refused insert left no day and no order',
+   (select count(*)::text from public.menus where org_id = pg_temp.c('org_a')::bigint
+     and service_date = pg_temp.c('direct')::date) || ' ' || pg_temp.orders_on('org_a', 'direct'),
+   '0 none'),
   ('P6 and draft is not a status at all, even for the service role',
    pg_temp.try(format($q$insert into public.menus (org_id, service_date, order_cutoff_at, created_by, status)
                          values (%s, %L::date, now() + interval '10 days', %L::uuid, 'draft')$q$,
@@ -293,7 +295,7 @@ do $$ begin
   insert into probe values
     ('P7 a member reads every menu of the office, and its dishes',
      (select count(*)::text from public.menus) || ' '
-       || (select count(*)::text from public.menu_items), '4 4'),
+       || (select count(*)::text from public.menu_items), '3 4'),
     ('P7 and none of another office''s',
      (select count(*)::text from public.menus where org_id = pg_temp.c('org_b')::bigint), '0');
 end $$;
