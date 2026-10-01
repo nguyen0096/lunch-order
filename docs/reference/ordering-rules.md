@@ -167,8 +167,11 @@ withdrawn or undone (20261020100100). The Board holds admins to the member's win
 
 Billing lines are written only by `run_billing`: when the tick closes a week,
 when an admin settles one, on every correction, when a pass is accepted,
-declined or withdrawn (`trg_transfer_rebills`, 20261004100000), and when lunch
-is cancelled (`trg_menu_cancelled`, 20261022100300). A member's own
+declined or withdrawn (`trg_transfer_rebills`, 20261022100300), and when lunch
+is cancelled (`trg_menu_cancelled`, 20261022100300). A correction, a pass
+answer and a cancel each take the office-week key before they look the week's
+billing period up, so none misses a period another is creating at the same
+moment. A member's own
 order change reaches the bill at the next of those. A settled week is never
 recomputed, and money already matched to it stays there
 (`private.reallocate`, 20261007090000).
