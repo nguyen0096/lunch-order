@@ -46,5 +46,5 @@ trigger. This is correct, not a limitation to work around: it is the same
 mechanism that stops a member with a wrong system clock ordering late.
 
 **So to test behaviour rather than appearance, move the data.** `mock_week.sql`
-seeds a menu for every state (locked, cutoff passed, open, draft, absent)
+seeds a menu for every state (locked, cutoff passed, open, cancelled, absent)
 relative to today, which is what actually exercises the rules.

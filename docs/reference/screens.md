@@ -225,9 +225,8 @@ sentence if refused, e.g. `ordering for 23/09 closed at 21:00 22/09`.
 ### Skipping and planning a day ahead
 
 On your own row, a day **ahead of its menu** is one tap away from the other
-side of your standing days. That is a day after today, whose menu is absent or
-still a draft, on which you have no order row of any status. Only your own row,
-admin or not.
+side of your standing days. That is a day after today with no menu yet, so no
+order row of yours either. Only your own row, admin or not.
 
 | Cell | Means | Tap |
 | --- | --- | --- |
@@ -545,8 +544,8 @@ the week is settled`, `Closed at 21:00 30/09`, `Closes 21:00 01/10`), and each
 dish with `3 people, 4 portions`, its price and **Reprice**. Reprice opens the
 reprice dialog, which counts people and portions and states the money going
 onto bills and coming off them separately; on a day not served yet the field
-reads `New price` rather than `What the caterer charged`. A day with no menu,
-or a draft, says why and links to the Menu screen on that date
+reads `New price` rather than `What the caterer charged`. A day with no menu
+says why and links to the Menu screen on that date
 (`#/o/<slug>/menu?date=<date>`).
 
 ### Cells
@@ -562,7 +561,7 @@ admin changed it since.
 | a meal | solid `border-strong` outline, the dish (`× 2` above one portion), the note held to two lines, then the provenance word |
 | no price yet | `Price to come` on a `warn-subtle` chip; the week cannot settle while it is there |
 | eating, no dish | dashed outline, `no dish yet` |
-| passed and accepted, on the giver's row | `surface-sunken`, the dish struck through, `to Dinh` |
+| passed and accepted, on the giver's row | `surface-sunken`, the dish struck through (`× 2` above one portion), `to Dinh` |
 | received, on the recipient's row | their own cell as usual, plus `+ 1 from Tèo`, with the portions the meal brought |
 | offer waiting | dashed accent edge, `offered to Thảo Vy` |
 | nothing, day open to record | hairline and a faint `+` |
@@ -577,7 +576,6 @@ Each cell is one button whose label speaks the whole state, the note in full:
 | closed or cooking (cutoff passed, today or ahead) | open to record, and every dialog carries the cutoff warning | |
 | served | open to record | |
 | no menu | inert | `No menu for Tue 22 Sept. Add the day on the Menu screen to record a lunch on it.` |
-| draft | inert | `The menu for Fri 2 Oct isn't published yet` |
 | cancelled | inert | `Lunch was cancelled on Thu 24 Sept` |
 | any day of a settled week | read only | the notice at the top |
 
@@ -691,9 +689,9 @@ publish".
   down is only giving up in the same publish (a swap, or such a chain).
   Publish carries the reason and asks for one rename to be published first.
 
-There is no un-publish. A published menu is editable in place, so it only ever
-hid a day from members while lunch went on being cooked. Calling lunch off is
-Cancel, which says so.
+There is no draft and no un-publish: a day has a published menu or none.
+A published menu is editable in place, and calling lunch off is Cancel, which
+says so.
 
 When orders close sits beside the service date, as a date and a time in the
 office's zone. It defaults to the evening before at the org's default cutoff and
@@ -710,8 +708,7 @@ What publishing, editing and cancelling do is in
 
 | State | |
 | --- | --- |
-| no menu for the date | empty editor, paste prompt |
-| draft | editable, Publish enabled once it has a dish |
+| no menu for the date | empty editor, paste prompt; Publish enabled once it has a dish |
 | published | editable with a warning naming who has ordered each dish |
 | a saved dish left out of the list | under Will be removed, with Keep; Publish unavailable, with the reason, if it was ever chosen, cancelled or not |
 | locked | read only, with the reason: orders have gone to the caterer |

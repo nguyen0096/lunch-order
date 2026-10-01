@@ -70,8 +70,7 @@ exception ran `materialize_open_menus`, which locked every office's open menus
 ordered by date alone: two offices' writes could deadlock, and every member
 toggling a weekday held up every admin everywhere. Now a rule change sweeps its
 own office's menus of its weekday, an exception its own date, under the office's
-materialize lock, in (date, id) order, drafts included so a publish made straight
-on the table is waited out. `publish_menu` and `set_standing_exception` take the
+materialize lock, in (date, id) order. `publish_menu` and `set_standing_exception` take the
 same lock, which closes the gap one transaction opened: a skip written while a
 brand new menu was being published found no menu, and the publish could not see
 the skip.
@@ -338,8 +337,8 @@ The last two are derived on every read, by `private.day_stage` in the database
 and `dayStage` in `shared/gating.ts`, never written to a column. A stored stage
 needs a job to advance it, the hourly tick is the only job there is, and an hour
 is long enough for somebody to hand on a meal that is already on a plate.
-`menus.status` stays what it always was -- draft, published, locked, cancelled
--- and remains the thing a person sets. These two stages belong to the clock,
+`menus.status` (published, locked, cancelled) remains the thing a person
+or the cutoff sets. These two stages belong to the clock,
 and the clock needs no column.
 
 **What each stage forbids.** After `locked`, nobody changes an order, admin
@@ -353,16 +352,22 @@ could still give away a lunch three days eaten, as long as the week had not
 been billed. The week being open for billing is not the same fact as the day
 being open for changes, and one had been standing in for the other.
 
-**An admin is exempt from all of it, on purpose.** Correcting what was recorded
+**An admin is exempt from all of it on the Orders screen, on purpose.** Correcting what was recorded
 on a past day is most of why an admin touches an order or a transfer at all.
 What an admin does to a finished day is bookkeeping about a lunch that happened.
-What a member would be doing is changing who ate it.
+What a member would be doing is changing who ate it. The exemption lives in
+the Orders functions, which audit it, not on the table: an admin's direct
+write to somebody else's pass is refused like anybody's.
 
-**Un-publishing was removed rather than fixed.** A published menu is editable in
-place, so un-publishing only ever hid a day from members while lunch went on
-being cooked, which is a state with no meaning to anybody. Calling lunch off is
-Cancel, which says so. The `published -> draft` transition is still legal in
-`enforce_menu_lifecycle`; nothing in the app reaches it.
+**There is no draft: a day has lunch or it does not.** The owner's rule. A
+published menu is editable in place, so a draft, like un-publishing before it,
+only ever hid a day from members while lunch went on being cooked, which is a
+state with no meaning to anybody. Calling lunch off is Cancel, which says so.
+`publish_menu` had long inserted a draft and published it in one transaction,
+so production never held one; keeping the status meant a branch in every
+function, policy and screen for a state nobody could reach. A menu now starts
+out published, and its insert materializes standing orders, which a trigger
+already did for menus inserted published (20261022100000).
 
 **Reopening went the same way, and further: the database refuses it.** It
 existed for the cutoff that closed a day by mistake, and it paid for that with
@@ -377,17 +382,17 @@ the bill, rather than by reopening ordering and calling a correction an order.
 read it; nothing wrote it until the Board did. The write is
 `set_standing_exception(org, date, 'skip' | 'force' | null)`, and direct
 writes to the table are revoked, because what makes an exception mean anything
-is not something RLS can say: the date is after today in the office's zone, its
-menu is absent or a draft, and the caller has no order row on it. After
+is not something RLS can say: the date is after today in the office's zone and
+it has no menu yet. After
 publishing, the materializer has already run, so a skip written then would sit
 beside an order that says the opposite. From that point the day is ordered or
 cancelled like any other. The function takes no profile: it writes for
 `auth.uid()` and nobody else, and admins do not get it for others.
 
-It takes the office's materialize lock and then a `FOR SHARE` lock on the day's
-draft menu before writing, so a publish arriving at the same moment waits and
-its materializer sees the exception, and a skip arriving during a publish waits
-and then sees the menu out.
+It takes the office's materialize lock before reading the day's menu, the lock
+`publish_menu` takes before inserting one, so a publish arriving at the same
+moment waits and its materializer sees the exception, and a skip arriving
+during a publish waits and then sees the menu out.
 
 **Exceptions outlive changes to the rule.** Turning a weekday off in Settings
 does not clear its skips, and turning one on does not clear its plans. An
@@ -461,7 +466,12 @@ hourly tick pushes to Telegram -- and all three quote
 `memberships.payment_ref`. `billing_statements.payment_ref` still carries the
 week it was issued in and is kept only so that references already printed on
 bills people are holding go on matching; `private.payer_from_memo` reads the
-person's first and falls back to it, longest match winning.
+person's first and falls back to it, longest match winning, newest week first.
+It is not unique. The ISO week has no year, so a person billed in week 40 twice
+a year apart gets the same reference, and the unique key that refused the
+second failed the whole re-bill. Adding the year was not worth it: people reuse
+one payment note from transfer to transfer, so the week reference was never
+what identified a statement (20261022100200).
 
 **What a person is shown is that core with their office in front of it.**
 `TEST LUNCH DINH`, composed by `composePaymentRef` in
@@ -517,7 +527,7 @@ where an admin also orders for anybody on request, so the same writes now reach
 any day whose menu is published, before or after the cutoff, until the week is
 settled. After the cutoff it only warns, in the dialog beside the button: the
 caterer may already be cooking, and an extra step would be friction on the
-case that is most often a late verbal order. A draft or cancelled day is
+case that is most often a late verbal order. A cancelled day is
 refused in the database rather than only hidden. A past day with no menu is
 sent to the Menu screen, because a day with no dishes and prices has nothing to
 bill against and Menu already handles past days.
@@ -528,7 +538,9 @@ and undo an accepted one. The admin is recording what two people already
 agreed, so asking the recipient to accept again in the app adds nothing, and
 refusing to let the admin answer would leave a meal on offer until the
 recipient opened the app. Each is audited and messaged to both people, which
-the old direct insert never was.
+the old direct insert never was. The owner's rule is that an admin's change is
+always on the record, so that insert is now refused rather than left as a
+quieter second way (20261022100100).
 
 **An undone pass is `undone`, not `cancelled`.** `cancelled` already means an
 offer withdrawn before anybody answered, a pass that never took effect.
