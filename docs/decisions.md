@@ -77,8 +77,10 @@ the skip.
 
 Direct table writes stay granted for now, because the SPA deployed before these
 functions still makes them. Revoking INSERT, UPDATE and DELETE on `orders`,
-`order_items`, `menus` and `menu_items` for `authenticated` is a later
-migration, once that build is gone.
+`order_items` and `menu_items`, and UPDATE and DELETE on `menus`, for
+`authenticated` is a later migration, once that build is gone. INSERT on
+`menus` went first (20261022100000): with no draft, a direct insert would be a
+published day with no dishes, and no build has made one since `publish_menu`.
 
 **Its own repository.** GitHub Actions only reads workflows from the repository
 root. While this lived at `app/lunch-order/` inside `nexus-infra`, CI had never

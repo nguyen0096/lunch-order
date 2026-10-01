@@ -45,9 +45,9 @@ stays open (`hold_period_open_while_unpriced`, 20260928100000).
 
 | From → to | Allowed when | What it triggers | Enforced by |
 | --- | --- | --- | --- |
-| no menu → published | `publish_menu` with at least one dish. A browser's own insert is published too, and may not start `locked` or `cancelled` | standing slots become orders, if the date is today or later and the cutoff is ahead, with the dish if there is only one; the menu message on the next hourly tick | `publish_menu`, `enforce_menu_lifecycle` (20261022100000), `menus_materialize_on_insert` (20260911180000), `trg_menu_published_materialize` (20261022100000), `run_hourly_tick` (20261009100000) |
+| no menu → published | `publish_menu` with at least one dish, the only way a browser begins a day: no browser role holds INSERT on `menus` | standing slots become orders, if the date is today or later and the cutoff is ahead, with the dish if there is only one; the menu message on the next hourly tick | `publish_menu`, `enforce_menu_lifecycle` (20261022100000), `menus_materialize_on_insert` (20260911180000), `trg_menu_published_materialize` (20261022100000), `run_hourly_tick` (20261009100000) |
 | published → locked | the first hourly tick after the cutoff | nothing else | `run_hourly_tick` |
-| published → cancelled | stage is open | every placed order on the menu is cancelled | `enforce_menu_lifecycle`, `trg_menu_cancelled` (20261003100200) |
+| published → cancelled | stage is open | every placed order on the menu is cancelled, and the week re-billed | `enforce_menu_lifecycle`, `trg_menu_cancelled` (20261022100300) |
 | locked → published | never | | `refuse_reopen` (20261006100000) |
 | locked → cancelled | never in practice: the stage check refuses it | | `enforce_menu_lifecycle` |
 | cancelled → anything | never | | `enforce_menu_lifecycle` |
@@ -62,8 +62,10 @@ stays open (`hold_period_open_while_unpriced`, 20260928100000).
 - **A past day** can be created and published by an admin. Publishing it
   materializes no standing orders: the admin records who ate
   (`trg_menu_published_materialize`, 20261022100000).
-- **Cancelling lunch** cancels the orders, which takes them out of billing.
-  Exceptions stay. Nothing is sent to Telegram, and a menu message already
+- **Cancelling lunch** cancels the orders and re-bills the day's week in the
+  same transaction, so a statement already written stops charging them and
+  any credit it held is the person's again. A week with no billing period has
+  nothing to re-bill, and a settled week is never re-billed. Exceptions stay. Nothing is sent to Telegram, and a menu message already
   sent is not withdrawn.
 
 ## Menu contents
@@ -164,8 +166,9 @@ withdrawn or undone (20261020100100). The Board holds admins to the member's win
 | passed and accepted | the recipient | `v_order_charges.payer_profile_id` |
 
 Billing lines are written only by `run_billing`: when the tick closes a week,
-when an admin settles one, on every correction, and when a pass is accepted,
-declined or withdrawn (`trg_transfer_rebills`, 20261004100000). A member's own
+when an admin settles one, on every correction, when a pass is accepted,
+declined or withdrawn (`trg_transfer_rebills`, 20261004100000), and when lunch
+is cancelled (`trg_menu_cancelled`, 20261022100300). A member's own
 order change reaches the bill at the next of those. A settled week is never
 recomputed, and money already matched to it stays there
 (`private.reallocate`, 20261007090000).
