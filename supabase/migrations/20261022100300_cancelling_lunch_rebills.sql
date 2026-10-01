@@ -7,16 +7,76 @@
 -- that did not happen.
 --
 -- Now the trigger re-bills the day's week in the same transaction, when the
--- week has a period and it is open. No period means nothing was ever billed;
--- a settled week is never re-billed, and a browser cannot cancel a day in one
--- anyway, since enforce_menu_lifecycle allows cancelling only while the day is
--- open.
+-- week has a period and it is open. A settled week is never re-billed, and a
+-- browser cannot cancel a day in one anyway, since enforce_menu_lifecycle
+-- allows cancelling only while the day is open. A cancel creates no period.
 --
--- Lock order: the cancel already holds the menu row; the week's lock is taken
--- before the orders are written, then run_billing takes the people, payments
--- and statements. So a correction on the same week (menu FOR SHARE, then the
--- week) waits for the menu, and one on another day of the week waits for the
--- week, never the other way round.
+-- The week may have no period yet while a correction is creating its first
+-- one: correction_period makes the period and bills the week, reading the
+-- day's orders as placed, and an unlocked lookup here would not see that
+-- period and would re-bill nothing, leaving lines on cancelled orders. The
+-- week's own lock is keyed on the period's id, which does not exist yet, so
+-- both take an office-week key first, by (office, week start), before looking
+-- the period up. Whichever is second then sees the other's work: a cancel
+-- after the correction finds the period and re-bills it; a correction after
+-- the cancel bills the orders already cancelled.
+--
+-- Lock order: the menu (the cancel's own update; a correction's FOR SHARE),
+-- then the office-week key, then the week, then the orders, then run_billing's
+-- people, payments and statements. Nothing takes the office-week key while
+-- holding a week lock. The hourly tick creates and bills only the week that
+-- ended yesterday, which has no day a browser can still cancel, and
+-- ensure_period creates a period without billing, so neither needs the key.
+
+create or replace function private.lock_office_week(p_org_id bigint, p_date date)
+returns void
+language sql
+set search_path to ''
+as $fn$
+  select pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended(
+    'lunch.office_week:' || o.id::text || ':'
+      || (p_date - ((extract(isodow from p_date)::int - o.billing_week_starts_on + 7) % 7))::text,
+    0))
+    from public.organizations o where o.id = p_org_id;
+$fn$;
+
+revoke execute on function private.lock_office_week(bigint, date) from public, anon, authenticated;
+
+-- As in 20261007100200, taking the office-week key before it can create the
+-- period.
+create or replace function private.correction_period(p_org_id bigint, p_service_date date)
+returns bigint
+language plpgsql
+set search_path to ''
+as $function$
+declare v_id bigint; v_status text;
+begin
+  perform private.lock_office_week(p_org_id, p_service_date);
+
+  v_id := public.ensure_billing_period(p_org_id, p_service_date);
+  if v_id is null then
+    raise exception 'that week overlaps one already on the books'
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  perform pg_advisory_xact_lock(hashtext('lunch.run_billing'), v_id::int);
+
+  select bp.status into v_status from public.billing_periods bp where bp.id = v_id;
+
+  if v_status = 'closed' then
+    raise exception
+      'the week of % has been settled, so it can no longer be corrected',
+      to_char(p_service_date, 'DD/MM')
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+  if v_status = 'void' then
+    raise exception 'the week of % is void, so there is nothing to correct',
+      to_char(p_service_date, 'DD/MM')
+      using errcode = 'object_not_in_prerequisite_state';
+  end if;
+
+  return v_id;
+end $function$;
 
 create or replace function public.trg_menu_cancelled()
 returns trigger
@@ -26,6 +86,8 @@ set search_path to ''
 as $fn$
 declare v_period bigint; v_status text;
 begin
+  perform private.lock_office_week(new.org_id, new.service_date);
+
   select bp.id into v_period
     from public.billing_periods bp
    where bp.org_id = new.org_id
