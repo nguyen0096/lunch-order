@@ -124,9 +124,9 @@ select 'bown', 'a70a0000-0000-0000-0000-000000000004';
 insert into ctx
 select k, (private.today_in(o.timezone) + n)::text
   from public.organizations o
-  cross join (values ('open', 14), ('late', 15), ('drafty', 16), ('called', 17),
+  cross join (values ('open', 14), ('late', 15), ('called', 17),
                      ('locked', 18), ('fresh', 21), ('empty', 23), ('twice', 24),
-                     ('sweep', 29), ('sweep_off', 30), ('sweep_draft', 36),
+                     ('sweep', 29), ('sweep_off', 30), ('sweep_shut', 36),
                      ('settled', -14)) as d(k, n)
  where o.slug = 'atom-a';
 
@@ -136,6 +136,7 @@ values (pg_temp.c('org_a')::bigint, pg_temp.c('teo')::uuid,
         extract(isodow from pg_temp.c('open')::date)::int, true);
 
 -- Menus are built as the connection's own role, which every guard exempts.
+-- Each is published from its insert, as every menu is; its dishes follow.
 create function pg_temp.menu(p_org text, p_day text, p_cutoff timestamptz,
                              p_dishes text[], p_prices int[]) returns bigint
 language plpgsql as $fn$
@@ -160,24 +161,18 @@ declare
 begin
   perform pg_temp.menu('org_a', 'open',   v_future, array['Com ga', 'Pho', 'Het'], array[45000, 50000, 40000]);
   perform pg_temp.menu('org_a', 'late',   v_future, array['Bun cha'], array[40000]);
-  perform pg_temp.menu('org_a', 'drafty', v_future, array['Chao'], array[30000]);
   perform pg_temp.menu('org_a', 'called', v_future, array['Mi'], array[null]::int[]);
   perform pg_temp.menu('org_a', 'locked', v_future, array['Bun bo', 'Banh mi'], array[null, 30000]);
   perform pg_temp.menu('org_a', 'settled', now() - interval '15 days',
                        array['Com tam', 'Xoi'], array[35000, null]);
   perform pg_temp.menu('org_a', 'sweep',       v_future, array['Ga'], array[1000]);
   perform pg_temp.menu('org_a', 'sweep_off',   v_future, array['Ga'], array[1000]);
-  perform pg_temp.menu('org_a', 'sweep_draft', v_future, array['Ga'], array[1000]);
+  -- sweep's weekday too, but past its cutoff, so no sweep has reason to hold it.
+  perform pg_temp.menu('org_a', 'sweep_shut', now() - interval '1 hour', array['Ga'], array[1000]);
 
   -- Office B's menu on sweep's own date, published and open.
   insert into ctx values ('sweep_b', pg_temp.c('sweep'));
   perform pg_temp.menu('org_b', 'sweep_b', v_future, array['Ga'], array[1000]);
-
-  update public.menus set status = 'published'
-   where id in (pg_temp.c('m_open')::bigint, pg_temp.c('m_late')::bigint,
-                pg_temp.c('m_called')::bigint, pg_temp.c('m_locked')::bigint,
-                pg_temp.c('m_settled')::bigint, pg_temp.c('m_sweep')::bigint,
-                pg_temp.c('m_sweep_off')::bigint, pg_temp.c('m_sweep_b')::bigint);
 
   -- ADM's own record of a closed day, which is the one order off the clock.
   insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
@@ -295,9 +290,6 @@ do $$ begin
     '55000 ordering for ' || pg_temp.dm('late') || ' closed at '
       || (select to_char(order_cutoff_at at time zone 'Asia/Ho_Chi_Minh', 'HH24:MI DD/MM')
             from public.menus where id = pg_temp.c('m_late')::bigint));
-  insert into probe values ('M7 a draft is refused',
-    pg_temp.order_for('m_drafty', 'i_drafty_1'),
-    '55000 the menu for ' || pg_temp.dm('drafty') || ' is draft, not open for ordering');
   insert into probe values ('M8 a cancelled day is refused',
     pg_temp.order_for('m_called', 'i_called_1'),
     '55000 the menu for ' || pg_temp.dm('called') || ' was cancelled');
@@ -313,9 +305,9 @@ do $$ begin
     pg_temp.order_for('m_settled', 'i_settled_1'),
     '55000 lunch on ' || pg_temp.dm('settled')
       || ' is on a week that has been settled, so the record can no longer be changed');
-  insert into probe values ('M9 and an admin''s member order is on the clock like anyone''s',
-    pg_temp.order_for('m_drafty', 'i_drafty_1'),
-    '55000 the menu for ' || pg_temp.dm('drafty') || ' is draft, not open for ordering');
+  insert into probe values ('M9 and an admin is refused a cancelled day like anyone',
+    pg_temp.order_for('m_called', 'i_called_1'),
+    '55000 the menu for ' || pg_temp.dm('called') || ' was cancelled');
   reset role;
 end $$;
 
@@ -576,12 +568,12 @@ insert into probe values
 ----------------------------------------------- L the sweep stays in its office
 
 -- A rule switched on inside this transaction. pgrowlocks then says which
--- menus the sweep holds FOR NO KEY UPDATE. Publishing them above did that
+-- menus the sweep holds FOR NO KEY UPDATE. Creating them above did that
 -- too, and the lock lasts until rollback, so each is first rewritten into a
 -- version held by nothing stronger than the foreign keys' FOR KEY SHARE.
 update public.menus set source_text = 'swept'
  where id in (pg_temp.c('m_sweep')::bigint, pg_temp.c('m_sweep_off')::bigint,
-              pg_temp.c('m_sweep_draft')::bigint, pg_temp.c('m_sweep_b')::bigint);
+              pg_temp.c('m_sweep_shut')::bigint, pg_temp.c('m_sweep_b')::bigint);
 
 insert into probe values
   ('L0 control: before the rule, none of the four is held for no key update',
@@ -601,14 +593,14 @@ do $$ begin
 end $$;
 
 insert into probe values
-  ('L1 the sweep holds its own office''s open and draft menus of that weekday, and nothing else',
+  ('L1 the sweep holds its own office''s open menus of that weekday, and nothing else',
    (select string_agg(k, ',' order by k)
-      from (values ('m_sweep'), ('m_sweep_off'), ('m_sweep_draft'), ('m_sweep_b')) as x(k)
+      from (values ('m_sweep'), ('m_sweep_off'), ('m_sweep_shut'), ('m_sweep_b')) as x(k)
      where pg_temp.c(k)::bigint in (
              select m.id from public.menus m
              join extensions.pgrowlocks('public.menus') l on l.locked_row = m.ctid
             where l.modes && array['For No Key Update', 'For Update'])),
-   'm_sweep,m_sweep_draft'),
+   'm_sweep'),
   ('L2 and orders on the open one, whose one dish it takes',
    pg_temp.order_of('m_sweep', 'dinh'), 'standing placed Ga@1000'),
   ('L2 not on another weekday', pg_temp.order_of('m_sweep_off', 'dinh'), 'none');

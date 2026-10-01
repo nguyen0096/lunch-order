@@ -451,11 +451,8 @@ begin
   set local role authenticated;
   perform set_config('request.jwt.claims',
     '{"sub":"cccccccc-0000-0000-0000-000000000001","role":"authenticated"}', true);
-  -- An admin recording two other people's swap: accepted on insert.
-  insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
-  values ((select v::bigint from ctx where k = 'org_a'), pg_temp.order_of('GIVE', 'd2a'),
-          'cccccccc-0000-0000-0000-000000000008', 'cccccccc-0000-0000-0000-000000000009',
-          'cccccccc-0000-0000-0000-000000000001');
+  -- An admin recording two other people's swap: accepted at once.
+  perform public.record_pass(pg_temp.order_of('GIVE', 'd2a'), 'cccccccc-0000-0000-0000-000000000009');
   reset role;
 end $$;
 
@@ -475,28 +472,34 @@ insert into probe values
 
 insert into ctx values ('givb_st', pg_temp.st_id('GIVB', 'p2')::text);
 
+-- GIVB's own offers, made while the day was ahead: d2a is over now, when a
+-- member can no longer offer, so they are written as the fixture. The admin
+-- answers them for the people on them.
+create function pg_temp.offer_givb() returns bigint
+language sql as $fn$
+  insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
+  values ((select v::bigint from ctx where k = 'org_a'), pg_temp.order_of('GIVB', 'd2a'),
+          'cccccccc-0000-0000-0000-000000000010', 'cccccccc-0000-0000-0000-000000000009',
+          'cccccccc-0000-0000-0000-000000000010')
+  returning id;
+$fn$;
+
 do $$
+declare v_t bigint;
 begin
+  v_t := pg_temp.offer_givb();
+  insert into probe values
+    ('8 offered: the pass is pending',
+      (select status from public.meal_transfers where id = v_t), 'pending');
   set local role authenticated;
   perform set_config('request.jwt.claims',
     '{"sub":"cccccccc-0000-0000-0000-000000000001","role":"authenticated"}', true);
-  -- Created by GIVB, so it waits on TAKE rather than being recorded accepted.
-  insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
-  values ((select v::bigint from ctx where k = 'org_a'), pg_temp.order_of('GIVB', 'd2a'),
-          'cccccccc-0000-0000-0000-000000000010', 'cccccccc-0000-0000-0000-000000000009',
-          'cccccccc-0000-0000-0000-000000000010');
-  insert into probe values
-    ('8 offered: the pass is pending',
-      (select status from public.meal_transfers where order_id = pg_temp.order_of('GIVB', 'd2a')), 'pending');
-  update public.meal_transfers set status = 'declined'
-   where order_id = pg_temp.order_of('GIVB', 'd2a') and status = 'pending';
+  perform public.answer_pass(v_t, 'decline');
+  reset role;
 
-  insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
-  values ((select v::bigint from ctx where k = 'org_a'), pg_temp.order_of('GIVB', 'd2a'),
-          'cccccccc-0000-0000-0000-000000000010', 'cccccccc-0000-0000-0000-000000000009',
-          'cccccccc-0000-0000-0000-000000000010');
-  update public.meal_transfers set status = 'cancelled'
-   where order_id = pg_temp.order_of('GIVB', 'd2a') and status = 'pending';
+  v_t := pg_temp.offer_givb();
+  set local role authenticated;
+  perform public.answer_pass(v_t, 'withdraw');
   reset role;
 end $$;
 

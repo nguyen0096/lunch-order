@@ -197,7 +197,6 @@ begin
     ('ds', (v_t - 14)::text),    -- past, settled week
     ('dt', v_t::text),           -- today, cutoff passed: Cooking
     ('df', (v_t + 1)::text),     -- ahead, published, open
-    ('dd', (v_t + 2)::text),     -- ahead, draft
     ('dc', (v_t + 3)::text),     -- ahead, cancelled
     ('dn', (v_t + 4)::text);     -- no menu
 end $$;
@@ -209,7 +208,7 @@ select pg_temp.c('org_a')::bigint, pg_temp.c(d.k)::date, d.st,
        pg_temp.c('adm')::uuid,
        case when d.st = 'published' then now() end
   from (values ('dp','locked'), ('ds','locked'), ('dt','published'), ('df','published'),
-               ('dd','draft'), ('dc','cancelled')) as d(k, st);
+               ('dc','cancelled')) as d(k, st);
 
 insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by)
 values (pg_temp.c('org_b')::bigint, pg_temp.c('dp')::date, 'locked',
@@ -224,7 +223,6 @@ select m.id, m.org_id, v.nm, v.pr, v.pos
     ('ds', 'Com ga', 45000, 0),
     ('dt', 'Pho', 40000, 0),    ('dt', 'Banh canh', 55000, 1), ('dt', 'Mi Quang', null, 2),
     ('df', 'Com chien', 40000, 0), ('df', 'Bun rieu', 45000, 1),
-    ('dd', 'Mi Quang', 45000, 0),
     ('dc', 'Hu tieu', 45000, 0)
   ) as v(k, nm, pr, pos) on m.service_date = pg_temp.c(v.k)::date
  where m.org_id = pg_temp.c('org_a')::bigint;
@@ -276,7 +274,7 @@ select 'o_' || v.k || '_' || v.who, o.id::text
 insert into ctx
 select 'i_' || v.k || '_' || v.nm, mi.id::text
   from (values ('dp','Com ga'), ('dp','Bun bo'), ('dt','Pho'), ('dt','Banh canh'), ('dt','Mi Quang'),
-               ('df','Com chien'), ('df','Bun rieu'), ('dd','Mi Quang'), ('dc','Hu tieu'),
+               ('df','Com chien'), ('df','Bun rieu'), ('dc','Hu tieu'),
                ('ds','Com ga')) as v(k, nm)
   join public.menus m on m.org_id = pg_temp.c('org_a')::bigint and m.service_date = pg_temp.c(v.k)::date
   join public.menu_items mi on mi.menu_id = m.id and mi.name = v.nm;
@@ -292,7 +290,7 @@ insert into ctx select 't_ds', id::text from public.meal_transfers
 do $$
 declare k text; v_p bigint;
 begin
-  foreach k in array array['dp','ds','dt','df','dd','dc','dn'] loop
+  foreach k in array array['dp','ds','dt','df','dc','dn'] loop
     v_p := public.ensure_billing_period(pg_temp.c('org_a')::bigint, pg_temp.c(k)::date);
     insert into ctx values ('p_' || k, v_p::text) on conflict do nothing;
     perform public.run_billing(v_p);
@@ -307,12 +305,12 @@ end $$;
 insert into probe values
   ('control: settled week is closed',
    (select status from public.billing_periods where id = pg_temp.c('p_ds')::bigint), 'closed'),
-  ('control: stages are past, today, ahead, draft, cancelled',
+  ('control: stages are past, today, ahead, cancelled',
    (select string_agg(private.day_stage(m.org_id, m.service_date, m.status, m.order_cutoff_at), ','
                       order by m.service_date)
       from public.menus m where m.org_id = pg_temp.c('org_a')::bigint
        and m.service_date <> pg_temp.c('ds')::date),
-   'done,closed,open,draft,cancelled'),
+   'done,closed,open,cancelled'),
   ('control: ledger consistent before', pg_temp.ledger_faults(), '0 lines, 0 statements, 0 missing'),
   ('control: names come through', private.member_name(pg_temp.c('org_a')::bigint, pg_temp.c('adm')::uuid),
    'Admin An');
@@ -350,9 +348,9 @@ begin
     '42501 only an admin of this office can correct the record');
 
   perform pg_temp.act('adm');
-  insert into probe values ('A3 a draft day is refused',
-    pg_temp.try(format(cm, pg_temp.c('org_a'), pg_temp.c('dd'), pg_temp.c('lan'), pg_temp.c('i_dd_Mi Quang'))),
-    '55000 the menu for ' || to_char(pg_temp.c('dd')::date, 'DD/MM') || ' isn''t published yet');
+  insert into probe values ('A3 repricing a dish on a cancelled day is refused',
+    pg_temp.try(format('select public.reprice_dish(%s, 50000)', pg_temp.c('i_dc_Hu tieu'))),
+    '55000 lunch on ' || to_char(pg_temp.c('dc')::date, 'DD/MM') || ' was cancelled');
   insert into probe values ('A4 a cancelled day is refused',
     pg_temp.try(format(cm, pg_temp.c('org_a'), pg_temp.c('dc'), pg_temp.c('teo'), pg_temp.c('i_dc_Hu tieu'))),
     '55000 lunch on ' || to_char(pg_temp.c('dc')::date, 'DD/MM') || ' was cancelled');
@@ -365,10 +363,6 @@ begin
   insert into probe values ('A6 a settled week is refused',
     pg_temp.try(format(cm, pg_temp.c('org_a'), pg_temp.c('ds'), pg_temp.c('lan'), pg_temp.c('i_ds_Com ga'))),
     '55000 the week of ' || to_char(pg_temp.c('ds')::date, 'DD/MM') || ' has been settled, so it can no longer be corrected');
-  insert into probe values ('A7 an off-menu dish on a draft day is refused',
-    pg_temp.try(format('select public.correct_meal_off_menu(%s, %L::date, %L::uuid, %L, 30000)',
-      pg_temp.c('org_a'), pg_temp.c('dd'), pg_temp.c('lan'), 'Banh mi')),
-    '55000 the menu for ' || to_char(pg_temp.c('dd')::date, 'DD/MM') || ' isn''t published yet');
   insert into probe values ('A7 an off-menu dish on a cancelled day is refused',
     pg_temp.try(format('select public.correct_meal_off_menu(%s, %L::date, %L::uuid, %L, 30000)',
       pg_temp.c('org_a'), pg_temp.c('dc'), pg_temp.c('lan'), 'Banh mi')),
@@ -382,12 +376,16 @@ select 'A8 the refusals wrote nothing',
         and (select count(*) from public.order_corrections) = cnt.c
         and (select count(*) from public.notification_outbox) = cnt.n
         and (select count(*) from public.menu_items mi join public.menus m on m.id = mi.menu_id
-              where m.service_date in (pg_temp.c('dd')::date, pg_temp.c('dc')::date)
-                and m.org_id = pg_temp.c('org_a')::bigint) = 2)::text,
+              where m.service_date = pg_temp.c('dc')::date
+                and m.org_id = pg_temp.c('org_a')::bigint) = 1)::text,
        'true'
   from cnt;
 insert into probe values ('A8 the cancelled day''s order is still cancelled',
-  (select status from public.orders where id = pg_temp.c('o_dc_teo')::bigint), 'cancelled');
+  (select status from public.orders where id = pg_temp.c('o_dc_teo')::bigint), 'cancelled'),
+  ('A8 and its dish kept its price, and its line too',
+   (select mi.price_minor || ' ' || oi.unit_price_minor
+      from public.menu_items mi join public.order_items oi on oi.menu_item_id = mi.id
+     where mi.id = pg_temp.c('i_dc_Hu tieu')::bigint), '45000 45000');
 
 -- A9. An off-menu name that is a dish already on the day. With no price, it
 -- is refused: pricing it here would reach this line alone and leave everybody
@@ -753,7 +751,7 @@ do $$ begin
   insert into probe values ('C8 an admin cannot undo by writing the table',
     pg_temp.try(format($q$update public.meal_transfers set status = 'undone'
                           where order_id = %s and status = 'accepted'$q$, pg_temp.c('o_dp_teo'))),
-    '55000 this transfer is already accepted');
+    '42501 only the two people on a pass can change it; an admin answers or undoes it on the Orders screen');
   perform pg_temp.act('teo');
   insert into probe values ('C8 a member cannot answer for somebody',
     pg_temp.try(format($q$select public.answer_pass(%s, 'accept')$q$, pg_temp.c('t_dinh'))),

@@ -103,12 +103,8 @@ end $$;
 -- window and comfortably inside a four-hour one, which is the whole point of
 -- the last two probes in this file.
 --
--- Inserted as a draft and published by UPDATE, the way seed_fixtures.sql does
--- it, rather than inserted straight at 'published'. `enforce_menu_lifecycle` is
--- BEFORE UPDATE and is what stamps `published_at` and refuses a menu with no
--- dishes; an INSERT at 'published' skips it and leans on an AFTER INSERT
--- trigger that reads OLD. Publishing the way the app publishes is also the only
--- way this fixture stays true when that lifecycle changes.
+-- Published from its insert, as every menu is (20261022100000);
+-- `enforce_menu_lifecycle` stamps `published_at` there. The dishes follow.
 insert into public.menus (org_id, service_date, order_cutoff_at, created_by, source_text)
 select (select v::bigint from ctx where k='org_a'),
        (select v::date   from ctx where k='d1'),
@@ -120,9 +116,6 @@ select m.id, m.org_id, v.nm, v.pr, v.pos
   from public.menus m
   join lateral (values ('Cơm gà', 45000, 0), ('Bún bò', 60000, 1)) as v(nm, pr, pos) on true
  where m.org_id = (select v::bigint from ctx where k='org_a');
-
-update public.menus m set status = 'published'
- where m.org_id = (select v::bigint from ctx where k='org_a') and m.status = 'draft';
 
 -- Two people who owe and two who do not. Bốn can be reached, Sáu cannot, which
 -- is what separates "the 'unpaid' audience is wrong" from "the 'unpaid'

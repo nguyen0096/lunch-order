@@ -12,7 +12,7 @@
 --    0  published, cutoff gone -- today, already closed
 --   +1  published, cutoff open -- the normal case, orderable
 --   +2  published, cutoff open
---   +3  draft                  -- invisible to members, visible to admins
+--   +3  cancelled              -- lunch called off
 --   +4  (no menu)              -- the empty column
 --
 -- Re-runnable: it replaces the week each time.
@@ -52,10 +52,12 @@ begin
       ( 0, 'published', -1),
       ( 1, 'published',  1),
       ( 2, 'published',  2),
-      ( 3, 'draft',      3)
+      ( 3, 'cancelled',  3)
       -- +4 deliberately absent, to exercise the empty column
     ) as t(day_offset, want_status, cutoff_days)
   loop
+    -- Published from the insert, which materializes standing orders; locked
+    -- and cancelled come after, below.
     insert into public.menus (org_id, service_date, order_cutoff_at, created_by, source_text)
     values (v_org, v_today + r.day_offset,
             ((v_today + r.cutoff_days)::timestamp + time '21:00') at time zone v_tz,
@@ -70,12 +72,6 @@ begin
         ('Phở bò',        45000, 2)
       ) as d(name, price, pos);
 
-    -- Published or locked both have to pass through published first: the
-    -- lifecycle trigger only allows draft -> published -> locked.
-    if r.want_status in ('published','locked') then
-      update public.menus set status = 'published' where id = v_menu;
-      perform public.materialize_standing_orders(v_menu);
-    end if;
 
     -- Past days get real orders with dishes picked, so history and billing
     -- have something to work on.
@@ -100,8 +96,8 @@ begin
       on conflict (order_id, menu_item_id) do nothing;
     end if;
 
-    if r.want_status = 'locked' then
-      update public.menus set status = 'locked' where id = v_menu;
+    if r.want_status in ('locked', 'cancelled') then
+      update public.menus set status = r.want_status where id = v_menu;
     end if;
   end loop;
 end $$;

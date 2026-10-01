@@ -87,8 +87,8 @@ select 'bown', '5c1d0000-0000-0000-0000-000000000004';
 insert into ctx
 select k, (private.today_in(o.timezone) + n)::text
   from public.organizations o
-  cross join (values ('rule', 14), ('off', 15), ('undo', 21), ('draft', 28),
-                     ('kept', 35), ('order', 42), ('today', 0), ('yesterday', -1),
+  cross join (values ('rule', 14), ('off', 15), ('undo', 21), ('ahead', 28),
+                     ('kept', 35), ('today', 0), ('yesterday', -1),
                      ('far', 3650)) as d(k, n)
  where o.slug = 'skip-a';
 
@@ -96,34 +96,18 @@ insert into public.standing_orders (org_id, profile_id, weekday, is_enabled)
 select pg_temp.c('org_a')::bigint, p.pid::uuid, extract(isodow from pg_temp.c(d.k)::date)::int, true
   from (values ('dinh'), ('teo')) as p0(who)
   cross join lateral (select pg_temp.c(p0.who) as pid) p
-  cross join (values ('rule'), ('undo'), ('kept'), ('order')) as d(k)
+  cross join (values ('rule'), ('undo'), ('kept')) as d(k)
 on conflict (org_id, profile_id, weekday) do nothing;
 
--- A menu for the day, with one dish, published by the office's owner. The
--- same sequence the Menu screen performs: insert a draft, add a dish, flip it.
+-- A menu for the day, with one dish, published the way the Menu screen does,
+-- by whoever is acting (the office's owner, below).
 create function pg_temp.publish(p_day text) returns bigint
-language plpgsql as $fn$
-declare v_menu bigint; v_role text := current_user;
-begin
-  insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
-  values (pg_temp.c('org_a')::bigint, pg_temp.c(p_day)::date,
-          (pg_temp.c(p_day)::date - 1)::timestamp at time zone 'Asia/Ho_Chi_Minh',
-          pg_temp.c('adm')::uuid)
-  on conflict (org_id, service_date) do nothing
-  returning id into v_menu;
-  if v_menu is null then
-    select id into v_menu from public.menus
-     where org_id = pg_temp.c('org_a')::bigint and service_date = pg_temp.c(p_day)::date;
-  else
-    -- A browser writes no dish (20261018100100); the dish is the fixture's.
-    reset role;
-    insert into public.menu_items (menu_id, org_id, name, price_minor, position)
-    values (v_menu, pg_temp.c('org_a')::bigint, 'Com ga', 45000, 0);
-    execute format('set local role %I', v_role);
-  end if;
-  update public.menus set status = 'published' where id = v_menu;
-  return v_menu;
-end $fn$;
+language sql as $fn$
+  select p.menu_id from public.publish_menu(
+    pg_temp.c('org_a')::bigint, pg_temp.c(p_day)::date,
+    (pg_temp.c(p_day)::date - 1)::timestamp at time zone 'Asia/Ho_Chi_Minh',
+    '[{"name": "Com ga", "price_minor": 45000}]'::jsonb, 'standing_exceptions.sql', '{}'::jsonb) p;
+$fn$;
 
 create function pg_temp.orders_on(p_day text, p_who text) returns text
 language sql stable as $fn$
@@ -217,13 +201,13 @@ do $$ begin
     left(pg_temp.attempt(format(
       $q$insert into public.standing_order_exceptions (org_id, profile_id, service_date, action)
          values (%s, %L, %L, 'skip')$q$,
-      pg_temp.c('org_a'), pg_temp.c('dinh'), pg_temp.c('draft'))), 5),
+      pg_temp.c('org_a'), pg_temp.c('dinh'), pg_temp.c('ahead'))), 5),
     '42501');
   insert into probe values ('S4 nor for a colleague''s',
     left(pg_temp.attempt(format(
       $q$insert into public.standing_order_exceptions (org_id, profile_id, service_date, action)
          values (%s, %L, %L, 'skip')$q$,
-      pg_temp.c('org_a'), pg_temp.c('teo'), pg_temp.c('draft'))), 5),
+      pg_temp.c('org_a'), pg_temp.c('teo'), pg_temp.c('ahead'))), 5),
     '42501');
   insert into probe values ('S4 nor deletes one',
     left(pg_temp.attempt(format(
@@ -237,7 +221,7 @@ do $$ begin
     'ok 4');
 
   insert into probe values ('S4 an office you are not in is refused',
-    pg_temp.set_exc('org_b', 'draft', 'skip'),
+    pg_temp.set_exc('org_b', 'ahead', 'skip'),
     '42501 you are not a member of that office');
 
   perform pg_temp.act_as(pg_temp.c('adm'));
@@ -245,12 +229,12 @@ do $$ begin
     left(pg_temp.attempt(format(
       $q$insert into public.standing_order_exceptions (org_id, profile_id, service_date, action)
          values (%s, %L, %L, 'skip')$q$,
-      pg_temp.c('org_a'), pg_temp.c('dinh'), pg_temp.c('draft'))), 5),
+      pg_temp.c('org_a'), pg_temp.c('dinh'), pg_temp.c('ahead'))), 5),
     '42501');
 
   perform pg_temp.act_as(pg_temp.c('bown'));
   insert into probe values ('S4 the other office''s owner writes their own row, in their own office',
-    pg_temp.set_exc('org_b', 'draft', 'force'), 'ok 1');
+    pg_temp.set_exc('org_b', 'ahead', 'force'), 'ok 1');
   reset role;
 end $$;
 
@@ -260,7 +244,7 @@ insert into probe values
       from public.standing_order_exceptions e
       join public.organizations o on o.id = e.org_id
       join public.memberships m on m.org_id = e.org_id and m.profile_id = e.profile_id
-     where e.service_date = pg_temp.c('draft')::date),
+     where e.service_date = pg_temp.c('ahead')::date),
    'skip-b BOWN'),
   ('S4 anon cannot call it at all',
    has_function_privilege('anon', 'public.set_standing_exception(bigint, date, text)', 'execute')::text,
@@ -268,27 +252,9 @@ insert into probe values
 
 ------------------------------------------------ S5 days that are not for this
 
--- An order on a day whose menu went back to draft cannot happen through the
--- app, since un-publishing is refused once orders exist, so it is built with
--- triggers off. It is the check behind the menu check.
 do $$
 declare v_menu bigint;
 begin
-  v_menu := pg_temp.publish('order');
-  set local session_replication_role = replica;
-  update public.menus set status = 'draft', published_at = null where id = v_menu;
-  set local session_replication_role = origin;
-end $$;
-
-do $$
-declare v_menu bigint;
-begin
-  insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
-  values (pg_temp.c('org_a')::bigint, pg_temp.c('draft')::date,
-          (pg_temp.c('draft')::date - 1)::timestamp at time zone 'Asia/Ho_Chi_Minh',
-          pg_temp.c('adm')::uuid)
-  returning id into v_menu;
-
   set local role authenticated;
   perform pg_temp.act_as(pg_temp.c('dinh'));
 
@@ -302,29 +268,28 @@ begin
     pg_temp.set_exc('org_a', 'rule', null),
     '55000 the menu for ' || to_char(pg_temp.c('rule')::date, 'DD/MM')
       || ' is already out, so order or cancel that day instead');
-  insert into probe values ('S5 a day with an order of yours is refused',
-    pg_temp.set_exc('org_a', 'order', 'skip'),
-    '55000 you already have an order on ' || to_char(pg_temp.c('order')::date, 'DD/MM')
-      || ', so change that instead');
-  insert into probe values ('S5 a draft menu is not out yet, so the day is still yours to skip',
-    pg_temp.set_exc('org_a', 'draft', 'skip'), 'ok 1');
+  insert into probe values ('S5 a day with no menu yet is still yours to skip',
+    pg_temp.set_exc('org_a', 'ahead', 'skip'), 'ok 1');
   insert into probe values ('S5 an action that is neither is refused',
-    left(pg_temp.set_exc('org_a', 'draft', 'maybe'), 5), '22023');
+    left(pg_temp.set_exc('org_a', 'ahead', 'maybe'), 5), '22023');
   insert into probe values ('S5 no date at all is refused',
     pg_temp.attempt(format('select public.set_standing_exception(%s, null, %L)',
       pg_temp.c('org_a'), 'skip')), '22023 A date is needed.');
 
   perform pg_temp.act_as(pg_temp.c('adm'));
+  v_menu := pg_temp.publish('ahead');
   update public.menus set status = 'cancelled' where id = v_menu;
   perform pg_temp.act_as(pg_temp.c('dinh'));
   insert into probe values ('S5 a cancelled day is refused',
-    left(pg_temp.set_exc('org_a', 'draft', null), 5), '55000');
+    pg_temp.set_exc('org_a', 'ahead', null),
+    '55000 the menu for ' || to_char(pg_temp.c('ahead')::date, 'DD/MM')
+      || ' is already out, so order or cancel that day instead');
   reset role;
 end $$;
 
 insert into probe values
-  ('S5 the refused skip on the day with an order wrote nothing',
-   pg_temp.exc('order', 'dinh'), 'none');
+  ('S5 the refused undo on the cancelled day left the skip in place',
+   pg_temp.exc('ahead', 'dinh'), 'skip');
 
 ----------------------------------------------- S6 the rule changes, they stay
 

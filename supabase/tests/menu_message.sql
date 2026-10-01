@@ -25,8 +25,8 @@ insert into public.memberships (org_id, profile_id, role, short_code)
 select o.id, 'e1e1e1e1-0000-0000-0000-000000000001', 'owner', 'CTD'
   from public.organizations o where o.slug = 'menu-msg';
 
--- One menu per case. Drafts, because menu_message reads the rows and not the
--- status, and a draft keeps the fixture clear of the publish triggers.
+-- One menu per case, published from the insert as every menu is. The office
+-- has no standing rules, so publishing creates nothing for these to trip on.
 insert into public.menus (org_id, service_date, order_cutoff_at, created_by, source_text)
 select o.id, v.d, v.cut, 'e1e1e1e1-0000-0000-0000-000000000001', 'menu_message.sql'
   from public.organizations o

@@ -148,19 +148,11 @@ select k, (private.today_in(o.timezone) + n)::text
 
 ------------------------------------------------- C publishing with one dish
 
--- Before it is published: DINH is down for the day without a dish, LAN has
+-- Before it is published, which is before the day has a menu at all: LAN has
 -- already said no, and NAM plans the day off his rules.
-insert into public.menus (org_id, service_date, order_cutoff_at, created_by)
-values (pg_temp.c('org_a')::bigint, pg_temp.c('one')::date, now() + interval '9 days',
-        pg_temp.c('adm')::uuid);
-insert into public.orders (org_id, menu_id, service_date, profile_id, source, status,
-                           created_by, cancelled_at)
-select pg_temp.c('org_a')::bigint, pg_temp.m('org_a', 'one'), pg_temp.c('one')::date,
-       pg_temp.c(w)::uuid, s, st, pg_temp.c(w)::uuid,
-       case when st = 'cancelled' then now() end
-  from (values ('dinh', 'member', 'placed'), ('lan', 'standing', 'cancelled')) as x(w, s, st);
 insert into public.standing_order_exceptions (org_id, profile_id, service_date, action)
-values (pg_temp.c('org_a')::bigint, pg_temp.c('nam')::uuid, pg_temp.c('one')::date, 'force');
+values (pg_temp.c('org_a')::bigint, pg_temp.c('lan')::uuid, pg_temp.c('one')::date, 'skip'),
+       (pg_temp.c('org_a')::bigint, pg_temp.c('nam')::uuid, pg_temp.c('one')::date, 'force');
 
 -- Each write is its own statement: a check in the same one would read the
 -- snapshot from before it.
@@ -171,10 +163,7 @@ insert into probe values
    'standing placed Com ga@45000*'),
   ('C1 a planned day gets it', pg_temp.order_of('org_a', 'one', 'nam'),
    'standing placed Com ga@45000*'),
-  ('C1 a member down without a dish gets it', pg_temp.order_of('org_a', 'one', 'dinh'),
-   'member placed Com ga@45000*'),
-  ('C2 a cancelled slot stays cancelled', pg_temp.order_of('org_a', 'one', 'lan'),
-   'standing cancelled -');
+  ('C2 a skipped slot gets no order', pg_temp.order_of('org_a', 'one', 'lan'), 'none');
 insert into probe values
   ('C3 eating without a dish on a one-dish menu is the dish',
    pg_temp.as_user('adm', format('select * from public.set_my_order(%s, null)',
