@@ -204,6 +204,58 @@ select 'pho_w' || n, mi.id::text from generate_series(1, 4) n
 insert into ctx values ('p_w', public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('w1')::date)::text);
 select public.run_billing(pg_temp.c('p_w')::bigint) is not null;
 
+-- R11 and R12: Monday and Friday of two weeks further out, never billed, so
+-- neither week has a billing period yet.
+insert into ctx
+select k, (private.today_in('Asia/Ho_Chi_Minh')
+           - (extract(isodow from private.today_in('Asia/Ho_Chi_Minh'))::int - 1) + n)::text
+  from (values ('q1', 42), ('q5', 46), ('u1', 49), ('u5', 53)) as d(k, n);
+insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by, published_at)
+select pg_temp.c('org')::bigint, pg_temp.c(k)::date, 'published', now() + interval '40 days',
+       pg_temp.c('adm')::uuid, now()
+  from unnest(array['q1', 'q5', 'u1', 'u5']) k;
+insert into public.menu_items (menu_id, org_id, name, price_minor, position)
+select m.id, m.org_id, 'Pho', 40000, 0 from public.menus m
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('q1')::date;
+insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
+select m.org_id, m.id, m.service_date, pg_temp.c(w)::uuid, 'member', pg_temp.c(w)::uuid
+  from public.menus m, (values ('teo'), ('dinh')) as x(w)
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('q1')::date;
+insert into public.order_items (order_id, org_id, profile_id, menu_id, menu_item_id)
+select o.id, o.org_id, o.profile_id, o.menu_id, mi.id
+  from public.orders o join public.menu_items mi on mi.menu_id = o.menu_id
+ where o.org_id = pg_temp.c('org')::bigint and o.service_date >= pg_temp.c('q1')::date;
+insert into ctx
+select 'pho_' || k, mi.id::text from unnest(array['q1', 'u1']) k
+  join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c(k)::date
+  join public.menu_items mi on mi.menu_id = m.id;
+
+-- A week's billing as it stands: its periods, lines on cancelled orders, and
+-- each statement against its lines.
+create function pg_temp.week_faults(p_day text) returns text
+language sql stable as $fn$
+  select (select count(*) from public.billing_periods bp
+           where bp.org_id = pg_temp.c('org')::bigint
+             and pg_temp.c(p_day)::date between bp.period_start and bp.period_end) || ' period, '
+      || (select count(*) from public.billing_lines bl
+            join public.billing_periods bp on bp.id = bl.billing_period_id
+            join public.orders o on o.id = bl.order_id
+           where bp.org_id = pg_temp.c('org')::bigint
+             and pg_temp.c(p_day)::date between bp.period_start and bp.period_end
+             and o.status <> 'placed') || ' lines on cancelled orders, '
+      || coalesce((select string_agg(m.short_code || ' ' || st.meals_minor
+                                     || case when st.meals_minor = (select coalesce(sum(bl.amount_minor), 0)
+                                                                      from public.billing_lines bl
+                                                                     where bl.billing_period_id = st.billing_period_id
+                                                                       and bl.payer_profile_id = st.profile_id)
+                                             then '' else ' NOT THE SUM' end, ', ' order by m.short_code)
+                     from public.billing_statements st
+                     join public.billing_periods bp on bp.id = st.billing_period_id
+                     join public.memberships m on m.org_id = st.org_id and m.profile_id = st.profile_id
+                    where bp.org_id = pg_temp.c('org')::bigint
+                      and pg_temp.c(p_day)::date between bp.period_start and bp.period_end), 'no statements');
+$fn$;
+
 ------------------------ R1 an admin answers while the member's accept queues
 
 -- C holds the week with a correction. A (admin) declines Teo's offer for
@@ -424,6 +476,40 @@ insert into probe values
       join public.memberships m on m.org_id = st.org_id and m.profile_id = st.profile_id
      where st.billing_period_id = pg_temp.c('p_w')::bigint),
    'DINH 80000 2, TEO 80000 2, VY 80000 2');
+
+------------- R11, R12 cancelling lunch meets the first correction of a week
+
+-- The week has no billing period. A correction makes the first one and bills
+-- the week; a cancel looking for the period cannot see one still uncommitted.
+-- Both take the office-week key before looking (20261022100300), so the second
+-- waits and then sees the first's work. Without it, R11 leaves Friday's meals
+-- billed on cancelled orders, and R12 the same the other way round.
+select pg_temp.open('a', 'adm2');
+insert into probe values ('R11 A orders for Vy on Monday, making the week''s first period',
+  pg_temp.run('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+    pg_temp.c('org'), pg_temp.c('q1'), pg_temp.c('vy'), pg_temp.c('pho_q1'))), 'ok');
+select pg_temp.open('b', 'adm');
+select pg_temp.send('b', format($q$update public.menus set status = 'cancelled'
+                                   where org_id = %s and service_date = %L::date$q$, pg_temp.c('org'), pg_temp.c('q5')));
+insert into probe values ('R11 cancelling Friday waits for it', pg_temp.busy('b'), 'waiting');
+insert into probe values ('R11 the correction commits', pg_temp.close('a'), 'ok');
+insert into probe values ('R11 then Friday is cancelled', pg_temp.finish('b'), 'ok');
+insert into probe values ('R11 and nothing is billed for Friday',
+  pg_temp.week_faults('q1'), '1 period, 0 lines on cancelled orders, DINH 40000, TEO 40000, VY 40000');
+
+select pg_temp.open('b', 'adm');
+insert into probe values ('R12 B cancels Friday first, the week still without a period',
+  pg_temp.run('b', format($q$update public.menus set status = 'cancelled'
+                             where org_id = %s and service_date = %L::date returning 'x'$q$,
+    pg_temp.c('org'), pg_temp.c('u5'))), 'ok');
+select pg_temp.open('a', 'adm2');
+select pg_temp.send('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+  pg_temp.c('org'), pg_temp.c('u1'), pg_temp.c('vy'), pg_temp.c('pho_u1')));
+insert into probe values ('R12 the week''s first correction waits for it', pg_temp.busy('a'), 'waiting');
+insert into probe values ('R12 the cancel commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R12 then the correction goes through', pg_temp.finish('a'), 'ok');
+insert into probe values ('R12 and bills nothing for Friday',
+  pg_temp.week_faults('u1'), '1 period, 0 lines on cancelled orders, DINH 40000, TEO 40000, VY 40000');
 
 --------------------------------------------------------------------- verdict
 
