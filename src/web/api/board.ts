@@ -504,9 +504,9 @@ export async function fetchTransfers(args: {
 }
 
 /**
- * Offer a meal to a colleague. The trigger fills in from_profile_id from the
- * order and, when an admin does this, marks it accepted immediately -- an
- * admin recording a swap has already confirmed it with both people.
+ * Offer my own meal to a colleague. The trigger fills in from_profile_id from
+ * the order and makes it a pending offer, for an admin too: an admin records
+ * somebody else's swap on the Orders screen, through `record_pass`.
  */
 export async function createTransfer(args: {
   orgId: number; orderId: number; toProfileId: string; createdBy: string;
