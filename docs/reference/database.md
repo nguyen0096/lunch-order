@@ -38,7 +38,7 @@ and whether it rolls back. The ones to know first:
 | `rebill_statements.sql` | a re-bill leaves every statement equal to its lines: a person's last meal of the week leaving (removed after an off-menu or menu correction, passed on, cancelled) deletes the statement and returns their credit, a changed dish or price updates it, a second meal shrinks it; credit over two weeks, a settled week, and a waived week whose lines go (a meal re-added is charged afresh, waiving it again says it is gone); declined and withdrawn passes move nothing, and nobody deletes a pass; the other office unchanged | no, rolls back |
 | `rebill_race.sql` | over dblink, three or four sessions on one person: payments arriving held open, a re-bill of their week (a removal, a reprice) and a payment moved (matched to this week, to another week, a stray applied, one that arrived while the re-bill waited), voided, or the week waived; each waits rather than deadlocks and nobody is left owing | **yes, then removes them**; local only, needs `dblink` |
 | `admin_orders.sql` | the Orders screen's writes: only an admin of the office may call `correct_meal`, `correct_meal_off_menu`, `remove_meal`, `record_pass`, `answer_pass` or `undo_pass`; a cancelled, menu-less or settled day is refused in their words, and `reprice_dish` refuses a cancelled day too; exact money on both sides of every write and nobody else moved; lines and statements agree with the record and nothing is billed twice; a pass is recorded, answered, withdrawn and undone, chains are refused, a correction after a pass lands on the payer; each write's audit row and message, including "ordered lunch for you" ahead; a member's own offer is always pending and a browser cannot write `undone`. No fixture holds credit, so no figure depends on a statement left behind by a week's last meal leaving | no, rolls back |
-| `admin_orders_race.sql` | over dblink: an admin answering an offer while the recipient accepts it, both ways round and with the week held by a third correction, never deadlocks; a pass meets the member cancelling or offering the same meal, both ways round; an undo waits for a correction on the same meal; a member's offer taken while the real `record_pass` holds the order goes through, and `record_pass` then names it, with `record_pass` paused between its order lock and its insert by a test-only trigger the file creates and drops (R7); cancelling lunch waits for a correction in flight and cancels the order it wrote (R8); cancelling lunch and a correction on another day of the same week wait for each other, both ways round, and leave every statement the sum of its lines (R9, R10) | **yes, then removes them**; local only, needs `dblink` |
+| `admin_orders_race.sql` | over dblink: an admin answering an offer while the recipient accepts it, both ways round and with the week held by a third correction, never deadlocks; a pass meets the member cancelling or offering the same meal, both ways round; an undo waits for a correction on the same meal; a member's offer taken while the real `record_pass` holds the order goes through, and `record_pass` then names it, with `record_pass` paused between its order lock and its insert by a test-only trigger the file creates and drops (R7); cancelling lunch waits for a correction in flight and cancels the order it wrote (R8); cancelling lunch and a correction on another day of the same week wait for each other, both ways round, and leave every statement the sum of its lines (R9, R10), including when the correction creates the week's first billing period, so nothing stays billed on a cancelled order (R11, R12) | **yes, then removes them**; local only, needs `dblink` |
 | `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
@@ -164,11 +164,18 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   no profile parameter), the day's stage and cutoff, and the settled week via
   `private.assert_week_open`, in the triggers' own words.
 - **Locks are taken in one order**: `private.lock_office_materialize(org)`, menu
-  rows by (org, date, id), a pass row (`meal_transfers`), the billing week's
-  advisory lock, dish rows, the order row, its lines. A correction holds its
+  rows by (org, date, id), a pass row (`meal_transfers`), the office-week key
+  (`private.lock_office_week`, by office and week start), the billing week's
+  advisory lock, dish rows, the order row, its lines. The office-week key
+  exists because the week's lock is keyed on its period, which may not exist
+  yet: `private.correction_period`, which can create the first period of a
+  week and bill it, and `trg_menu_cancelled` both take it before looking the
+  period up, so a cancel never misses a period a correction is creating, and
+  nothing takes it while holding a week. A correction holds its
   day's menu `FOR SHARE` (`FOR NO KEY UPDATE` to add a dish) before the week,
   so cancelling lunch waits for it. Cancelling lunch holds the menu and takes
-  the week before it writes the orders and re-bills (`trg_menu_cancelled`). A member answering an offer locks the pass
+  the office-week key and the week before it writes the orders and re-bills
+  (`trg_menu_cancelled`). A member answering an offer locks the pass
   and then, from `meal_transfers_rebill`, the week, so `answer_pass` and
   `undo_pass` take the pass before the week; `record_pass` reads the live pass
   without locking it and leaves the rest to `transfers_one_live_uk`, naming the
