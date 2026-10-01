@@ -18,6 +18,8 @@
 --   * The menu message. run_hourly_tick picks every published menu before its
 --     cutoff and dedupes by date; it never looked at the transition.
 --
+-- Browsers lose INSERT on menus, so publish_menu is the only way a day begins.
+--
 -- The rest of this file is every draft branch removed: the status check and
 -- default, the lifecycle, the day stage, the RLS that hid drafts from members,
 -- the standing exception's "absent or a draft", the sweep's drafts, the dish
@@ -34,9 +36,8 @@ alter table public.menus add constraint menus_status_check
   check (status in ('published', 'locked', 'cancelled'));
 alter table public.menus alter column status set default 'published';
 
--- As in 20261003100200, with no draft, and now on insert as well: a menu is
--- born published (the service role may seed other statuses), and the stamps
--- the draft -> published update used to set are set there.
+-- As in 20261003100200, with no draft, and now on insert as well, which
+-- stamps what the draft -> published update used to set.
 create or replace function public.enforce_menu_lifecycle()
 returns trigger
 language plpgsql
@@ -45,10 +46,6 @@ as $function$
 declare v_stage text;
 begin
   if tg_op = 'INSERT' then
-    if new.status <> 'published' and not private.is_service() then
-      raise exception 'a menu starts out published; % is not where a day begins', new.status
-        using errcode = 'object_not_in_prerequisite_state';
-    end if;
     if new.status = 'published' then
       new.published_at := coalesce(new.published_at, now());
       new.published_by := coalesce(new.published_by, (select auth.uid()));
@@ -154,6 +151,11 @@ create policy menu_items_select on public.menu_items
   using (org_id = any ((select private.my_org_ids())::bigint[]));
 
 ---------------------------------------------------------------- publishing
+
+-- publish_menu is the only way a browser creates a day. A direct insert made a
+-- draft nobody saw; without drafts it would be a published day with no dishes,
+-- ordered for and announced. The service role (seeds, tests) keeps INSERT.
+revoke insert on public.menus from anon, authenticated;
 
 -- As in 20261018100000, inserting the menu as published. The insert's own
 -- trigger materializes standing orders before the dishes exist, and the
