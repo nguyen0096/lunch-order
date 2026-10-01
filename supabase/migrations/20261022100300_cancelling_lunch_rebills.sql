@@ -21,12 +21,22 @@
 -- after the correction finds the period and re-bills it; a correction after
 -- the cancel bills the orders already cancelled.
 --
+-- A member answering an offer has the same gap: trg_transfer_rebills looked
+-- the period up unlocked, so an accept racing the week's first correction left
+-- the line on the giver while the pass read accepted. It takes the key too,
+-- after the pass row it is fired from. The admin pass RPCs already hold the
+-- key through correction_period, and taking it again is a no-op.
+--
 -- Lock order: the menu (the cancel's own update; a correction's FOR SHARE),
--- then the office-week key, then the week, then the orders, then run_billing's
--- people, payments and statements. Nothing takes the office-week key while
--- holding a week lock. The hourly tick creates and bills only the week that
--- ended yesterday, which has no day a browser can still cancel, and
--- ensure_period creates a period without billing, so neither needs the key.
+-- a pass row, then the office-week key, then the week, then the orders, then
+-- run_billing's people, payments and statements. Nothing in the app takes the
+-- office-week key while holding a week lock. The one exception is a single
+-- UPDATE cancelling days in two weeks, which takes the second week's key
+-- while holding the first's week lock and can deadlock (40P01) with a
+-- correction in the second week; the app cancels one day per statement. The
+-- hourly tick creates and bills only the week that ended yesterday, which has
+-- no day a browser can still cancel or pass, and ensure_period creates a
+-- period without billing, so neither needs the key.
 
 create or replace function private.lock_office_week(p_org_id bigint, p_date date)
 returns void
@@ -108,3 +118,26 @@ begin
   end if;
   return null;
 end $fn$;
+
+-- As in 20261004100000, taking the office-week key before the lookup.
+create or replace function public.trg_transfer_rebills()
+returns trigger
+language plpgsql
+security definer
+set search_path to ''
+as $function$
+declare v_period bigint; o public.orders%rowtype;
+begin
+  select * into o from public.orders where id = new.order_id;
+  perform private.lock_office_week(o.org_id, o.service_date);
+
+  select bp.id into v_period
+    from public.billing_periods bp
+   where bp.org_id = o.org_id
+     and o.service_date between bp.period_start and bp.period_end
+     and bp.status not in ('closed', 'void');
+  if v_period is null then return null; end if;
+
+  perform public.run_billing(v_period);
+  return null;
+end $function$;
