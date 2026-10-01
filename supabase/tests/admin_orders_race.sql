@@ -256,6 +256,54 @@ language sql stable as $fn$
                       and pg_temp.c(p_day)::date between bp.period_start and bp.period_end), 'no statements');
 $fn$;
 
+-- R13 and R14: Monday and Friday of two more weeks with no billing period, and
+-- Teo's Friday meal on offer to Dinh in each.
+insert into ctx
+select k, (private.today_in('Asia/Ho_Chi_Minh')
+           - (extract(isodow from private.today_in('Asia/Ho_Chi_Minh'))::int - 1) + n)::text
+  from (values ('s1', 56), ('s5', 60), ('z1', 63), ('z5', 67)) as d(k, n);
+insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by, published_at)
+select pg_temp.c('org')::bigint, pg_temp.c(k)::date, 'published', now() + interval '50 days',
+       pg_temp.c('adm')::uuid, now()
+  from unnest(array['s1', 's5', 'z1', 'z5']) k;
+insert into public.menu_items (menu_id, org_id, name, price_minor, position)
+select m.id, m.org_id, 'Pho', 40000, 0 from public.menus m
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('s1')::date;
+insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
+select m.org_id, m.id, m.service_date, pg_temp.c(w)::uuid, 'member', pg_temp.c(w)::uuid
+  from public.menus m, (values ('teo'), ('dinh')) as x(w)
+ where m.org_id = pg_temp.c('org')::bigint and m.service_date >= pg_temp.c('s1')::date;
+insert into public.order_items (order_id, org_id, profile_id, menu_id, menu_item_id)
+select o.id, o.org_id, o.profile_id, o.menu_id, mi.id
+  from public.orders o join public.menu_items mi on mi.menu_id = o.menu_id
+ where o.org_id = pg_temp.c('org')::bigint and o.service_date >= pg_temp.c('s1')::date;
+insert into ctx
+select 'pho_' || k, mi.id::text from unnest(array['s1', 'z1']) k
+  join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c(k)::date
+  join public.menu_items mi on mi.menu_id = m.id;
+insert into ctx
+select 'o_' || k || '_teo', o.id::text from unnest(array['s5', 'z5']) k
+  join public.orders o on o.org_id = pg_temp.c('org')::bigint and o.service_date = pg_temp.c(k)::date
+   and o.profile_id = pg_temp.c('teo')::uuid;
+insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
+select pg_temp.c('org')::bigint, pg_temp.c('o_' || k || '_teo')::bigint, pg_temp.c('teo')::uuid,
+       pg_temp.c('dinh')::uuid, pg_temp.c('teo')::uuid
+  from unnest(array['s5', 'z5']) k;
+insert into ctx
+select 't_' || k, t.id::text from unnest(array['s5', 'z5']) k
+  join public.meal_transfers t on t.order_id = pg_temp.c('o_' || k || '_teo')::bigint;
+
+-- Who the Friday meal is billed to, and the pass's status.
+create function pg_temp.friday_payer(p_day text) returns text
+language sql stable as $fn$
+  select t.status || ' ' || coalesce(string_agg(m.short_code, ','), 'unbilled')
+    from public.meal_transfers t
+    left join public.billing_lines bl on bl.order_id = t.order_id
+    left join public.memberships m on m.org_id = bl.org_id and m.profile_id = bl.payer_profile_id
+   where t.id = pg_temp.c('t_' || p_day)::bigint
+   group by t.status;
+$fn$;
+
 ------------------------ R1 an admin answers while the member's accept queues
 
 -- C holds the week with a correction. A (admin) declines Teo's offer for
@@ -510,6 +558,36 @@ insert into probe values ('R12 the cancel commits', pg_temp.close('b'), 'ok');
 insert into probe values ('R12 then the correction goes through', pg_temp.finish('a'), 'ok');
 insert into probe values ('R12 and bills nothing for Friday',
   pg_temp.week_faults('u1'), '1 period, 0 lines on cancelled orders, DINH 40000, TEO 40000, VY 40000');
+
+------------- R13, R14 a member's accept meets the first correction of a week
+
+-- The same gap as R11 for a member answering an offer: trg_transfer_rebills
+-- looks the period up, and a correction creating the week's first one is
+-- invisible until it commits. Both take the office-week key (20261022100300),
+-- so the meal ends on Dinh's bill whichever goes first.
+select pg_temp.open('a', 'adm2');
+insert into probe values ('R13 A orders for Vy on Monday, making the week''s first period',
+  pg_temp.run('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+    pg_temp.c('org'), pg_temp.c('s1'), pg_temp.c('vy'), pg_temp.c('pho_s1'))), 'ok');
+select pg_temp.open('b', 'dinh');
+select pg_temp.send('b', format($q$update public.meal_transfers set status = 'accepted' where id = %s$q$,
+  pg_temp.c('t_s5')));
+insert into probe values ('R13 Dinh accepting Teo''s Friday waits for it', pg_temp.busy('b'), 'waiting');
+insert into probe values ('R13 the correction commits', pg_temp.close('a'), 'ok');
+insert into probe values ('R13 then Dinh accepts', pg_temp.finish('b'), 'ok');
+insert into probe values ('R13 and Friday is on Dinh''s bill', pg_temp.friday_payer('s5'), 'accepted DINH');
+
+select pg_temp.open('b', 'dinh');
+insert into probe values ('R14 Dinh accepts first, the week still without a period',
+  pg_temp.run('b', format($q$update public.meal_transfers set status = 'accepted' where id = %s returning 'x'$q$,
+    pg_temp.c('t_z5'))), 'ok');
+select pg_temp.open('a', 'adm2');
+select pg_temp.send('a', format('select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s)',
+  pg_temp.c('org'), pg_temp.c('z1'), pg_temp.c('vy'), pg_temp.c('pho_z1')));
+insert into probe values ('R14 the week''s first correction waits for it', pg_temp.busy('a'), 'waiting');
+insert into probe values ('R14 the accept commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R14 then the correction goes through', pg_temp.finish('a'), 'ok');
+insert into probe values ('R14 and Friday is on Dinh''s bill', pg_temp.friday_payer('z5'), 'accepted DINH');
 
 --------------------------------------------------------------------- verdict
 
