@@ -141,9 +141,13 @@ lunch being cancelled, the member cancelling it or an admin removing it, the
 pass is withdrawn in the same transaction: `cancelled`, `decided_by` whoever
 cancelled the order, and a reason, `withdrawn: lunch on 24/09 was cancelled`
 or `withdrawn: the meal was cancelled`. Nobody is told, as for any withdrawal.
-The recipient who answers it anyway is refused: `this transfer is already
-cancelled`. Ordering again does not revive the pass; the member offers afresh
-(`orders_withdraw_pass`, `private.withdraw_pending_pass`, 20261023100100).
+The recipient who answers it anyway is refused. Accepting says why: `lunch on
+24/09 was cancelled`, `the lunch on 24/09 offered to you was cancelled, so
+there is no meal to accept`, or, once the order is placed again, `the lunch on
+24/09 was ordered again after this offer, so the offer no longer stands`.
+Declining says `this transfer is already cancelled`. Ordering again does not
+revive the pass; the member offers afresh (`orders_withdraw_pass`,
+`private.withdraw_pending_pass`, 20261023100100).
 
 The withdrawal skips a pass another transaction is answering at that moment
 rather than wait for it; if that answer is an accept, it came first. If it

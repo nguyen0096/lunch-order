@@ -283,9 +283,15 @@ An offer made to you appears on the cell of the meal it concerns, which is the
 giver's cell on their row, with Accept and Decline inline. A pending offer is
 legible on the board as the recipient's name on the cell, so nobody offers a
 meal that is already spoken for. Cancelling a meal that is on offer, or lunch
-being cancelled, withdraws the offer, so it leaves both cells; Accept or
-Decline from a board loaded before then is refused in the database's words,
-`this transfer is already cancelled`.
+being cancelled, withdraws the offer, so it leaves both cells. From a board
+loaded before then, Accept is refused in the database's words, `lunch on 24/09
+was cancelled`, `the lunch on 24/09 offered to you was cancelled, so there is
+no meal to accept`, or, once the giver has ordered again, `the lunch on 24/09
+was ordered again after this offer, so the offer no longer stands`; Decline
+gets `this transfer is already cancelled`. An offer the database would refuse
+to accept, on a cancelled order or on one placed again after the offer, gets
+no Accept or Decline at all (`offerStands`, `src/web/api/board.ts`); the giver
+still sees it on their own cell and can withdraw it.
 
 Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would

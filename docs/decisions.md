@@ -383,10 +383,11 @@ a lock: an offer belongs to the placement it was made on, and an accept is
 refused when the order was placed after the offer. `placed_at` was written
 only on insert and so could not tell two placements apart; stamping it on
 every placement, and freezing it otherwise, made it the stamp without a new
-column. An accepted pass
-is not undone the same way: it happened, the
-recipient agreed to it, and a cancelled order bills nobody, so leaving it
-accepted costs nobody anything (20261023100100).
+column. It and the offer's stamp read the clock rather than the transaction's
+start, so an offer made after a placement is never stamped before it. An
+accepted pass is not undone the same way: it happened, the recipient agreed to
+it, and a cancelled order bills nobody, so leaving it accepted costs nobody
+anything (20261023100100).
 
 **There is no draft: a day has lunch or it does not.** The owner's rule. A
 published menu is editable in place, so a draft, like un-publishing before it,
