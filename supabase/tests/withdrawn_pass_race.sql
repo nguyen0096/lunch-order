@@ -158,11 +158,11 @@ select 'dinh', 'a0e00000-0000-0000-0000-000000000003';
 insert into ctx
 select k, (private.today_in('Asia/Ho_Chi_Minh') + n)::text
   from (values ('r1', 14), ('r2', 21), ('r3', 28), ('r4', 35), ('r5', 42), ('r6', 49), ('r7', 56), ('r8', 63),
-               ('r9', 70), ('r10', 77)) as d(k, n);
+               ('r9', 70), ('r10', 77), ('r11', 84)) as d(k, n);
 insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by, published_at)
 select pg_temp.c('org')::bigint, pg_temp.c(k)::date, 'published', now() + interval '60 days',
        pg_temp.c('adm')::uuid, now()
-  from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k;
+  from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11']) k;
 insert into public.menu_items (menu_id, org_id, name, price_minor, position)
 select m.id, m.org_id, 'Pho', 40000, 0 from public.menus m where m.org_id = pg_temp.c('org')::bigint;
 insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
@@ -174,16 +174,19 @@ select o.id, o.org_id, o.profile_id, o.menu_id, mi.id
  where o.org_id = pg_temp.c('org')::bigint;
 insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
 select o.org_id, o.id, o.profile_id, pg_temp.c('dinh')::uuid, o.profile_id
-  from public.orders o where o.org_id = pg_temp.c('org')::bigint;
+  from public.orders o
+ where o.org_id = pg_temp.c('org')::bigint and o.service_date <> pg_temp.c('r11')::date;
+update public.orders set status = 'cancelled', cancelled_at = now()
+ where org_id = pg_temp.c('org')::bigint and service_date = pg_temp.c('r11')::date;
 
 insert into ctx
-select 'm_' || k, m.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
+select 'm_' || k, m.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11']) k
   join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c(k)::date;
 insert into ctx
-select 'o_' || k, o.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
+select 'o_' || k, o.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11']) k
   join public.orders o on o.menu_id = pg_temp.c('m_' || k)::bigint;
 insert into ctx
-select 't_' || k, t.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
+select 't_' || k, t.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10', 'r11']) k
   join public.meal_transfers t on t.order_id = pg_temp.c('o_' || k)::bigint;
 
 -- R7 and R8: offers left waiting on cancelled orders, as a cancel that
@@ -403,6 +406,31 @@ insert into probe values ('R10 Dinh accepts', pg_temp.run('b',
     pg_temp.c('t_r10'))), 'ok');
 insert into probe values ('R10 Dinh commits', pg_temp.close('b'), 'ok');
 insert into probe values ('R10 the new dish on Dinh''s bill', pg_temp.payer('r10'), 'DINH 35000');
+
+----------- R11 an offer from a transaction older than the placement
+
+-- A is a session of Teo's that began before his order was placed again in B.
+-- Its offer, made after B commits, is stamped by the clock, not by when A
+-- began, so it stands and Dinh can take it.
+select pg_temp.open('a', 'teo');
+insert into probe values ('R11 A begins, its clock running', pg_temp.run('a', 'select 1::text'), 'ok');
+select pg_sleep(0.2);
+select pg_temp.open('c', 'teo');
+insert into probe values ('R11 B orders again', pg_temp.run('c', format(
+  'select count(*)::text from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
+  pg_temp.c('m_r11'), pg_temp.c('m_r11'))), 'ok');
+insert into probe values ('R11 B commits', pg_temp.close('c'), 'ok');
+insert into probe values ('R11 A offers the meal to Dinh', pg_temp.run('a', format(
+  $q$insert into public.meal_transfers (org_id, order_id, from_profile_id, to_profile_id, created_by)
+     values (%s, %s, %L, %L, %L) returning 'x'$q$,
+  pg_temp.c('org'), pg_temp.c('o_r11'), pg_temp.c('teo'), pg_temp.c('dinh'), pg_temp.c('teo'))), 'ok');
+insert into probe values ('R11 A commits', pg_temp.close('a'), 'ok');
+select pg_temp.open('b', 'dinh');
+insert into probe values ('R11 Dinh takes it', pg_temp.run('b', format(
+  $q$update public.meal_transfers set status = 'accepted'
+      where order_id = %s and status = 'pending' returning 'x'$q$, pg_temp.c('o_r11'))), 'ok');
+insert into probe values ('R11 Dinh commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R11 on Dinh''s bill', pg_temp.payer('r11'), 'DINH 40000');
 
 --------------------------------------------------------------------- verdict
 

@@ -186,6 +186,11 @@ insert into probe values
   ('O5 and he can offer the meal afresh', pg_temp.offer('own'), 'ok');
 insert into probe values
   ('O5 a new offer, waiting', split_part(pg_temp.pass_of('own'), ' ', 1), 'pending');
+-- In the same transaction as the placement before it, and later on the clock.
+insert into probe values
+  ('O6 the new offer stands: DINH takes it', pg_temp.answer('dinh', 'own', 'accepted'), 'ok');
+insert into probe values
+  ('O6 accepted', split_part(pg_temp.pass_of('own'), ' ', 1), 'accepted');
 
 --------------------------------------------------- R an admin removes the meal
 
@@ -254,7 +259,7 @@ insert into probe values
    pg_temp.as_user('adm', format(
      'select * from public.answer_pass(%s, %L)', pg_temp.pass_id('stale'), 'decline')),
    '55000 nothing is recorded for Teo Van on ' || to_char(pg_temp.c('stale')::date, 'DD/MM')
-   || ', so there is no meal to turn down');
+   || ', so there is no meal to turn down; withdraw the offer instead');
 insert into probe values
   ('S3 DINH can turn it down, to clear it', pg_temp.answer('dinh', 'stale', 'declined'), 'ok');
 insert into probe values
@@ -277,7 +282,8 @@ insert into probe values
   ('Q1 the old offer is withdrawn, by TEO', pg_temp.pass_of('again'),
    'cancelled TEO withdrawn: the meal was cancelled'),
   ('Q2 DINH cannot take the new meal', pg_temp.answer('dinh', 'again', 'accepted'),
-   '55000 this transfer is already cancelled'),
+   '55000 the lunch on ' || to_char(pg_temp.c('again')::date, 'DD/MM')
+   || ' was ordered again after this offer, so the offer no longer stands'),
   ('Q2 nobody is told of the offer going', pg_temp.told('again'), '-'),
   ('Q4 an admin orders for TEO under another', pg_temp.as_user('adm', format(
      'select count(*) from public.correct_meal(%s, %L::date, %L::uuid, (select id from public.menu_items where menu_id = %s))',
