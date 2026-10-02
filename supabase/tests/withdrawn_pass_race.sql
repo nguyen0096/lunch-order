@@ -11,6 +11,8 @@
 -- (cancelling lunch, removing a meal), or not wait on it at all (a member's
 -- own cancel, which locks the order first). G holds a week's key, standing in
 -- for a correction in flight, so each pair meets in the order that matters.
+-- An offer the withdrawal skips is kept off a later meal by the placement
+-- stamp: R7 to R10.
 
 set statement_timeout = '120s';
 set client_min_messages = warning;
@@ -155,11 +157,12 @@ select 'dinh', 'a0e00000-0000-0000-0000-000000000003';
 -- One open day per pair, each in its own week, so each gate holds one pair.
 insert into ctx
 select k, (private.today_in('Asia/Ho_Chi_Minh') + n)::text
-  from (values ('r1', 14), ('r2', 21), ('r3', 28), ('r4', 35), ('r5', 42), ('r6', 49)) as d(k, n);
+  from (values ('r1', 14), ('r2', 21), ('r3', 28), ('r4', 35), ('r5', 42), ('r6', 49), ('r7', 56), ('r8', 63),
+               ('r9', 70), ('r10', 77)) as d(k, n);
 insert into public.menus (org_id, service_date, status, order_cutoff_at, created_by, published_at)
 select pg_temp.c('org')::bigint, pg_temp.c(k)::date, 'published', now() + interval '60 days',
        pg_temp.c('adm')::uuid, now()
-  from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) k;
+  from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k;
 insert into public.menu_items (menu_id, org_id, name, price_minor, position)
 select m.id, m.org_id, 'Pho', 40000, 0 from public.menus m where m.org_id = pg_temp.c('org')::bigint;
 insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
@@ -174,14 +177,40 @@ select o.org_id, o.id, o.profile_id, pg_temp.c('dinh')::uuid, o.profile_id
   from public.orders o where o.org_id = pg_temp.c('org')::bigint;
 
 insert into ctx
-select 'm_' || k, m.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) k
+select 'm_' || k, m.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
   join public.menus m on m.org_id = pg_temp.c('org')::bigint and m.service_date = pg_temp.c(k)::date;
 insert into ctx
-select 'o_' || k, o.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) k
+select 'o_' || k, o.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
   join public.orders o on o.menu_id = pg_temp.c('m_' || k)::bigint;
 insert into ctx
-select 't_' || k, t.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6']) k
+select 't_' || k, t.id::text from unnest(array['r1', 'r2', 'r3', 'r4', 'r5', 'r6', 'r7', 'r8', 'r9', 'r10']) k
   join public.meal_transfers t on t.order_id = pg_temp.c('o_' || k)::bigint;
+
+-- R7 and R8: offers left waiting on cancelled orders, as a cancel that
+-- skipped a held pass leaves them. R10's menu has a second dish to change to.
+alter table public.orders disable trigger orders_withdraw_pass;
+update public.orders set status = 'cancelled', cancelled_at = now()
+ where id in (pg_temp.c('o_r7')::bigint, pg_temp.c('o_r8')::bigint);
+alter table public.orders enable trigger orders_withdraw_pass;
+insert into public.menu_items (menu_id, org_id, name, price_minor, position)
+values (pg_temp.c('m_r10')::bigint, pg_temp.c('org')::bigint, 'Bun', 35000, 1);
+insert into ctx
+select 'bun_r10', id::text from public.menu_items where menu_id = pg_temp.c('m_r10')::bigint and name = 'Bun';
+select public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c(k)::date)) is not null
+  from unnest(array['r7', 'r8', 'r9', 'r10']) k;
+
+-- Who the day's order is billed to after a fresh re-bill of its week.
+create function pg_temp.payer(p_day text) returns text
+language plpgsql as $fn$
+declare v text;
+begin
+  perform public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c(p_day)::date));
+  select coalesce(string_agg(m.short_code || ' ' || bl.amount_minor, ','), 'nobody') into v
+    from public.billing_lines bl
+    join public.memberships m on m.org_id = bl.org_id and m.profile_id = bl.payer_profile_id
+   where bl.order_id = pg_temp.c('o_' || p_day)::bigint;
+  return v;
+end $fn$;
 
 -------------------------------------- R1 cancelling lunch meets an accept
 
@@ -297,6 +326,83 @@ insert into probe values ('R6 Teo orders again', pg_temp.run('a', format(
 insert into probe values ('R6 Teo commits', pg_temp.close('a'), 'ok');
 insert into probe values ('R6 which withdraws the old offer, so Dinh cannot take his new meal',
   pg_temp.state('r6'), 'cancelled placed');
+
+------------------- R7 an admin's accept holds a leftover while Teo re-orders
+
+-- An offer belongs to the placement it was made on. A (admin) accepts the
+-- offer left on Teo's cancelled order and, holding it, waits on the week.
+-- Teo orders again: the withdrawal skips the offer A holds. A then finds the
+-- order placed, but placed after the offer, and is refused, so the new meal
+-- stays on Teo's bill.
+insert into probe values ('R7 G holds the week', pg_temp.hold_week('r7'), 'ok');
+select pg_temp.open('a', 'adm');
+select pg_temp.send('a', format($q$select count(*)::text from public.answer_pass(%s, 'accept')$q$,
+  pg_temp.c('t_r7')));
+select pg_temp.open('c', 'teo');
+insert into probe values ('R7 Teo orders again', pg_temp.run('c', format(
+  'select count(*)::text from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
+  pg_temp.c('m_r7'), pg_temp.c('m_r7'))), 'ok');
+insert into probe values ('R7 A waits', pg_temp.busy('a'), 'waiting');
+insert into probe values ('R7 Teo commits', pg_temp.close('c'), 'ok');
+insert into probe values ('R7 G lets go', pg_temp.close('g'), 'ok');
+insert into probe values ('R7 A is refused', pg_temp.finish('a'),
+  'the lunch on ' || to_char(pg_temp.c('r7')::date, 'DD/MM')
+  || ' was ordered again after this offer, so the offer no longer stands');
+insert into probe values ('R7 Teo''s new meal is his', pg_temp.state('r7') || ' / ' || pg_temp.payer('r7'),
+  'pending placed / TEO 40000');
+select pg_temp.open('b', 'dinh');
+insert into probe values ('R7 nor can Dinh take it herself', pg_temp.run('b',
+  format($q$update public.meal_transfers set status = 'accepted' where id = %s returning 'x'$q$,
+    pg_temp.c('t_r7'))),
+  '55000 the lunch on ' || to_char(pg_temp.c('r7')::date, 'DD/MM')
+  || ' was ordered again after this offer, so the offer no longer stands');
+select pg_temp.close('b', false);
+
+------------------------- R8 Teo re-orders first, then the admin's accept
+
+select pg_temp.open('c', 'teo');
+insert into probe values ('R8 Teo orders again', pg_temp.run('c', format(
+  'select count(*)::text from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
+  pg_temp.c('m_r8'), pg_temp.c('m_r8'))), 'ok');
+insert into probe values ('R8 Teo commits', pg_temp.close('c'), 'ok');
+select pg_temp.open('a', 'adm');
+insert into probe values ('R8 the admin''s accept finds the offer withdrawn', pg_temp.run('a', format(
+  $q$select count(*)::text from public.answer_pass(%s, 'accept')$q$, pg_temp.c('t_r8'))),
+  '55000 that offer has already been answered: it is withdrawn');
+select pg_temp.close('a', false);
+insert into probe values ('R8 Teo''s new meal is his', pg_temp.state('r8') || ' / ' || pg_temp.payer('r8'),
+  'cancelled placed / TEO 40000');
+
+--------------------------------- R9 an offer on an untouched order, as ever
+
+select pg_temp.open('b', 'dinh');
+insert into probe values ('R9 Dinh accepts', pg_temp.run('b',
+  format($q$update public.meal_transfers set status = 'accepted' where id = %s returning 'x'$q$,
+    pg_temp.c('t_r9'))), 'ok');
+insert into probe values ('R9 Dinh commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R9 on Dinh''s bill', pg_temp.payer('r9'), 'DINH 40000');
+
+-------------------------- R10 a dish changed after the offer keeps it standing
+
+select pg_temp.open('c', 'teo');
+insert into probe values ('R10 Teo changes his dish', pg_temp.run('c', format(
+  'select count(*)::text from public.set_my_order(%s, %s)', pg_temp.c('m_r10'), pg_temp.c('bun_r10'))), 'ok');
+insert into probe values ('R10 Teo commits', pg_temp.close('c'), 'ok');
+select pg_temp.open('a', 'adm');
+insert into probe values ('R10 an admin corrects his note', pg_temp.run('a', format(
+  'select count(*)::text from public.correct_meal(%s, %L::date, %L::uuid, %s, 1::smallint, %L)',
+  pg_temp.c('org'), pg_temp.c('r10'), pg_temp.c('teo'), pg_temp.c('bun_r10'), 'no onion')), 'ok');
+insert into probe values ('R10 the admin commits', pg_temp.close('a'), 'ok');
+select pg_temp.open('c', 'teo');
+insert into probe values ('R10 Teo rewrites his placed order as it is', pg_temp.run('c', format(
+  $q$update public.orders set status = 'placed' where id = %s returning 'x'$q$, pg_temp.c('o_r10'))), 'ok');
+insert into probe values ('R10 Teo commits again', pg_temp.close('c'), 'ok');
+select pg_temp.open('b', 'dinh');
+insert into probe values ('R10 Dinh accepts', pg_temp.run('b',
+  format($q$update public.meal_transfers set status = 'accepted' where id = %s returning 'x'$q$,
+    pg_temp.c('t_r10'))), 'ok');
+insert into probe values ('R10 Dinh commits', pg_temp.close('b'), 'ok');
+insert into probe values ('R10 the new dish on Dinh''s bill', pg_temp.payer('r10'), 'DINH 35000');
 
 --------------------------------------------------------------------- verdict
 
