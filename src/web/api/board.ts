@@ -433,7 +433,8 @@ export async function fetchTransfers(args: {
     supabase
       .from("meal_transfers")
       .select(`id, order_id, status, from_profile_id, to_profile_id, reason, created_at,
-               orders ( service_date, order_items ( item_name_snapshot, line_total_minor ) )`)
+               orders ( service_date, status, placed_at,
+                        order_items ( item_name_snapshot, line_total_minor ) )`)
       .eq("org_id", args.orgId)
       .order("id", { ascending: false }),
     supabase
@@ -459,9 +460,13 @@ export async function fetchTransfers(args: {
   }
 
   type Line = { item_name_snapshot: string; line_total_minor: number | null };
+  const answerable = new Set<number>();
   const rows: TransferRow[] = (transfersRes.data ?? []).map((t) => {
     const order = t.orders as unknown as
-      { service_date: string; order_items: Line[] } | null;
+      { service_date: string; status: string; placed_at: string; order_items: Line[] } | null;
+    if (order && offerStands({ orderStatus: order.status, placedAt: order.placed_at, offeredAt: t.created_at })) {
+      answerable.add(t.id);
+    }
     const lines = order?.order_items ?? [];
     return {
       id: t.id,
@@ -487,7 +492,8 @@ export async function fetchTransfers(args: {
   }
 
   return {
-    incoming: rows.filter((t) => t.toProfileId === args.meProfileId && t.status === "pending"),
+    incoming: rows.filter((t) =>
+      t.toProfileId === args.meProfileId && t.status === "pending" && answerable.has(t.id)),
     outgoing: rows.filter((t) => t.fromProfileId === args.meProfileId),
     live,
     giveable: (ordersRes.data ?? []).map((o) => {
@@ -501,6 +507,16 @@ export async function fetchTransfers(args: {
       };
     }),
   };
+}
+
+/**
+ * Whether an offer can still be taken. The database refuses accepting one on
+ * an order that is not placed, or on one placed again after the offer, so
+ * the Board does not offer Accept on either; the bot's /order leaves them out
+ * the same way.
+ */
+export function offerStands(a: { orderStatus: string; placedAt: string; offeredAt: string }): boolean {
+  return a.orderStatus === "placed" && Date.parse(a.placedAt) <= Date.parse(a.offeredAt);
 }
 
 /**
