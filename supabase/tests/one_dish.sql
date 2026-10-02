@@ -400,6 +400,112 @@ insert into probe values
   ('H5 and TEO is not asked', pg_temp.asked('org_a', 'hand') || ' ' || pg_temp.asked('org_a', 'hand2'),
    'HOA HOA');
 
+------------------------------------------------ Z a day already cooking
+
+-- Office C's day runs 00:00 to 23:59, so today is `closed` (Cooking) for the
+-- whole run, while a cutoff later today still lets people order. The slots
+-- the system creates then get the one dish all the same, which is what the
+-- menu message says; nobody else's order converts or reverts.
+insert into auth.users (instance_id, id, aud, role, email, encrypted_password,
+                        email_confirmed_at, created_at, updated_at,
+                        raw_app_meta_data, raw_user_meta_data)
+select '00000000-0000-0000-0000-000000000000', u.id::uuid, 'authenticated', 'authenticated',
+       u.code || '@onedish.test', 'x', now(), now(), now(), '{"provider":"google"}',
+       jsonb_build_object('full_name', u.code)
+  from (values
+    ('0d150000-0000-0000-0000-00000000000a', 'cadm'),
+    ('0d150000-0000-0000-0000-00000000000b', 'cmem'),
+    ('0d150000-0000-0000-0000-00000000000c', 'ckim')
+  ) as u(id, code)
+on conflict (id) do nothing;
+insert into ctx
+select split_part(u.email, '@', 1), u.id::text from auth.users u
+ where u.email in ('cadm@onedish.test', 'cmem@onedish.test', 'ckim@onedish.test');
+
+insert into public.organizations (slug, name, short_code, business_day_starts_at, business_day_ends_at)
+values ('onedish-c', 'One Dish C', 'ODC', '00:00', '23:59');
+insert into ctx
+select 'org_c', id::text from public.organizations where slug = 'onedish-c' union all
+select 'c_today', private.today_in(timezone)::text from public.organizations where slug = 'onedish-c' union all
+select 'c_ahead', (private.today_in(timezone) + 1)::text from public.organizations where slug = 'onedish-c' union all
+select 'c_past', (private.today_in(timezone) - 3)::text from public.organizations where slug = 'onedish-c';
+
+insert into public.memberships (org_id, profile_id, role, short_code)
+select pg_temp.c('org_c')::bigint, pg_temp.c(x.code)::uuid,
+       case x.code when 'cadm' then 'owner' else 'member' end, upper(x.code)
+  from unnest(array['cadm', 'cmem', 'ckim']) as x(code);
+insert into public.telegram_links (membership_id, org_id, chat_id, linked_at)
+select ms.id, ms.org_id, 880000 + ms.id, now() from public.memberships ms
+ where ms.org_id = pg_temp.c('org_c')::bigint;
+insert into public.standing_orders (org_id, profile_id, weekday, is_enabled)
+select pg_temp.c('org_c')::bigint, pg_temp.c('cmem')::uuid, d, true from generate_series(1, 7) as d;
+
+-- publish() gives every menu a cutoff nine days out; these need their own.
+create function pg_temp.publish_c(p_day text, p_cutoff timestamptz, p_dishes jsonb) returns text
+language sql as $fn$
+  select pg_temp.as_user('cadm', format(
+    'select * from public.publish_menu(%s, %L::date, %L::timestamptz, %L::jsonb, %L, %L::jsonb)',
+    pg_temp.c('org_c'), pg_temp.c(p_day), p_cutoff, p_dishes, 'raw', '{}'));
+$fn$;
+
+insert into probe values
+  ('Z0 today is cooking with the cutoff ahead',
+   private.day_stage(pg_temp.c('org_c')::bigint, pg_temp.c('c_today')::date, 'published',
+                     now() + interval '2 hours'), 'closed'),
+  ('Z1 publishing one dish for today while cooking',
+   pg_temp.publish_c('c_today', now() + interval '2 hours', '[{"name":"Com ga","price_minor":45000}]'),
+   'ok'),
+  ('Z1 publishing one dish for a past day with a cutoff ahead',
+   pg_temp.publish_c('c_past', now() + interval '2 hours', '[{"name":"Bun","price_minor":40000}]'),
+   'ok'),
+  ('Z1 publishing one dish for tomorrow after its cutoff',
+   pg_temp.publish_c('c_ahead', now() - interval '1 minute', '[{"name":"Pho","price_minor":50000}]'),
+   'ok');
+insert into probe values
+  ('Z2 the standing slot made while cooking gets the dish',
+   pg_temp.order_of('org_c', 'c_today', 'cmem'), 'standing placed Com ga@45000*'),
+  ('Z2 a past day gets no standing order', pg_temp.order_of('org_c', 'c_past', 'cmem'), 'none'),
+  ('Z2 a day past its cutoff gets none', pg_temp.order_of('org_c', 'c_ahead', 'cmem'), 'none'),
+  ('Z3 CKIM turns today''s weekday on', pg_temp.as_user('ckim', format(
+     'insert into public.standing_orders (org_id, profile_id, weekday, is_enabled)
+      values (%s, %L, %s, true)', pg_temp.c('org_c'), pg_temp.c('ckim'),
+     extract(isodow from pg_temp.c('c_today')::date)::int)), 'ok');
+insert into probe values
+  ('Z3 her slot arrives with the dish while cooking', pg_temp.order_of('org_c', 'c_today', 'ckim'),
+   'standing placed Com ga@45000*'),
+  ('Z4 a second dish while cooking',
+   pg_temp.publish_c('c_today', now() + interval '2 hours',
+     jsonb_build_array(jsonb_build_object('id', pg_temp.dish('org_c', 'c_today', 'Com ga'),
+                                          'name', 'Com ga', 'price_minor', 45000),
+                       jsonb_build_object('name', 'Pho', 'price_minor', 50000))), 'ok');
+insert into probe values
+  ('Z4 takes nothing back outside open, and asks nobody',
+   pg_temp.order_of('org_c', 'c_today', 'cmem') || ' ' || pg_temp.asked('org_c', 'c_today'),
+   'standing placed Com ga@45000* -');
+
+-- Back to one dish, so the message has the line to check against the data.
+select pg_temp.publish_c('c_today', now() + interval '2 hours',
+  jsonb_build_array(jsonb_build_object('id', pg_temp.dish('org_c', 'c_today', 'Com ga'),
+                                       'name', 'Com ga', 'price_minor', 45000)));
+select private.run_hourly_tick();
+insert into probe values
+  ('Z5 the menu message CMEM gets says what her order holds',
+   (select split_part(n.body, E'\n', 3) || ' / ' || pg_temp.order_of('org_c', 'c_today', 'cmem')
+      from public.notification_outbox n
+     where n.kind = 'menu_published' and n.related_menu_id = pg_temp.m('org_c', 'c_today')
+       and n.recipient_profile_id = pg_temp.c('cmem')::uuid),
+   'Standing orders are down for Com ga. / standing placed Com ga@45000*'),
+  ('Z6 a past day''s message says nothing about standing orders',
+   (select n.body from public.notification_outbox n
+     where n.kind = 'menu_published' and n.related_menu_id = pg_temp.m('org_c', 'c_past')
+       and n.recipient_profile_id = pg_temp.c('cmem')::uuid),
+   (select 'Menu for ' || to_char(m.service_date, 'DD/MM') || E'\n- Bun  40.000 ₫\nOrders close '
+           || to_char(m.order_cutoff_at at time zone 'Asia/Ho_Chi_Minh', 'HH24:MI DD/MM') || '.'
+      from public.menus m where m.id = pg_temp.m('org_c', 'c_past'))),
+  ('Z6 and a day past its cutoff is not announced',
+   (select count(*)::text from public.notification_outbox n
+     where n.kind = 'menu_published' and n.related_menu_id = pg_temp.m('org_c', 'c_ahead')), '0');
+
 --------------------------------------------------------------------- verdict
 
 select label, got, want, case when got is not distinct from want then 'PASS' else 'FAIL' end as verdict

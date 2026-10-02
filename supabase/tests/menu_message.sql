@@ -1,5 +1,5 @@
 -- The "menu published" message lists every dish, priced or not, and a
--- one-dish menu says standing orders are down for it.
+-- one-dish menu for today or later says standing orders are down for it.
 -- Run against a scratch project or branch:
 --   psql "$DATABASE_URL" -f supabase/tests/menu_message.sql
 --
@@ -35,7 +35,8 @@ select o.id, v.d, v.cut, 'e1e1e1e1-0000-0000-0000-000000000001', 'menu_message.s
     (date '2030-01-03', timestamptz '2030-01-02 16:00:00+00'),
     (date '2030-01-04', timestamptz '2030-01-03 16:00:00+00'),
     (date '2030-01-06', timestamptz '2030-01-05 16:00:00+00'),
-    (date '2030-01-07', timestamptz '2030-01-06 16:00:00+00')
+    (date '2030-01-07', timestamptz '2030-01-06 16:00:00+00'),
+    (date '2020-01-06', timestamptz '2020-01-05 16:00:00+00')
   ) as v(d, cut)
  where o.slug = 'menu-msg';
 
@@ -51,7 +52,8 @@ select m.id, m.org_id, v.nm, v.pr, v.pos
     (date '2030-01-04', 'Cơm tấm', 50000,        0),
     (date '2030-01-04', 'Bún bò',  60000,        1),
     (date '2030-01-06', 'Cơm tấm', 50000,        0),
-    (date '2030-01-07', repeat('Bún bò Huế ', 17) || 'đặc biệt', null, 0)
+    (date '2030-01-07', repeat('Bún bò Huế ', 17) || 'đặc biệt', null, 0),
+    (date '2020-01-06', 'Cơm tấm', 50000,        0)
   ) as v(d, nm, pr, pos) on v.d = m.service_date;
 
 create function pg_temp.msg(p_date date) returns text
@@ -74,7 +76,10 @@ insert into probe values
    E'Menu for 04/01\n- Cơm tấm  50.000 ₫\n- Bún bò  60.000 ₫\nOrders close 23:00 03/01.'),
   ('one dish: standing orders are said to be down for it',
    pg_temp.msg('2030-01-06'),
-   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nStanding orders are down for Cơm tấm.\nOrders close 23:00 05/01.');
+   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nStanding orders are down for Cơm tấm.\nOrders close 23:00 05/01.'),
+  ('one dish on a past day: no standing orders to speak of, since publishing made none',
+   pg_temp.msg('2020-01-06'),
+   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nOrders close 23:00 05/01.');
 
 insert into probe
 select 'one dish of the longest name still fits, and names it twice',
