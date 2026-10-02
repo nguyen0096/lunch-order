@@ -14,10 +14,12 @@
 -- converting or reverting anybody else's order stays an 'open'-stage rule
 -- (settle_undecided, unchanged).
 --
--- The menu message says standing orders are down for the dish only for a day
--- that is today or later, the only days publishing creates standing orders.
--- An admin can give a past day a cutoff still ahead through the API; that day
--- has none.
+-- The menu message says standing orders are down for the dish only when it is
+-- true of the orders: a day today or later (the only days publishing creates
+-- standing orders; an admin can give a past day a cutoff still ahead through
+-- the API) whose placed standing orders all have a dish line. A two-dish menu
+-- published while cooking and then cut to one leaves its standing slots
+-- undecided, since nothing converts outside 'open', and the line is left out.
 
 -- The one dish for slots the system has just created, whatever the day's
 -- stage. Nothing in a settled week, as in settle_undecided. The caller holds
@@ -213,7 +215,7 @@ begin
   return query select v_menu.id, greatest(0, v_after - v_before), v_update;
 end $function$;
 
--- As in 20261018100000, the standing line only for today or later.
+-- As in 20261018100000, the standing line only when the orders bear it out.
 create or replace function private.menu_message(p_menu_id bigint)
 returns text
 language sql
@@ -228,6 +230,11 @@ as $fn$
                       || '. See the app for the full menu.'
             end
          || case when d.total = 1 and m.service_date >= private.today_in(o.timezone)
+                      and not exists (select 1 from public.orders x
+                                       where x.menu_id = m.id and x.source = 'standing'
+                                         and x.status = 'placed'
+                                         and not exists (select 1 from public.order_items i
+                                                          where i.order_id = x.id))
                  then E'\nStanding orders are down for ' || d.only_name || '.'
                  else '' end
          || E'\nOrders close '

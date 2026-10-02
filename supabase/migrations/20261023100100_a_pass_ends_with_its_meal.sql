@@ -12,9 +12,17 @@
 -- Now an order leaving 'placed', by any path, withdraws its pending pass:
 -- status 'cancelled', decided_at and decided_by (whoever cancelled the order),
 -- and a reason saying why. Nobody is told, as for any withdrawal and as for
--- cancelling lunch; the recipient who tries to answer is refused in words
--- that say why. Accepting or declining a pass on an order that is not placed,
--- on the table or through answer_pass, is refused; withdrawing it is not.
+-- cancelling lunch. An order placed again (set_my_order reviving it, an
+-- admin's correction, any path) withdraws a pending pass too: the offer was
+-- for the meal that was cancelled, and left live it would put the new meal on
+-- the recipient's bill.
+--
+-- Accepting a pass on an order that is not placed is refused, on the table and
+-- through answer_pass, in words that say why. The recipient may still decline
+-- it and the giver withdraw it, so an offer left waiting can be cleared; a
+-- decline on an order that is not placed tells the giver nothing, since
+-- "still on your bill" would be false. answer_pass refuses an admin's decline
+-- there; the admin withdraws it instead.
 --
 -- An accepted pass is left alone when its order is cancelled: it happened,
 -- and the cancelled order bills nobody, so nobody pays for it.
@@ -26,6 +34,8 @@
 -- did, and the re-bill would take the office-week key while holding the order.
 -- The pass held elsewhere is being answered or withdrawn right then; if it is
 -- accepted, it is accepted before the cancel, which leaves it alone anyway.
+-- If that answer fails instead, the offer is left waiting on a cancelled order,
+-- where it cannot be accepted, and placing the order again withdraws it.
 -- remove_meal and trg_menu_cancelled take the pending passes before the key,
 -- so neither waits on a pass while holding the week, and each re-bills itself.
 
@@ -48,7 +58,9 @@ end $fn$;
 
 revoke execute on function private.withdraw_pending_pass(bigint, text) from public, anon, authenticated;
 
-create or replace function public.trg_order_left_placed()
+-- On leaving 'placed' and on coming back to it. Coming back, a pending pass
+-- can only be one a cancel skipped, so its reason is the cancel's.
+create or replace function public.trg_order_withdraws_pass()
 returns trigger
 language plpgsql
 security definer
@@ -63,13 +75,59 @@ begin
   return null;
 end $fn$;
 
-revoke all on function public.trg_order_left_placed() from public, anon, authenticated;
+revoke all on function public.trg_order_withdraws_pass() from public, anon, authenticated;
 
 create trigger orders_withdraw_pass
   after update of status on public.orders
   for each row
-  when (old.status = 'placed' and new.status <> 'placed')
-  execute function public.trg_order_left_placed();
+  when ((old.status = 'placed') is distinct from (new.status = 'placed'))
+  execute function public.trg_order_withdraws_pass();
+
+-- As in 20261021100100; a decline on an order that is not placed tells the
+-- giver nothing.
+create or replace function public.trg_transfer_notifies()
+returns trigger
+language plpgsql
+security definer
+set search_path to ''
+as $fn$
+declare
+  v_to   uuid;
+  v_kind text;
+  v_key  text;
+  v_body text;
+begin
+  if current_setting('lunch.pass_by_admin', true) = 'on' then return null; end if;
+
+  if tg_op = 'INSERT' then
+    v_to   := new.to_profile_id;
+    v_kind := 'transfer_offer';
+    v_key  := 'org:' || new.org_id || ':transfer_offer:' || new.id;
+    v_body := private.transfer_offer_message(new.id);
+  else
+    if not exists (select 1 from public.orders o
+                    where o.id = new.order_id and o.status = 'placed') then
+      return null;
+    end if;
+    v_to   := new.from_profile_id;
+    v_kind := 'transfer_decided';
+    v_key  := 'org:' || new.org_id || ':transfer_decided:' || new.id || ':' || new.status;
+    v_body := private.transfer_decided_message(new.id);
+  end if;
+
+  insert into public.notification_outbox
+    (org_id, dedupe_key, kind, chat_id, recipient_profile_id, body, parse_mode)
+  select new.org_id, v_key, v_kind, tl.chat_id, v_to, v_body, 'none'
+    from public.memberships mem
+    join public.telegram_links tl
+      on tl.membership_id = mem.id and tl.chat_id is not null
+   where mem.org_id = new.org_id
+     and mem.profile_id = v_to
+     and mem.status = 'active'
+  on conflict (dedupe_key) do nothing;
+
+  return null;
+end $fn$;
 
 -- As in 20261022100300, quiet for a pass withdrawn with its meal.
 create or replace function public.trg_transfer_rebills()
@@ -142,7 +200,7 @@ begin
   return null;
 end $fn$;
 
--- As in 20261022100100; accepting or declining needs a placed order.
+-- As in 20261022100100; accepting needs a placed order.
 create or replace function public.enforce_transfer_rules()
 returns trigger
 language plpgsql
@@ -202,15 +260,14 @@ begin
     if new.status is distinct from old.status then
       -- Before whether it is still pending: a pass withdrawn with its meal
       -- says why, not only that it is cancelled.
-      if new.status in ('accepted', 'declined') and v_uid is not distinct from old.to_profile_id then
+      if new.status = 'accepted' and v_uid is not distinct from old.to_profile_id then
         if v_stage = 'cancelled' then
           raise exception 'lunch on % was cancelled', to_char(v_order.service_date, 'DD/MM')
             using errcode = 'object_not_in_prerequisite_state';
         end if;
         if v_order.status <> 'placed' then
-          raise exception 'the lunch on % offered to you was cancelled, so there is no meal to %',
-            to_char(v_order.service_date, 'DD/MM'),
-            case new.status when 'accepted' then 'accept' else 'turn down' end
+          raise exception 'the lunch on % offered to you was cancelled, so there is no meal to accept',
+            to_char(v_order.service_date, 'DD/MM')
             using errcode = 'object_not_in_prerequisite_state';
         end if;
       end if;
