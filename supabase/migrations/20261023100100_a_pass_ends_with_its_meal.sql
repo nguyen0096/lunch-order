@@ -38,6 +38,17 @@
 -- where it cannot be accepted, and placing the order again withdraws it.
 -- remove_meal and trg_menu_cancelled take the pending passes before the key,
 -- so neither waits on a pass while holding the week, and each re-bills itself.
+--
+-- An offer belongs to the placement it was made on. Placing the order again
+-- also skips a pass somebody holds, so an admin's answer_pass waiting with the
+-- leftover could otherwise accept it onto the new meal. orders.placed_at was
+-- written only on insert, never on a revive, so it could not tell the two
+-- placements apart; it now stamps every placement (insert, and every move
+-- back to 'placed') and is kept as it was on any other update, whoever writes
+-- it. Accepting a pass whose order was placed after the offer was made is
+-- refused, on the table and in answer_pass, with no new lock: both read the
+-- order after the pass. A pass's created_at is the moment of the offer, set
+-- by enforce_transfer_rules, so neither stamp can be written to suit.
 
 create or replace function private.withdraw_pending_pass(p_order_id bigint, p_reason text)
 returns void
@@ -57,6 +68,30 @@ begin
 end $fn$;
 
 revoke execute on function private.withdraw_pending_pass(bigint, text) from public, anon, authenticated;
+
+-- A placement's moment, whoever writes the row.
+create or replace function public.stamp_order_placement()
+returns trigger
+language plpgsql
+set search_path to ''
+as $fn$
+begin
+  if tg_op = 'INSERT' then
+    new.placed_at := now();
+  elsif new.status = 'placed' and old.status <> 'placed' then
+    new.placed_at := now();
+  else
+    new.placed_at := old.placed_at;
+  end if;
+  return new;
+end $fn$;
+
+revoke all on function public.stamp_order_placement() from public, anon, authenticated;
+
+create trigger orders_placement_stamp
+  before insert or update on public.orders
+  for each row
+  execute function public.stamp_order_placement();
 
 -- On leaving 'placed' and on coming back to it. Coming back, a pending pass
 -- can only be one a cancel skipped, so its reason is the cancel's.
@@ -250,6 +285,7 @@ begin
     new.org_id          := v_order.org_id;
     new.from_profile_id := v_order.profile_id;
     new.created_by      := v_uid;
+    new.created_at      := now();
     new.status          := 'pending';
     new.decided_at      := null;
     new.decided_by      := null;
@@ -267,6 +303,11 @@ begin
         end if;
         if v_order.status <> 'placed' then
           raise exception 'the lunch on % offered to you was cancelled, so there is no meal to accept',
+            to_char(v_order.service_date, 'DD/MM')
+            using errcode = 'object_not_in_prerequisite_state';
+        end if;
+        if v_order.placed_at > old.created_at then
+          raise exception 'the lunch on % was ordered again after this offer, so the offer no longer stands',
             to_char(v_order.service_date, 'DD/MM')
             using errcode = 'object_not_in_prerequisite_state';
         end if;
@@ -351,6 +392,11 @@ begin
       using errcode = 'object_not_in_prerequisite_state';
   end if;
   if v_new = 'accepted' then
+    if o.placed_at > t.created_at then
+      raise exception 'the lunch on % was ordered again after this offer, so the offer no longer stands',
+        to_char(o.service_date, 'DD/MM')
+        using errcode = 'object_not_in_prerequisite_state';
+    end if;
     if not exists (select 1 from public.memberships m
                     where m.org_id = t.org_id and m.profile_id = t.to_profile_id
                       and m.status = 'active') then
