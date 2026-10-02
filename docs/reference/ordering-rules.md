@@ -114,7 +114,7 @@ tappable only while the day has no menu
 | quantity | same window | 1 to 20 per dish; the Board always writes 1 | `order_items.quantity` check |
 | note | same window | 1 to 120 characters, on the dish line, so an order with no dish has none | 20260926100000 |
 | eating, no dish chosen | from a standing slot, an admin, or `set_my_order` with no dish | an order with no dish line, which a one-dish menu fills. The Board never creates one | `materialize_standing_orders`, `set_my_order` (20261018100000) |
-| cancel (not eating) | same window, own order | `status = cancelled`; the row keeps the slot, and a pending pass on it is withdrawn. Ordering again revives it, not the pass. No member delete | `orders_update_own` (rls), `enforce_order_window`, `orders_withdraw_pass` (20261023100100) |
+| cancel (not eating) | same window, own order | `status = cancelled`; the row keeps the slot, and a pending pass on it is withdrawn. Ordering again revives the order, never a pass: a pending one left on it is withdrawn then too. No member delete | `orders_update_own` (rls), `enforce_order_window`, `orders_withdraw_pass` (20261023100100) |
 | after the cutoff | nobody on the Board, admins included | refused with the cutoff in the sentence | `enforce_order_window` |
 | order or put right for somebody | an admin, on any day whose menu is published or locked, before or after the cutoff, until the week is settled; their own row included. A cancelled day is refused (`lunch on 24/09 was cancelled`), a reprice included | set a person's dish, quantity and note (creating an `admin` order if there was none), add an off-menu dish (a name matching a dish already on the day is that dish at its price; one with no price yet is refused, `"Phở bò" is already on the menu with no price yet. Set its price with Reprice, then record this meal`, because pricing it for one person would leave everybody else's lines of it unpriced), remove a meal (cancel), or reprice a dish for everybody. Re-bills the week, writes `order_corrections`, tells the member | `correct_meal`, `correct_meal_off_menu`, `remove_meal` (20261021100000), `reprice_dish` (20261022100000) |
 | an admin's order ahead | the member, before the cutoff | the member can still change or cancel it on the Board; it keeps `source = admin` | `set_my_order`, `enforce_order_window` |
@@ -125,10 +125,10 @@ tappable only while the day has no menu
 | Step | Who | Until | Enforced by |
 | --- | --- | --- | --- |
 | offer | the person whose placed order it is, an admin included | the day is done | `enforce_transfer_rules` (20261022100100) |
-| accept or decline | the recipient, while the order is placed | same | `enforce_transfer_rules` (20261023100100) |
+| accept or decline | the recipient; accept only while the order is placed | same | `enforce_transfer_rules` (20261023100100) |
 | withdraw | the person who offered | same | `enforce_transfer_rules` |
 | record a pass | an admin, from anybody to anybody else, their own meal included; accepted at once, no answer needed | the week is settled; not on a cancelled day | `record_pass` (20261021100100) |
-| accept, decline or withdraw on somebody's behalf | an admin, on a pending offer; accept and decline only while the order is placed | same | `answer_pass` (20261023100100) |
+| accept, decline or withdraw on somebody's behalf | an admin, on a pending offer; accept and decline only while the order is placed, so an offer left on a cancelled order is withdrawn | same | `answer_pass` (20261023100100) |
 | undo an accepted pass | an admin; the meal goes back on the giver's bill | same | `undo_pass` |
 
 A pass ends `accepted`, `declined`, `cancelled` (withdrawn) or `undone`.
@@ -141,14 +141,19 @@ lunch being cancelled, the member cancelling it or an admin removing it, the
 pass is withdrawn in the same transaction: `cancelled`, `decided_by` whoever
 cancelled the order, and a reason, `withdrawn: lunch on 24/09 was cancelled`
 or `withdrawn: the meal was cancelled`. Nobody is told, as for any withdrawal.
-The recipient who answers it anyway is refused: `lunch on 24/09 was cancelled`,
-or `the lunch on 24/09 offered to you was cancelled, so there is no meal to
-accept` (`turn down` to decline). Ordering again does not revive the pass; the
-member offers afresh (`orders_withdraw_pass`, `private.withdraw_pending_pass`,
-20261023100100). The withdrawal skips a pass another transaction is answering
-at that moment rather than wait for it; if that answer is an accept, it came
-first. If it fails instead, the offer is left waiting on a cancelled order,
-where nobody can accept or decline it and the giver can withdraw it.
+The recipient who answers it anyway is refused: `this transfer is already
+cancelled`. Ordering again does not revive the pass; the member offers afresh
+(`orders_withdraw_pass`, `private.withdraw_pending_pass`, 20261023100100).
+
+The withdrawal skips a pass another transaction is answering at that moment
+rather than wait for it; if that answer is an accept, it came first. If it
+fails instead, the offer is left waiting on a cancelled order. There nobody can
+accept it (`lunch on 24/09 was cancelled`, or `the lunch on 24/09 offered to
+you was cancelled, so there is no meal to accept`); the recipient can decline
+it, which tells the giver nothing, and the giver can withdraw it. The order
+being placed again, by the member or an admin, withdraws it in the same
+transaction, so it never reaches the new meal. The bot's `/order` lists only
+offers on placed orders.
 
 **An accepted pass is left alone** when its order is cancelled afterwards: it
 happened, the recipient agreed to it, and the cancelled order bills nobody, so
@@ -277,10 +282,12 @@ a planned day (`force`), or a member eating without naming a dish. Only
 | Nothing else converts or reverts outside stage `open`, and nothing does on a day in a settled week. A rename or reprice is not a new dish | `private.settle_undecided` |
 | A marked line is priced and billed like any other: the dish's price at conversion | `snapshot_order_item`, `v_order_charges` |
 
-The menu message for a one-dish menu for today or later adds a line before the
-cutoff: `Standing orders are down for <dish>.` (`private.menu_message`,
-20261023100000). A past day an admin publishes has no standing orders, so its
-message, sent only if its cutoff is still ahead, leaves the line out. `dish_choice`
+The menu message for a one-dish menu adds a line before the cutoff,
+`Standing orders are down for <dish>.`, only when the orders bear it out: the
+day is today or later, and every placed standing order on it has a dish line
+(`private.menu_message`, 20261023100000). A past day has no standing orders.
+A menu published with two dishes while `Cooking` and cut to one keeps its
+standing slots undecided, so its message leaves the line out. `dish_choice`
 is plain text:
 
 ```text

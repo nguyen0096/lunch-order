@@ -373,8 +373,12 @@ write to somebody else's pass is refused like anybody's.
 is no longer ordered there is nothing to take, and a live offer let the
 recipient accept a lunch that was not going to happen and told the giver it
 had been taken. So an order leaving `placed` withdraws its offer, quietly, as
-every withdrawal is, and an answer that arrives anyway is refused with the
-reason. An accepted pass is not undone the same way: it happened, the
+every withdrawal is, and an answer that arrives anyway is refused. The
+withdrawal does not wait on a pass somebody is answering, to keep the lock
+order, so an offer can still be left waiting on a cancelled order. That one
+must never reach a later meal: placing the order again withdraws it, accepting
+it is refused, and the recipient may decline it to clear it. An accepted pass
+is not undone the same way: it happened, the
 recipient agreed to it, and a cancelled order bills nobody, so leaving it
 accepted costs nobody anything (20261023100100).
 
@@ -438,9 +442,13 @@ has gone to the caterer.
 A cutoff after the office's start of day leaves a stretch that reads `Cooking`
 while orders are still taken. There the system still gives the one dish to the
 slots it creates itself, at publish or when a rule is turned on: it never
-leaves a slot it has just made undecided, and the menu message it sends says
-those orders are down for the dish (20261023100000). Everybody else's order is
-left as it is, as before: converting and reverting are for an `open` day.
+leaves a slot it has just made undecided (20261023100000). Everybody else's
+order is left as it is, as before: converting and reverting are for an `open`
+day. So a slot can still be undecided on a one-dish menu, for instance one
+published with two dishes while `Cooking` and then cut to one. The menu
+message therefore reads the orders rather than the dish count, and says
+standing orders are down for the dish only when every one of them carries it:
+a message must never claim what the record does not hold.
 
 Dish availability went at the same time. No screen ever set it, and it was a
 second answer to "how many dishes does this menu have", which the one-dish rule
