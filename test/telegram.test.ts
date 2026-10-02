@@ -1473,3 +1473,27 @@ describe("the webhook registration", () => {
     expect(deploy).toContain("needs: [deploy, deploy-functions, register-webhook]");
   });
 });
+
+/**
+ * The offers /order lists come from one query in the Edge Function, which
+ * Deno runs and this suite cannot. An offer left waiting on a cancelled order
+ * cannot be accepted, so listing it would put an Accept button on a refusal.
+ */
+describe("the offers /order lists", () => {
+  const code = readFileSync(
+    join(import.meta.dirname, "..", "supabase", "functions", "telegram", "index.ts"),
+    "utf8",
+  );
+  const start = code.indexOf("async function offerViews(");
+  const body = code.slice(start, code.indexOf("\n}\n", start));
+
+  it("is found, so the check below cannot pass vacuously", () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(body).toContain("from public.meal_transfers t");
+  });
+
+  it("are pending offers on placed orders only", () => {
+    expect(body).toContain("t.status = 'pending'");
+    expect(body).toMatch(/and o\.status = 'placed'/);
+  });
+});
