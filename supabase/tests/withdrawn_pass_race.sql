@@ -272,8 +272,9 @@ insert into probe values ('R5 withdrawn, Teo told nothing of a pass', pg_temp.st
 -- A (admin) accepts for Dinh, holding the offer while it waits on the week.
 -- Teo's cancel skips the offer A holds rather than wait, so neither waits on
 -- the other. A then finds the order cancelled and is refused; the offer is
--- left waiting on a cancelled order, which nobody can accept or decline
--- (withdrawn_pass.sql) and Teo can withdraw.
+-- left waiting on a cancelled order, which nobody can accept, Dinh can decline
+-- and Teo can withdraw (withdrawn_pass.sql). Teo ordering again withdraws it,
+-- so it never reaches his new meal.
 insert into probe values ('R6 G holds the week', pg_temp.hold_week('r6'), 'ok');
 select pg_temp.open('a', 'adm');
 select pg_temp.send('a', format($q$select count(*)::text from public.answer_pass(%s, 'accept')$q$,
@@ -289,6 +290,13 @@ insert into probe values ('R6 A is refused, no deadlock', pg_temp.finish('a'),
   'nothing is recorded for Teo Van on ' || to_char(pg_temp.c('r6')::date, 'DD/MM')
   || ', so there is no meal to accept');
 insert into probe values ('R6 the offer waits on a cancelled order', pg_temp.state('r6'), 'pending cancelled');
+select pg_temp.open('a', 'teo');
+insert into probe values ('R6 Teo orders again', pg_temp.run('a', format(
+  'select count(*)::text from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
+  pg_temp.c('m_r6'), pg_temp.c('m_r6'))), 'ok');
+insert into probe values ('R6 Teo commits', pg_temp.close('a'), 'ok');
+insert into probe values ('R6 which withdraws the old offer, so Dinh cannot take his new meal',
+  pg_temp.state('r6'), 'cancelled placed');
 
 --------------------------------------------------------------------- verdict
 

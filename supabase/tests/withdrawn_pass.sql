@@ -1,8 +1,9 @@
 -- A pass ends with its meal: when an order stops being placed, by lunch being
 -- cancelled, by its owner cancelling it or by an admin removing it, a pending
--- pass on it is withdrawn, quietly, and nobody can accept or decline a pass on
--- an order that is not placed. An accepted pass is left alone and bills
--- nobody once its order is cancelled.
+-- pass on it is withdrawn, quietly, and nobody can accept a pass on an order
+-- that is not placed; the recipient can decline one left waiting, quietly.
+-- Placing the order again withdraws an offer left waiting. An accepted pass is
+-- left alone and bills nobody once its order is cancelled.
 -- Run against a scratch project or branch:
 --   psql "$DATABASE_URL" -f supabase/tests/withdrawn_pass.sql
 --
@@ -126,21 +127,21 @@ select ms.id, ms.org_id, 770000 + ms.id, now() from public.memberships ms
 insert into ctx
 select k, (private.today_in('Asia/Ho_Chi_Minh') + n)::text
   from (values ('lunch', 14), ('own', 21), ('remove', 28), ('took', 35), ('stale', 42),
-               ('live', 49)) as d(k, n);
+               ('live', 49), ('stale2', 56), ('again', 63), ('fixed', 70)) as d(k, n);
 
 select pg_temp.as_user('adm', format(
   'select * from public.publish_menu(%s, %L::date, %L::timestamptz, %L::jsonb, %L, %L::jsonb)',
   pg_temp.c('org'), pg_temp.c(k), now() + interval '9 days',
   '[{"name":"Com ga","price_minor":45000}]', 'raw', '{}'))
-  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live']) as k;
+  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live', 'stale2', 'again', 'fixed']) as k;
 select pg_temp.as_user('teo', format(
   'select * from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
   pg_temp.m(k), pg_temp.m(k)))
-  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live']) as k;
+  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live', 'stale2', 'again', 'fixed']) as k;
 
 insert into probe
 select 'F0 TEO offers ' || k || ' to DINH', pg_temp.offer(k), 'ok'
-  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live']) as k;
+  from unnest(array['lunch', 'own', 'remove', 'took', 'stale', 'live', 'stale2', 'again', 'fixed']) as k;
 
 ------------------------------------------------------ L lunch is cancelled
 
@@ -153,8 +154,8 @@ insert into probe values
    'cancelled ADM withdrawn: lunch on ' || to_char(pg_temp.c('lunch')::date, 'DD/MM') || ' was cancelled'),
   ('L2 DINH cannot take it', pg_temp.answer('dinh', 'lunch', 'accepted'),
    '55000 lunch on ' || to_char(pg_temp.c('lunch')::date, 'DD/MM') || ' was cancelled'),
-  ('L2 nor turn it down', pg_temp.answer('dinh', 'lunch', 'declined'),
-   '55000 lunch on ' || to_char(pg_temp.c('lunch')::date, 'DD/MM') || ' was cancelled');
+  ('L2 nor turn it down, being withdrawn', pg_temp.answer('dinh', 'lunch', 'declined'),
+   '55000 this transfer is already cancelled');
 insert into probe values
   ('L3 still withdrawn', split_part(pg_temp.pass_of('lunch'), ' ', 1), 'cancelled'),
   ('L4 and nobody is told anything', pg_temp.told('lunch'), '-');
@@ -172,9 +173,8 @@ insert into probe values
   ('O2 DINH cannot take it', pg_temp.answer('dinh', 'own', 'accepted'),
    '55000 the lunch on ' || to_char(pg_temp.c('own')::date, 'DD/MM')
    || ' offered to you was cancelled, so there is no meal to accept'),
-  ('O2 nor turn it down', pg_temp.answer('dinh', 'own', 'declined'),
-   '55000 the lunch on ' || to_char(pg_temp.c('own')::date, 'DD/MM')
-   || ' offered to you was cancelled, so there is no meal to turn down');
+  ('O2 nor turn it down, being withdrawn', pg_temp.answer('dinh', 'own', 'declined'),
+   '55000 this transfer is already cancelled');
 insert into probe values
   ('O3 nobody is told anything', pg_temp.told('own'), '-'),
   ('O4 TEO orders again', pg_temp.as_user('teo', format(
@@ -226,34 +226,72 @@ insert into probe values
 
 -------------------------------------- S a pass left waiting on a cancelled order
 
--- Only a cancel racing an answer leaves one (withdrawn_pass_race.sql); made
+-- Only a cancel racing an answer leaves one (withdrawn_pass_race.sql R6); made
 -- here by switching the withdrawal off for one statement.
-alter table public.orders disable trigger orders_withdraw_pass;
-select pg_temp.as_user('teo', format(
-  'update public.orders set status = %L, cancelled_at = now() where id = %s',
-  'cancelled', pg_temp.o('stale')));
-alter table public.orders enable trigger orders_withdraw_pass;
+create function pg_temp.leave_waiting(p_day text) returns void
+language plpgsql as $fn$
+begin
+  alter table public.orders disable trigger orders_withdraw_pass;
+  perform pg_temp.as_user('teo', format(
+    'update public.orders set status = %L, cancelled_at = now() where id = %s',
+    'cancelled', pg_temp.o(p_day)));
+  alter table public.orders enable trigger orders_withdraw_pass;
+end $fn$;
+
+select pg_temp.leave_waiting(k) from unnest(array['stale', 'stale2', 'again', 'fixed']) as k;
+select pg_temp.mark('stale');
 
 insert into probe values
   ('S0 the offer waits on a cancelled order', split_part(pg_temp.pass_of('stale'), ' ', 1), 'pending'),
   ('S1 DINH cannot take it', pg_temp.answer('dinh', 'stale', 'accepted'),
    '55000 the lunch on ' || to_char(pg_temp.c('stale')::date, 'DD/MM')
    || ' offered to you was cancelled, so there is no meal to accept'),
-  ('S1 nor turn it down', pg_temp.answer('dinh', 'stale', 'declined'),
-   '55000 the lunch on ' || to_char(pg_temp.c('stale')::date, 'DD/MM')
-   || ' offered to you was cancelled, so there is no meal to turn down'),
   ('S2 an admin cannot accept it for her', pg_temp.as_user('adm', format(
      'select * from public.answer_pass(%s, %L)', pg_temp.pass_id('stale'), 'accept')),
    '55000 nothing is recorded for Teo Van on ' || to_char(pg_temp.c('stale')::date, 'DD/MM')
    || ', so there is no meal to accept'),
-  ('S2 nor decline it for her', pg_temp.as_user('adm', format(
+  ('S2 nor decline it for her, which would tell Teo it is still on his bill',
+   pg_temp.as_user('adm', format(
      'select * from public.answer_pass(%s, %L)', pg_temp.pass_id('stale'), 'decline')),
    '55000 nothing is recorded for Teo Van on ' || to_char(pg_temp.c('stale')::date, 'DD/MM')
    || ', so there is no meal to turn down');
 insert into probe values
-  ('S3 TEO can still withdraw it', pg_temp.answer('teo', 'stale', 'cancelled'), 'ok');
+  ('S3 DINH can turn it down, to clear it', pg_temp.answer('dinh', 'stale', 'declined'), 'ok');
 insert into probe values
-  ('S3 withdrawn', pg_temp.pass_of('stale'), 'cancelled TEO -');
+  ('S3 declined', pg_temp.pass_of('stale'), 'declined DINH -'),
+  ('S3 and Teo is not told it is still on his bill', pg_temp.told('stale'), '-'),
+  ('S4 TEO can withdraw one too', pg_temp.answer('teo', 'stale2', 'cancelled'), 'ok');
+insert into probe values
+  ('S4 withdrawn', pg_temp.pass_of('stale2'), 'cancelled TEO -');
+
+-------------------------------------- Q the order is placed again under it
+
+-- The offer was for the meal that was cancelled. Placing the order again,
+-- by TEO or by an admin, withdraws it, so DINH cannot take the new meal.
+select pg_temp.mark('again');
+insert into probe values
+  ('Q0 TEO orders again under a waiting offer', pg_temp.as_user('teo', format(
+     'select * from public.set_my_order(%s, (select id from public.menu_items where menu_id = %s))',
+     pg_temp.m('again'), pg_temp.m('again'))), 'ok');
+insert into probe values
+  ('Q1 the old offer is withdrawn, by TEO', pg_temp.pass_of('again'),
+   'cancelled TEO withdrawn: the meal was cancelled'),
+  ('Q2 DINH cannot take the new meal', pg_temp.answer('dinh', 'again', 'accepted'),
+   '55000 this transfer is already cancelled'),
+  ('Q2 nobody is told of the offer going', pg_temp.told('again'), '-'),
+  ('Q4 an admin orders for TEO under another', pg_temp.as_user('adm', format(
+     'select count(*) from public.correct_meal(%s, %L::date, %L::uuid, (select id from public.menu_items where menu_id = %s))',
+     pg_temp.c('org'), pg_temp.c('fixed'), pg_temp.c('teo'), pg_temp.m('fixed'))), 'ok');
+insert into probe values
+  ('Q4 which withdraws it too, by the admin', pg_temp.pass_of('fixed'),
+   'cancelled ADM withdrawn: the meal was cancelled');
+select public.run_billing(public.ensure_billing_period(pg_temp.c('org')::bigint, pg_temp.c('again')::date));
+insert into probe values
+  ('Q3 TEO''s new meal is on TEO''s bill',
+   (select string_agg(ms.short_code || ' ' || bl.amount_minor, ',')
+      from public.billing_lines bl
+      join public.memberships ms on ms.org_id = bl.org_id and ms.profile_id = bl.payer_profile_id
+     where bl.order_id = pg_temp.o('again')), 'TEO 45000');
 
 ---------------------------------------------- P a placed order, as before
 

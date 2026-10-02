@@ -506,6 +506,53 @@ insert into probe values
    (select count(*)::text from public.notification_outbox n
      where n.kind = 'menu_published' and n.related_menu_id = pg_temp.m('org_c', 'c_ahead')), '0');
 
+---------------------------- M a cooking day cut down to one dish
+
+-- Office D, cooking all day like C. Two dishes published today leave CMEM's
+-- standing slot undecided; cutting the menu to one converts nothing outside
+-- 'open', so the message must not say standing orders are down for it.
+insert into public.organizations (slug, name, short_code, business_day_starts_at, business_day_ends_at)
+values ('onedish-d', 'One Dish D', 'ODD', '00:00', '23:59');
+insert into ctx
+select 'org_d', id::text from public.organizations where slug = 'onedish-d' union all
+select 'd_today', private.today_in(timezone)::text from public.organizations where slug = 'onedish-d';
+insert into public.memberships (org_id, profile_id, role, short_code)
+select pg_temp.c('org_d')::bigint, pg_temp.c(x.code)::uuid,
+       case x.code when 'cadm' then 'owner' else 'member' end, upper(x.code)
+  from unnest(array['cadm', 'cmem']) as x(code);
+insert into public.telegram_links (membership_id, org_id, chat_id, linked_at)
+select ms.id, ms.org_id, 890000 + ms.id, now() from public.memberships ms
+ where ms.org_id = pg_temp.c('org_d')::bigint;
+insert into public.standing_orders (org_id, profile_id, weekday, is_enabled)
+select pg_temp.c('org_d')::bigint, pg_temp.c('cmem')::uuid, d, true from generate_series(1, 7) as d;
+
+create function pg_temp.publish_d(p_dishes jsonb) returns text
+language sql as $fn$
+  select pg_temp.as_user('cadm', format(
+    'select * from public.publish_menu(%s, %L::date, %L::timestamptz, %L::jsonb, %L, %L::jsonb)',
+    pg_temp.c('org_d'), pg_temp.c('d_today'), now() + interval '2 hours', p_dishes, 'raw', '{}'));
+$fn$;
+
+insert into probe values
+  ('M1 two dishes for today while cooking',
+   pg_temp.publish_d('[{"name":"Com ga","price_minor":45000},{"name":"Pho","price_minor":50000}]'), 'ok');
+insert into probe values
+  ('M1 the standing slot is undecided', pg_temp.order_of('org_d', 'd_today', 'cmem'), 'standing placed -'),
+  ('M2 cut down to one dish',
+   pg_temp.publish_d(jsonb_build_array(jsonb_build_object(
+     'id', pg_temp.dish('org_d', 'd_today', 'Com ga'), 'name', 'Com ga', 'price_minor', 45000))), 'ok');
+select private.run_hourly_tick();
+insert into probe values
+  ('M3 the slot is still undecided, and the message does not say otherwise',
+   pg_temp.order_of('org_d', 'd_today', 'cmem') || ' / '
+   || (select n.body from public.notification_outbox n
+        where n.kind = 'menu_published' and n.related_menu_id = pg_temp.m('org_d', 'd_today')
+          and n.recipient_profile_id = pg_temp.c('cmem')::uuid),
+   'standing placed - / Menu for ' || to_char(pg_temp.c('d_today')::date, 'DD/MM')
+   || E'\n- Com ga  45.000 ₫\nOrders close '
+   || (select to_char(m.order_cutoff_at at time zone 'Asia/Ho_Chi_Minh', 'HH24:MI DD/MM')
+         from public.menus m where m.id = pg_temp.m('org_d', 'd_today')) || '.');
+
 --------------------------------------------------------------------- verdict
 
 select label, got, want, case when got is not distinct from want then 'PASS' else 'FAIL' end as verdict

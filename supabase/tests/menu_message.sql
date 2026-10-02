@@ -36,7 +36,8 @@ select o.id, v.d, v.cut, 'e1e1e1e1-0000-0000-0000-000000000001', 'menu_message.s
     (date '2030-01-04', timestamptz '2030-01-03 16:00:00+00'),
     (date '2030-01-06', timestamptz '2030-01-05 16:00:00+00'),
     (date '2030-01-07', timestamptz '2030-01-06 16:00:00+00'),
-    (date '2020-01-06', timestamptz '2020-01-05 16:00:00+00')
+    (date '2020-01-06', timestamptz '2020-01-05 16:00:00+00'),
+    (date '2030-01-08', timestamptz '2030-01-07 16:00:00+00')
   ) as v(d, cut)
  where o.slug = 'menu-msg';
 
@@ -53,8 +54,17 @@ select m.id, m.org_id, v.nm, v.pr, v.pos
     (date '2030-01-04', 'Bún bò',  60000,        1),
     (date '2030-01-06', 'Cơm tấm', 50000,        0),
     (date '2030-01-07', repeat('Bún bò Huế ', 17) || 'đặc biệt', null, 0),
-    (date '2020-01-06', 'Cơm tấm', 50000,        0)
+    (date '2020-01-06', 'Cơm tấm', 50000,        0),
+    (date '2030-01-08', 'Cơm tấm', 50000,        0)
   ) as v(d, nm, pr, pos) on v.d = m.service_date;
+
+-- A standing order with no dish on the one-dish 08/01, as a menu cut down to
+-- one dish outside 'open' leaves it.
+insert into public.orders (org_id, menu_id, service_date, profile_id, source, created_by)
+select m.org_id, m.id, m.service_date, 'e1e1e1e1-0000-0000-0000-000000000001', 'standing',
+       'e1e1e1e1-0000-0000-0000-000000000001'
+  from public.menus m join public.organizations o on o.id = m.org_id and o.slug = 'menu-msg'
+ where m.service_date = date '2030-01-08';
 
 create function pg_temp.msg(p_date date) returns text
 language sql stable as $fn$
@@ -79,7 +89,10 @@ insert into probe values
    E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nStanding orders are down for Cơm tấm.\nOrders close 23:00 05/01.'),
   ('one dish on a past day: no standing orders to speak of, since publishing made none',
    pg_temp.msg('2020-01-06'),
-   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nOrders close 23:00 05/01.');
+   E'Menu for 06/01\n- Cơm tấm  50.000 ₫\nOrders close 23:00 05/01.'),
+  ('one dish, but a standing order without it: the line would be false, so it goes',
+   pg_temp.msg('2030-01-08'),
+   E'Menu for 08/01\n- Cơm tấm  50.000 ₫\nOrders close 23:00 07/01.');
 
 insert into probe
 select 'one dish of the longest name still fits, and names it twice',
