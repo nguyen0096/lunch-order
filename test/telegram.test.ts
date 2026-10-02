@@ -1476,8 +1476,9 @@ describe("the webhook registration", () => {
 
 /**
  * The offers /order lists come from one query in the Edge Function, which
- * Deno runs and this suite cannot. An offer left waiting on a cancelled order
- * cannot be accepted, so listing it would put an Accept button on a refusal.
+ * Deno runs and this suite cannot. An offer left waiting on a cancelled order,
+ * or on the order placed again after it, cannot be accepted, so listing it
+ * would put an Accept button on a refusal.
  */
 describe("the offers /order lists", () => {
   const code = readFileSync(
@@ -1495,5 +1496,9 @@ describe("the offers /order lists", () => {
   it("are pending offers on placed orders only", () => {
     expect(body).toContain("t.status = 'pending'");
     expect(body).toMatch(/and o\.status = 'placed'/);
+  });
+
+  it("leave out an offer the order was placed again after", () => {
+    expect(body).toMatch(/and o\.placed_at <= t\.created_at/);
   });
 });

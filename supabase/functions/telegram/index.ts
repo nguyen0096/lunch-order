@@ -917,9 +917,10 @@ async function offerViews(tx: Tx, link: Link): Promise<Rendered[]> {
      where t.org_id = ${link.org.id}
        and t.to_profile_id = ${link.profileId}::uuid
        and t.status = 'pending'
-       -- An offer can be left waiting on a cancelled order, where accepting
-       -- it is refused; it is not an offer of a meal.
+       -- An offer can be left waiting on a cancelled order, or on the order
+       -- placed again after it, and accepting it is refused either way.
        and o.status = 'placed'
+       and o.placed_at <= t.created_at
      order by o.service_date, t.id`;
 
   return rows.map((t) => ({
