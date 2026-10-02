@@ -152,8 +152,19 @@ accept it (`lunch on 24/09 was cancelled`, or `the lunch on 24/09 offered to
 you was cancelled, so there is no meal to accept`); the recipient can decline
 it, which tells the giver nothing, and the giver can withdraw it. The order
 being placed again, by the member or an admin, withdraws it in the same
-transaction, so it never reaches the new meal. The bot's `/order` lists only
-offers on placed orders.
+transaction, so it never reaches the new meal.
+
+**An offer belongs to the placement it was made on.** `orders.placed_at` is
+stamped each time an order is placed (its insert, and every move back to
+`placed`) and is never changed otherwise, by anybody: a dish change, a note or
+an admin's correction of a placed order leave it. Accepting a pass whose order
+was placed after the offer is refused, on the table and in `answer_pass`:
+`the lunch on 24/09 was ordered again after this offer, so the offer no longer
+stands`. Declining and withdrawing it stay allowed. This covers the one case
+the withdrawal can miss, an admin answering the offer at the moment the member
+orders again (`stamp_order_placement`, `enforce_transfer_rules`, `answer_pass`,
+20261023100100). The bot's `/order` lists only offers on placed orders that
+were placed before the offer.
 
 **An accepted pass is left alone** when its order is cancelled afterwards: it
 happened, the recipient agreed to it, and the cancelled order bills nobody, so

@@ -377,7 +377,13 @@ every withdrawal is, and an answer that arrives anyway is refused. The
 withdrawal does not wait on a pass somebody is answering, to keep the lock
 order, so an offer can still be left waiting on a cancelled order. That one
 must never reach a later meal: placing the order again withdraws it, accepting
-it is refused, and the recipient may decline it to clear it. An accepted pass
+it is refused, and the recipient may decline it to clear it. The withdrawal on
+placing again skips a held pass too, so the last guard is a stamp rather than
+a lock: an offer belongs to the placement it was made on, and an accept is
+refused when the order was placed after the offer. `placed_at` was written
+only on insert and so could not tell two placements apart; stamping it on
+every placement, and freezing it otherwise, made it the stamp without a new
+column. An accepted pass
 is not undone the same way: it happened, the
 recipient agreed to it, and a cancelled order bills nobody, so leaving it
 accepted costs nobody anything (20261023100100).
