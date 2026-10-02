@@ -48,7 +48,10 @@
 -- it. Accepting a pass whose order was placed after the offer was made is
 -- refused, on the table and in answer_pass, with no new lock: both read the
 -- order after the pass. A pass's created_at is the moment of the offer, set
--- by enforce_transfer_rules, so neither stamp can be written to suit.
+-- by enforce_transfer_rules, so neither stamp can be written to suit. Both are
+-- clock_timestamp(), not now(): a transaction that began before a placement
+-- committed would otherwise stamp its offer earlier than that placement, and
+-- the offer would be born unacceptable while holding the meal's one live slot.
 
 create or replace function private.withdraw_pending_pass(p_order_id bigint, p_reason text)
 returns void
@@ -77,9 +80,9 @@ set search_path to ''
 as $fn$
 begin
   if tg_op = 'INSERT' then
-    new.placed_at := now();
+    new.placed_at := clock_timestamp();
   elsif new.status = 'placed' and old.status <> 'placed' then
-    new.placed_at := now();
+    new.placed_at := clock_timestamp();
   else
     new.placed_at := old.placed_at;
   end if;
@@ -92,6 +95,9 @@ create trigger orders_placement_stamp
   before insert or update on public.orders
   for each row
   execute function public.stamp_order_placement();
+
+-- The service's own inserts (record_pass, fixtures) take the same clock.
+alter table public.meal_transfers alter column created_at set default clock_timestamp();
 
 -- On leaving 'placed' and on coming back to it. Coming back, a pending pass
 -- can only be one a cancel skipped, so its reason is the cancel's.
@@ -285,7 +291,7 @@ begin
     new.org_id          := v_order.org_id;
     new.from_profile_id := v_order.profile_id;
     new.created_by      := v_uid;
-    new.created_at      := now();
+    new.created_at      := clock_timestamp();
     new.status          := 'pending';
     new.decided_at      := null;
     new.decided_by      := null;
@@ -388,7 +394,8 @@ begin
   if v_new in ('accepted', 'declined') and o.status <> 'placed' then
     raise exception 'nothing is recorded for % on %, so there is no meal to %',
       private.member_name(o.org_id, o.profile_id), to_char(o.service_date, 'DD/MM'),
-      case v_new when 'accepted' then 'accept' else 'turn down' end
+      case v_new when 'accepted' then 'accept'
+                 else 'turn down; withdraw the offer instead' end
       using errcode = 'object_not_in_prerequisite_state';
   end if;
   if v_new = 'accepted' then
