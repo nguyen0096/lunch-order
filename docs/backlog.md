@@ -259,8 +259,3 @@ acting on is real: the rules are spread across policies, grants and triggers,
 and only tests tie them together. Start by writing down what specifically has
 been buggy or hard to scale, because that decides which of the two directions
 helps.
-
-## Noted in passing
-
-- Publishing a one-dish menu for today after the office's day has started gives its standing orders no dish (the stage is `closed`, so `private.settle_undecided` does nothing), but `private.menu_message` still says `Standing orders are down for <dish>.`
-- An offer can still be accepted on a day whose lunch was just cancelled: the money is right (the cancelled order bills nothing), but `transfer_decided` tells the giver their offer was accepted for a lunch that will not happen.

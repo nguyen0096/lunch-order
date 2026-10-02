@@ -65,6 +65,14 @@ its cutoff at billing hour while an admin settles that week. The loser is either
 Settle week, which can be pressed again, or that office's tick subtransaction,
 which the next hour retries.
 
+A statement that touches two weeks used to be another: each row's trigger took
+its own week's office-week key, so the second week's key was asked for while
+the first week's people were held, and a correction there deadlocked with it.
+Only a hand-made request writes such a statement. Refusing it would have been
+smaller to write; taking every key the statement needs on its first row, in
+order, keeps a valid request working and leaves a one-row statement exactly as
+it was (20261023100200).
+
 Materializing standing orders was the other lock problem. A weekday rule or an
 exception ran `materialize_open_menus`, which locked every office's open menus
 ordered by date alone: two offices' writes could deadlock, and every member
@@ -361,6 +369,15 @@ What a member would be doing is changing who ate it. The exemption lives in
 the Orders functions, which audit it, not on the table: an admin's direct
 write to somebody else's pass is refused like anybody's.
 
+**A pending pass ends with its meal.** An offer is about a meal. Once the meal
+is no longer ordered there is nothing to take, and a live offer let the
+recipient accept a lunch that was not going to happen and told the giver it
+had been taken. So an order leaving `placed` withdraws its offer, quietly, as
+every withdrawal is, and an answer that arrives anyway is refused with the
+reason. An accepted pass is not undone the same way: it happened, the
+recipient agreed to it, and a cancelled order bills nobody, so leaving it
+accepted costs nobody anything (20261023100100).
+
 **There is no draft: a day has lunch or it does not.** The owner's rule. A
 published menu is editable in place, so a draft, like un-publishing before it,
 only ever hid a day from members while lunch went on being cooked, which is a
@@ -417,6 +434,13 @@ back a line that is on its way to a colleague would change what they accepted.
 A system line does not block removing its dish either, because nobody chose it;
 a line somebody did write still does. After the cutoff nothing moves: the count
 has gone to the caterer.
+
+A cutoff after the office's start of day leaves a stretch that reads `Cooking`
+while orders are still taken. There the system still gives the one dish to the
+slots it creates itself, at publish or when a rule is turned on: it never
+leaves a slot it has just made undecided, and the menu message it sends says
+those orders are down for the dish (20261023100000). Everybody else's order is
+left as it is, as before: converting and reverting are for an `open` day.
 
 Dish availability went at the same time. No screen ever set it, and it was a
 second answer to "how many dishes does this menu have", which the one-dish rule

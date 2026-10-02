@@ -282,7 +282,11 @@ an arrangement between two people, so it lives on [Orders](#orders-admin).
 An offer made to you appears on the cell of the meal it concerns, which is the
 giver's cell on their row, with Accept and Decline inline. A pending offer is
 legible on the board as the recipient's name on the cell, so nobody offers a
-meal that is already spoken for.
+meal that is already spoken for. Cancelling a meal that is on offer, or lunch
+being cancelled, withdraws the offer, so it leaves both cells; Accept or
+Decline from a board loaded before then is refused in the database's words,
+`the lunch on 24/09 offered to you was cancelled, so there is no meal to
+accept`.
 
 Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would
