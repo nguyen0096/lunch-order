@@ -290,8 +290,11 @@ no meal to accept`, or, once the giver has ordered again, `the lunch on 24/09
 was ordered again after this offer, so the offer no longer stands`; Decline
 gets `this transfer is already cancelled`. An offer the database would refuse
 to accept, on a cancelled order or on one placed again after the offer, gets
-no Accept or Decline at all (`offerStands`, `src/web/api/board.ts`); the giver
-still sees it on their own cell and can withdraw it.
+no Accept or Decline at all (`offerStands`, `src/web/api/board.ts`). On an
+order placed again, the giver still sees it on their own cell and can withdraw
+it. On a cancelled order no screen shows it, Orders included: it is left only
+when a cancel races an answer, it cannot be accepted, and ordering again
+withdraws it.
 
 Sentences, not icons. A cell is a person and a day, so a tap could mean give or
 take, and that is a difference of grammar rather than appearance: two arrows would
