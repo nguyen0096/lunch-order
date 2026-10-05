@@ -489,6 +489,55 @@ before anything else, because leaving looks for open orders once: an order
 committed just after that look, from a second device or an admin, would
 otherwise stay placed on somebody who has gone (20261024100000).
 
+**A meal passed to somebody who leaves goes back to its giver.** The owner's
+rule (2026-10-05). An accepted pass moves the bill, not the meal's owner, so
+leaving left it on the leaver's bill, eaten by nobody, and an offer waiting for
+them had nobody left to answer it. On an open day the meal goes back exactly as
+an admin's undo would leave it, because the giver can still cancel it before
+the cutoff, and the message tells them so; giving it to nobody would bill
+nobody for a meal the caterer may cook. When the giver has gone too, the meal
+is cancelled, as the giver's own leaving would have. Past the cutoff the leaver
+keeps it, the same line their own meals follow. It runs inside the leaving
+rather than as a job afterwards, so the bill, the passes and the message agree
+the moment the person is gone. The giver's membership is not held, against the
+rule every other path that places an order follows: two leavings in one office
+already queue on the publish lock, which settles the giver leaving at the same
+moment, and holding the other person's row would deadlock two people who passed
+each other meals and leave together. No `order_corrections` row is written,
+because nobody corrected anything; the pass row carries who and why
+(20261025100000).
+
+**Remove asks first, and reads without locking.** The owner's rule
+(2026-10-05). Remove was one tap, and Add back restores none of what it
+cancelled, so the dialog names each meal and pass before anything happens. The
+list comes from the same function the removal runs, read-only, so the two
+cannot disagree about which days are open. It is not the dry run Settings uses
+for the balance: listing needs no re-bill, and a dry run takes the leaving's
+office-wide locks for as long as it runs. The list can go stale in the seconds
+before Remove is pressed; the removal reads again under its locks, which is the
+answer that counts (20261025100100).
+
+**Deleting an office cancels what has not been served, and the office goes
+quiet.** The owner's rule (2026-10-05), in case orders are ever sent to the
+caterer on their own. A deleted office used to keep every order placed, and the
+hourly tick, materializing and the outbox drain did not look at `deleted_at`,
+so a gone office went on locking menus, queueing messages and closing weeks.
+Every order on a day not yet over is cancelled, before or after the cutoff:
+nobody will eat it, and an office that is gone has no caterer to honour. Past
+days keep theirs, as the record of what was eaten. The weeks are re-billed,
+though no policy lets anybody read a deleted office's bills: it is one re-bill
+per open week, it keeps every invariant true in every office, and an office
+restored by hand would otherwise open on charges for meals nobody ate.
+Nothing in it changes afterwards either: the period lock every correction
+takes waits on the office row the deletion updates and refuses, which closes
+the moment between an admin's check and their write. The outbox also stops
+sending a private message whose recipient has gone since it was queued, unless
+it is about their money: the weekly bill and a correction of a meal they pay
+for were always sent to people who had left, because what is owed stays owed.
+A message asking somebody to act in the app is held back even then, since
+they no longer can; the only one is a meal given back when its recipient left,
+and the giver's own leaving has cancelled that meal anyway (20261025100200).
+
 **No horizon.** A member may skip or plan any date after today, however far
 ahead, and the Board pages forward without limit. The projection is a pure
 function of the rule and the exceptions over whatever week is on screen, so

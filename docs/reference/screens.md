@@ -135,6 +135,15 @@ rather than your own name, which on somebody else's cell reads as a stranger's
 (the handover sheet says `passed this meal to you` too). Without it your row looked empty and offered you a second lunch for a day
 you already had one. Tapping it says why there is nothing to order.
 
+**Somebody who has left** keeps a row only for a week in which they still have
+a placed order: one kept because its ordering had closed, which the day's
+`Total` and the caterer's message count. The row comes last, the name followed
+by `(left)` in muted type, whether they left or were removed. It is read only:
+the cell names the dish (`× 2` above one portion), or `to Dinh` for a meal they
+passed on, and nothing on the row can be tapped, because nobody hands a meal to
+somebody gone; an admin puts the meal right on Orders. On a phone the row
+appears only in the list of a day they have a meal on.
+
 **Which days you can act on** is the first question the grid answers, and the
 column head answers it in words. A day carries its stage under the date --
 `No menu`, `Closed`, `Cooking`, `Served`, `Cancelled` -- and `Today` beside it
@@ -578,6 +587,13 @@ admin changed it since.
 | offer waiting | dashed accent edge, `offered to Thảo Vy` |
 | nothing, day open to record | hairline and a faint `+` |
 | nothing, day not open to record | no edge; the reason on tap, focus and hover |
+| somebody who has left, a day with their meal | as a meal: it opens, and can be changed, removed or passed on |
+| somebody who has left, any other day | no edge; `Tèo is no longer in this office, so no lunch can be recorded for them` on tap, focus and hover |
+
+Somebody who has left has a row only in a week where they still have a placed
+meal, after everybody here, `(left)` beside the name and their balance under
+it. On a phone they are in a day's list only when they have a meal that day.
+Nobody gone is offered as somebody to pass a meal to.
 
 Each cell is one button whose label speaks the whole state, the note in full:
 `Tèo, Wed 30: Bún chả Hà Nội, 2 portions, recorded by an admin. Change`.
@@ -791,10 +807,25 @@ can. An inactive member carries **left** or **removed**, because only the
 second is kept out of the join code; **Remove** on an active row, **Add back**
 on an inactive one, and adding back is the way in for a removed member (a new
 invitation is the other). The line above the list says that removing somebody
-cancels their lunch on every day still open for ordering, which adding them
-back does not restore, while a day whose ordering has closed and their past
-orders stay on the bill. A row of grey controls
+cancels their lunch on every day still open for ordering, gives a meal passed
+to them on those days back to whoever passed it, and declines offers waiting
+for them, none of which adding them back restores, while a day whose ordering
+has closed and their past orders stay on the bill. A row of grey controls
 with no explanation is what made this screen look broken while it was working.
+
+**Remove asks first.** It opens `Remove Tèo?`, saying `Tèo stops seeing this
+office at once. A day whose ordering has closed, and their past orders, stay on
+their bill.`, and lists what removing would change, by day, from
+`removal_preview`: `Tèo's Bún bò Huế is cancelled.`, `Thảo Vy's Phở bò, passed
+to Tèo, goes back to Thảo Vy and onto their bill.`, `Bình's lunch, no dish
+chosen yet, passed to Tèo, is cancelled: Bình is no longer in the office
+either.`, `Dinh's offer of Cơm gà to Tèo is declined.`, under `Removing changes
+these, and adding them back does not restore them:`. The list scrolls inside
+the dialog, which is capped at the screen, so the title and both buttons stay
+in view however many days it names. **Keep** closes it;
+**Remove** (danger, `Removing` while it runs) removes. The list is read when
+the dialog opens and the removal reads again when it runs, so a meal ordered in
+between is cancelled too. Add back asks nothing: it changes no meal.
 
 Who is on Telegram heads the list, "9 of 12 on Telegram", counting active
 members only, because somebody who never linked hears none of the bot's direct
@@ -814,7 +845,11 @@ and `link_token` is not selectable by any browser role.
 | only you | the code, and "Share this to add your first colleague" |
 | no code set | "No join code yet" with Create |
 | role changed | toast, "Now an admin" |
-| removed | toast, "Removed Tèo"; the row stays, marked removed |
+| Remove dialog, loading | two placeholder lines; Remove unavailable, `Working out what removing Tèo would cancel.` |
+| Remove dialog, nothing to change | `Nothing is cancelled: Tèo has no lunch on a day still open for ordering, and nobody has a meal or an offer with them.` |
+| Remove dialog, list failed | `What removing would cancel did not load. Close this and try again.` and the reason, on a `danger-subtle` block; Remove unavailable with that sentence |
+| removal refused | the toast says why; the dialog stays open |
+| removed | toast, "Removed Tèo"; the dialog closes; the row stays, marked removed |
 | added back | toast, "Added Tèo back" |
 | nobody linked | "0 of 12 on Telegram", every row not linked |
 | Telegram read failed | "Telegram status unavailable", no Telegram line on any row |
@@ -916,8 +951,9 @@ being too close to a colleague's code is the database's sentence, as it comes.
 
 **Leave this office** is last, behind a rule. It says what leaving does before
 it is pressed: lunch on a day still open for ordering is cancelled and comes
-off the bill, a day whose ordering has closed stays ordered and billed, and
-past orders and anything owed stay on the books. Leave is unavailable, with
+off the bill, a meal somebody passed you for such a day goes back to them, a
+day whose ordering has closed stays ordered and billed, and past orders and
+anything owed stay on the books. Leave is unavailable, with
 the reason, for the only owner, and when the owner count fails to load (`This
 did not load, so it cannot say yet whether you can leave. Reload the page.`);
 while it loads, the button is a placeholder. The confirmation repeats it in one
@@ -928,7 +964,10 @@ anything owed stays owed.` Only then is what would still be owed asked for
 dialog's Leave unavailable until it is known. Owed, it says `You would still
 owe 45.000 ₫. Settle up before you leave.` on a `warn-subtle` block; failed,
 `Your bill did not load, so this cannot say yet whether you can leave. Close
-this and try again.` An owner also sees **Delete this office** below it.
+this and try again.` An owner also sees **Delete this office** below it,
+which says before it is pressed, and again in its dialog, that lunch ordered
+for today or later is cancelled and that no message goes out for the office
+again; the dialog is confirmed by typing the office's name.
 
 An admin also sees **Your office**: when ordering closes, the bank account,
 and the **Telegram group chat**. The group chat card does not ask anybody to

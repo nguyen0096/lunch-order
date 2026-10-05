@@ -44,6 +44,10 @@ and whether it rolls back. The ones to know first:
 | `admin_orders_race.sql` | over dblink: an admin answering an offer while the recipient accepts it, both ways round and with the week held by a third correction, never deadlocks; a pass meets the member cancelling or offering the same meal, both ways round; an undo waits for a correction on the same meal; a member's offer taken while the real `record_pass` holds the order goes through, and `record_pass` then names it, with `record_pass` paused between its order lock and its insert by a test-only trigger the file creates and drops (R7); cancelling lunch waits for a correction in flight and cancels the order it wrote (R8); cancelling lunch and a correction on another day of the same week wait for each other, both ways round, and leave every statement the sum of its lines (R9, R10), including when the correction creates the week's first billing period, so nothing stays billed on a cancelled order (R11, R12); a member accepting an offer and the week's first correction, both ways round, leave the meal on the recipient's bill (R13, R14) | **yes, then removes them**; local only, needs `dblink` |
 | `leaving_cancels_orders.sql` | leaving, an admin's removal and one service-role UPDATE removing two people each cancel only the person's open orders (the system's one dish included), withdraw the pending offer on them, saying why, and re-bill the week at once: credit comes back, a statement with no lines goes, nothing past the cutoff, in a settled week or passed on and accepted moves; `leave_office` reads the debt after cancelling (owing only for open meals is no bar, a debt past the cutoff refuses and the refusal cancels nothing), and `my_balance_after_leaving` gives the same figure and changes nothing; the rules order nothing for somebody gone, nobody records a meal for them, passes them one or places their order again on the table, a meal they kept can still be corrected, an undo puts an open day's meal back on no giver who has gone but does past the cutoff, an order in another office gets RLS's refusal whoever it names, and coming back revives nothing; the other office and everybody who stayed are untouched | no, rolls back |
 | `leaving_race.sql` | over dblink: leaving waits for a publish in flight and cancels what it ordered (R1), a publish waits for a leaving or a removal and orders nothing for them (R2, R3), leaving waits for a correction of the meal and cancels it, leaving every statement the sum of its lines (R4), leaving and a removal of the same person wait for each other both ways without a deadlock (R5, R6), an accept of the leaver's offer before leaving keeps the meal on the recipient's bill and one after is refused (R7, R8), leaving waits for an offer somebody holds rather than cancel the meal under an accept (R9), and the member's own order and an admin's record of a meal each wait for a leaving in flight and are refused after it, or are waited for and cancelled with the rest (R10 to R13), and an undo of the leaver's pass waits for the leaving and is refused, or is waited for and its meal cancelled (R14, R15), and the same with both queued on the giver's row behind a third session, either order, without a deadlock (R16) | **yes, then removes them**; local only, needs `dblink` |
+| `leaving_returns_passes.sql` | leaving, an admin's removal and the service role each give back an accepted pass to the person on an open day (the giver pays again, exactly, and is told, with the cutoff and their balance), cancel one whose giver has gone too (earlier, or in the same `UPDATE`), keep one past the cutoff on the person's bill, and decline every offer waiting for them, telling the giver; `undone_by`/`decided_by` and the reason say who and why; `my_balance_after_leaving` gives the figure leaving leaves; `removal_preview` lists the same things for an admin of the office only, the same refusal for a member, another office and a missing one, and changes nothing; coming back revives nothing and a declined offer cannot be accepted; an offer left waiting on a cancelled meal is neither listed nor declined; the giver can cancel the meal given back; the drain sends nothing queued for somebody who has gone since (a removed giver's "yours again", the leaver's old offers and messages) but still sends a gone person the correction of a meal they pay for and the weekly bill, and sends the rest; nobody else and no other office moves, every statement the sum of its lines | no, rolls back |
+| `leaving_passes_race.sql` | over dblink: a removal and the giver cancelling the meal, both ways round (R1); leaving and an admin's undo, both ways round, the second refused or finding nothing (R2); the giver and the recipient leaving one after the other, both ways round, the meal cancelled and nobody charged (R3); two people who passed each other meals leaving at once, queued on the publish lock, without a deadlock (R4); the recipient accepting on one device and leaving on another, the meal going back to the giver (R5) | **yes, then removes them**; local only, needs `dblink` |
+| `deleting_an_office.sql` | only an owner deletes; deleting cancels every order today and later, before and after the cutoff, keeps past days and the settled week, withdraws every pending pass saying why, re-bills to exact figures, fails the waiting message and keeps the sent one; afterwards the hourly tick queues and locks nothing for the office (and still does for another), the drain claims none of its messages, and a menu put in by hand, materializing and the sweep order nothing; the period lock every correction takes refuses the deleted office; its join code and invitation bring nobody in, while the other office's still do; the other office untouched. Calls the hourly tick and the drain's claim, so never against production | no, rolls back |
+| `deleting_an_office_race.sql` | over dblink: a member's order in flight is waited for and cancelled (R1), one after the deletion waits and is refused (R2), an admin's record of a meal in flight is waited for and cancelled, its week re-billed to nothing (R3); an admin's record started while the deletion is in flight, past its admin check, waits and is refused, on a day ahead (at the menu, R4) and on a day past (at the office row, R5) | **yes, then removes them**; local only, needs `dblink` |
 | `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
@@ -200,10 +204,22 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   `FOR UPDATE` would make the two wait on each other (40P01). A membership
   going inactive holds its row first (`leave_office` takes it `FOR NO KEY
   UPDATE` before anything else, as an admin's `UPDATE` does), then follows the
-  order above for the person's open orders: the publish lock, their menus
-  `FOR SHARE`, the pending passes, every office-week key, every week, the
-  orders, and only then re-bills each week in date order
-  (`private.cancel_leavers_open_orders`, 20261024100000). Every path that
+  order above for the person's open orders, the meals passed to them and the
+  offers waiting for them: the publish lock, those menus `FOR SHARE`, the
+  pending passes on those meals and every pass to the person found, every
+  office-week key, every week, the orders, and only then re-bills each week in
+  date order (`private.cancel_leavers_open_orders`, 20261025100000). It reads
+  what to do (`private.leaving_effects`) once before the locks and again under
+  them, acting only on what it locked. A meal given back to its giver does not
+  hold the giver's membership: the publish lock puts two leavings in one office
+  one after the other, so the second reads the first's outcome (a giver gone
+  gets the meal cancelled; a giver leaving after has it cancelled with their
+  own), and holding the giver's row would deadlock two people who passed each
+  other meals and leave at once. Deleting an office takes the publish lock, the
+  office's menus on days not yet over `FOR NO KEY UPDATE` (so a member's order
+  holding one `FOR SHARE` finishes first or waits and is refused), every
+  pending pass, the office-week keys, the weeks, the orders, and the office row
+  last (`delete_office`, 20261025100200). Every path that
   places or revives somebody's order holds that person's membership row
   `FOR SHARE` before its first menu, so it waits for a leaving in flight and
   a leaving waits for it: `set_my_order`, `correct_meal`,
@@ -238,7 +254,9 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   holding money (`private.payment_frontier`), or at nothing.
 - **A pass is never deleted.** No browser role holds DELETE on
   `meal_transfers`; a pass ends as `declined`, `cancelled` or `undone`, which
-  `enforce_transfer_rules` checks and `trg_transfer_rebills` bills.
+  `enforce_transfer_rules` checks and `trg_transfer_rebills` bills. A leaving
+  writes `declined` and `undone` itself, with that trigger quieted, and
+  re-bills each week once (`private.cancel_leavers_open_orders`).
 - **A pending pass is for the meal it was offered on.** An order leaving
   `placed` withdraws its pending pass, and so does an order coming back to
   `placed` (`orders_withdraw_pass`), so no pass outlives the meal into a new
@@ -263,10 +281,32 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   (`enforce_transfer_rules`, 20261022100100). The RPCs pass that trigger
   because they run as their owner (`private.is_service()`), which no browser
   can be; `lunch.pass_by_admin` only quiets the member-style message and
-  admits nobody. Only `undo_pass` writes `undone`. A missing id
+  admits nobody. Only `undo_pass`, and the recipient leaving, write
+  `undone`. A missing id
   and another office's id get the same refusal, `42501 only an admin of this
   office can correct the record`, from these and `remove_meal`, so nobody can
   probe ids across offices.
+- **A deleted office does nothing more.** `delete_office` cancels its orders
+  on days not yet over and its pending passes, and fails its waiting messages;
+  `claim_outbox`, `run_hourly_tick`, `materialize_office`,
+  `materialize_open_menus` and `materialize_standing_orders` each skip an
+  office with `deleted_at` set, so nothing is sent, locked, billed by the tick
+  or ordered for it, whatever writes to it later. Every correction RPC is
+  refused in it (`private.correction_period` holds the office row `FOR SHARE`
+  after its week, as `delete_office` updates the row after its weeks, so a
+  correction in flight waits and is refused), and so are the join code and an
+  invitation (20261025100200). The bot reads offices with its own role and
+  filters `deleted_at` itself.
+- **A private message reaches somebody gone only about their money.**
+  `weekly_bill` (anybody owing, any status) and `bill_correction` (a meal's
+  owner and payer, any status, since a meal kept past its cutoff can still be
+  corrected) are written for people who have left by design. Every other kind
+  is written for active members only. `claim_outbox` marks a row `failed`
+  (`the recipient is no longer in the office`) instead of claiming it when its
+  recipient is not an active member and it is neither of those two, or it is
+  the `bill_correction` that asks the reader to act (a meal given back,
+  `... Cancel it before ...`); a deleted office's rows all fail
+  (`private.outbox_held_back`, 20261025100200).
 - **A day has a menu or none.** A menu starts out published, from
   `publish_menu`; no browser role holds INSERT on `menus`, and
   `menus_status_check` allows only `published`, `locked` and `cancelled`

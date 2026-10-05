@@ -231,6 +231,12 @@ picker, handover sheet, confirmations), `Sonner` (the one toast surface),
 be named rather than tapped), `Button`, `Badge`, `Table`, `Tooltip` (disabled
 reasons), `Tabs`, `Skeleton`.
 
+A dialog is centred on the viewport, so `DialogContent` is capped at `85dvh`
+and scrolls by default: one taller than the screen would otherwise put its
+title above it and its buttons below. A dialog whose list can grow keeps its
+title and buttons fixed and scrolls the list instead (the People screen's
+Remove).
+
 ## The two hooks that make it systematic
 
 ```ts

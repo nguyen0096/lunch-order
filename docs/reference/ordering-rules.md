@@ -129,12 +129,13 @@ tappable only while the day has no menu
 | withdraw | the person who offered | same | `enforce_transfer_rules` |
 | record a pass | an admin, from anybody to anybody else, their own meal included; accepted at once, no answer needed | the week is settled; not on a cancelled day | `record_pass` (20261021100100) |
 | accept, decline or withdraw on somebody's behalf | an admin, on a pending offer; accept and decline only while the order is placed, so an offer left on a cancelled order is withdrawn | same | `answer_pass` (20261023100100) |
-| undo an accepted pass | an admin; the meal goes back on the giver's bill. Refused while the day is still open if the giver has left or was removed (`Tèo has left the office, so the meal cannot go back to them on 24/09`); past the cutoff it is allowed | same | `undo_pass` (20261024100000) |
+| undo an accepted pass | an admin; the meal goes back on the giver's bill. Refused while the day is still open if the giver has left or was removed (`Tèo has left the office, so the meal cannot go back to them on 24/09`); past the cutoff it is allowed. The recipient leaving undoes it too, on an open day ([Leaving or being removed](#leaving-or-being-removed)) | same | `undo_pass` (20261024100000) |
 
 A pass ends `accepted`, `declined`, `cancelled` (withdrawn) or `undone`.
 `undone` means it happened and was reversed later, so the record can tell it
 from one that never took effect; `undone_at` and `undone_by` say when and who,
-and `decided_at` keeps the acceptance. Only `undo_pass` writes it.
+and `decided_at` keeps the acceptance. Only `undo_pass` and the recipient
+leaving write it.
 
 **A pending pass ends with its meal.** When its order stops being placed, by
 lunch being cancelled, the member cancelling it, an admin removing it or its
@@ -206,12 +207,33 @@ nobody has told the caterer about, and no sooner.
 | Leaving (Settings, or `/leave` to the bot), an admin's Remove, and the service role setting a membership inactive all cancel the person's open orders, in the same transaction | `memberships_leaving_cancels`, `private.cancel_leavers_open_orders` (20261024100000) |
 | Open means the menu is published and its cutoff ahead, the window in which the person could cancel it themselves. A day past its cutoff (published or locked) and a past day keep the order placed and billed: the caterer may already have the count | `cancel_leavers_open_orders`, as `enforce_order_window` |
 | A meal the person passed on, and somebody accepted, stays: it is the recipient's | same |
+| A meal passed TO the person and accepted, on an open day, goes back to the giver, as `undo_pass` would leave it: the pass is `undone` (`undone_by` whoever made the person go, the person themselves when the service role did; reason `undone: the person it was passed to left the office`, or `... was removed from the office`, unless the pass carried one), the giver pays again, and the giver is told (`bill_correction`). If the giver has gone too, earlier or in the same statement, the meal is cancelled instead and the pass left `accepted`, billing nobody. Past the cutoff the person keeps it and its bill | `private.leaving_effects`, `private.cancel_leavers_open_orders` (20261025100000) |
+| A pending offer TO the person, on a meal still placed, on any day outside a settled week, is declined (`decided_by` as above, reason `declined: the person it was offered to left the office`, or `... was removed from the office`). Nothing moves on the bill; the giver is told (`transfer_decided`). An offer left waiting on a meal already cancelled is neither listed nor declined: nobody can accept it, and the giver can withdraw it | same |
+| None of this writes `order_corrections`: like the person's own cancellations, it is the system acting, and the pass row records it | same |
 | The cancel is the ordinary one: `status = cancelled`, the dish line kept (the system's one dish included), the pending pass withdrawn, and the week re-billed at once, so a statement left with no lines is deleted and its credit is the person's again. A week nobody has billed gets no period; a settled week is never touched | same, `public.run_billing` |
 | `leave_office` checks the membership and the sole-owner rule, then cancels, then refuses if anything is still owed. So a meal leaving takes off the bill does not stop anybody leaving; a meal past its cutoff still unpaid does, and the refusal rolls the cancellation back | `leave_office` (20261024100000) |
-| `leave_office` answers how many orders it cancelled, and the bot's reply names that many days, or none | `leave_office`, `renderLeftText` |
-| Settings says what would still be owed after the cancellation, by doing it and rolling it back, for the caller in their own office only, once the Leave dialog opens | `my_balance_after_leaving` |
+| `leave_office` answers on how many open days it took a lunch off the person (their own, or one passed to them), and the bot's reply names that many days, or none | `leave_office`, `renderLeftText` |
+| Settings says what would still be owed after leaving, meals given back included, by doing it and rolling it back, for the caller in their own office only, once the Leave dialog opens | `my_balance_after_leaving` |
+| An admin's Remove first lists what it would change, from the same rule, read-only and without a lock, for an admin of that office only: each meal cancelled, each meal given back or cancelled with its giver, each offer declined ([People](screens.md#people-admin)) | `removal_preview` (20261025100100) |
 | Nothing places an order for somebody who is leaving or gone: their own order (on the Board, the bot or the table), an admin's record of a meal on a day they have none or had cancelled (`Tèo is no longer in this office, so no lunch can be recorded for them on 24/09`), a pass to them (`that person is not a member of this office`), and an undo putting an open day's meal back on them (`Tèo has left the office, so the meal cannot go back to them on 24/09`) are refused, and one in flight when they leave finishes first and is then cancelled with the rest. A meal they kept past its cutoff can still be put right, and a pass of one undone onto them | `private.hold_membership` in `set_my_order`, `correct_meal`, `correct_meal_off_menu`, `record_pass`, `answer_pass`, `undo_pass`; `orders_for_a_member` |
-| Coming back (the join code, an invitation, an admin's Add back) revives nothing: cancelled orders and withdrawn offers stay as they are | `materialize_standing_orders` writes only into a slot with no row |
+| Coming back (the join code, an invitation, an admin's Add back) revives nothing: cancelled orders, withdrawn and declined offers and undone passes stay as they are | `materialize_standing_orders` writes only into a slot with no row |
+| The Board and Orders give a person who has gone a row, marked `(left)`, only for a week in which they still have a placed order, so every portion in a day's total has a name; on Orders that meal can be put right or removed | `fetchBoard` reads every membership ([Board](screens.md#board), [Orders](screens.md#orders-admin)) |
+
+## Deleting an office
+
+The owner's rule (2026-10-05): nothing reaches a caterer, or anybody, for an
+office that is gone.
+
+| Rule | Enforced by |
+| --- | --- |
+| Only an owner deletes an office, which sets `organizations.deleted_at`; every policy then hides it from everybody | `delete_office` (20261025100200), `private.my_org_ids` |
+| Deleting cancels every placed order on a day not yet over (today before the office's end of day, and later), before or after the cutoff, published or locked. A day that is over and a settled week keep theirs | `delete_office` |
+| Every pending pass in the office is withdrawn first, reason `withdrawn: the office was deleted`, `decided_by` the owner. Nobody is told | same |
+| The weeks are re-billed, so every statement is still the sum of its lines and an office restored by hand opens on bills that match its orders | same, `public.run_billing` |
+| Every message still waiting for the office is marked `failed` (`the office was deleted`); the outbox drain claims nothing for a deleted office; the hourly tick neither locks its menus, queues its messages nor closes its weeks; materializing orders nothing in it | `delete_office`, `claim_outbox`, `run_hourly_tick`, `materialize_office`, `materialize_open_menus`, `materialize_standing_orders` (20261025100200) |
+| A member's order in flight finishes and is then cancelled, or waits and is refused | `delete_office` holds the days' menus `FOR NO KEY UPDATE` |
+| Nothing in a deleted office is corrected afterwards: an admin's correction, pass, answer, undo or reprice in flight, even one past its admin check, waits for the deletion and is refused (`this office has been deleted, so nothing in it can be changed`) | `private.correction_period` holds the office row `FOR SHARE` (20261025100200) |
+| Its join code and its invitations bring nobody in, refused as a code or a link that does not exist (`That join code is not valid.`, `That invitation link is not valid.`); the bot answers nothing for its chats and redeems no link into it | `private.join_office_with_code`, `accept_invitation` (20261025100200), `linksForChat`, `orgForJoinCode`, `onLinkToken` (`supabase/functions/telegram`) |
 
 ## Billing
 
@@ -255,19 +277,33 @@ balance is above 0 (20261017200000).
 | `menu_published` | first hourly tick after publish, while the cutoff is ahead; once per date | the group chat, and every active member with Telegram linked | `org_notifications`, default on |
 | `cutoff_warning` | the first tick within 70 minutes (60 to 1440) of the cutoff | the group and every linked member, ordered or not | default on, 70 |
 | `weekly_bill` | billing day, from 09:00 | a group summary; each member whose account is owed | default on, 09:00. Off stops the message, not the billing |
-| `bill_correction` | every correction, and every pass an admin records, answers or undoes | the order's owner and its payer; for a pass, both people | none |
+| `bill_correction` | every correction, and every pass an admin records, answers or undoes; a meal coming back to its giver because the recipient left | the order's owner and its payer; for a pass, both people; for a meal coming back, the giver | none |
 | `dish_choice` | a one-dish menu gains a dish while open | each person whose system-written line it took back and who is still eating | none |
 | `transfer_offer` | a member offers a meal | the recipient | none |
-| `transfer_decided` | the recipient accepts or declines | the person who offered | none |
+| `transfer_decided` | the recipient accepts or declines, or leaves with the offer waiting | the person who offered | none |
 | `payment_ack`, `payment_unmatched` | money is credited; a transfer matches nobody | the payer; the office's admins | default on |
 
 Sources: `run_hourly_tick` (20261009100000), `private.enqueue_correction`
 (20261007100200), `trg_transfer_notifies` (20261009100200),
+`private.cancel_leavers_open_orders` (20261025100000),
 `trg_payment_apply` (20261013100200), `private.settle_undecided`
 (20261018100000), `private.enqueue_pass` (20261021100100). Only members who
-finished `/start` get a private message. There is no message for cancelling
+finished `/start` get a private message. Somebody who has left or been
+removed still gets `weekly_bill` while they owe and `bill_correction` for a
+meal they own or pay for; any other private message queued for them, and the
+`bill_correction` asking them to cancel a meal given back, is marked `failed`
+(`the recipient is no longer in the office`) and sent to nobody
+(`claim_outbox`, `private.outbox_held_back`, 20261025100200). There is no message for cancelling
 lunch, for a member withdrawing their own offer, for an offer withdrawn with
-its meal, or for a menu changed after publishing, beyond `dish_choice`.
+its meal, for anything a leaving or a deleted office cancels, or for a menu
+changed after publishing, beyond `dish_choice`.
+
+When somebody leaves, the giver of a meal that comes back reads `Tèo left the
+office, so your lunch on 24/09 (Bún bò Huế, 50.000 ₫) is yours again and back
+on your bill. Cancel it before 21:00 23/09 if you will not eat it.` and their
+balance; the giver of a declined offer reads `Tèo left the office, so your
+offer of lunch on 24/09 was declined. It is still yours and still on your
+bill.` (`was removed from the office` for a removal; `private.leaver_pass_body`).
 
 A correction's first line depends on the day. For the person who eats it, on a
 day not yet over: `Nguyên ordered lunch for you on 02/10.` or `Nguyên
@@ -295,8 +331,8 @@ Surprises in the code as it stands. None is fixed here.
 12. Every guard exempts `private.is_service()`, which is true inside any `SECURITY DEFINER` function owned by `postgres`; the corrections RPCs therefore check the settled week themselves (20261007100200 header).
 13. The menu message is written once per date when first enqueued; later dish changes are never announced to the group, only to those a second dish puts back to undecided (`run_hourly_tick`, dedupe key per date).
 14. A second dish added before the first hourly tick after publishing queues `dish_choice` to the people it puts back before `menu_published` reaches anybody, so their first message about the day asks them to choose (`private.settle_undecided`, `run_hourly_tick`).
-15. Somebody who left or was removed keeps the orders past their cutoff, and the Board counts them in the day's total and the caterer's message lists them, but neither the Board nor Orders has a row for them, so nobody sees whose they are or can correct them there (`fetchBoard` reads active memberships only; `BoardScreen` totals every placed cell; `fetchCatererOrder`).
-16. A meal somebody passed to a person who then left stays on the leaver's bill if it was accepted, and an offer still waiting for them stays pending; leaving cancels only orders that are the leaver's own (`private.cancel_leavers_open_orders`).
+15. A member's own cancel reaches the bill only at the next re-bill, so a week can hold a line for a meal its owner cancelled; `leave_office` reads that stale line as debt and refuses until something re-bills the week (`leave_office`, `orders_update_own`).
+16. A member can still offer a meal, on the table, to somebody who has gone; nobody can accept it, and it waits until the giver withdraws it (`transfers_insert_own` checks the giver only).
 
 ## One-dish menus
 
