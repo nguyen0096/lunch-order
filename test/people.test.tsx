@@ -27,6 +27,7 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     createInvitation: vi.fn(),
     revokeInvitation: vi.fn(),
     updateMembership: vi.fn(),
+    fetchRemovalPreview: vi.fn(),
   };
 });
 
@@ -38,6 +39,7 @@ const fetchInvitations = vi.mocked(api.fetchInvitations);
 const createInvitation = vi.mocked(api.createInvitation);
 const revokeInvitation = vi.mocked(api.revokeInvitation);
 const updateMembership = vi.mocked(api.updateMembership);
+const fetchRemovalPreview = vi.mocked(api.fetchRemovalPreview);
 const success = vi.mocked(toast.success);
 const failure = vi.mocked(toast.error);
 
@@ -121,6 +123,7 @@ function serve(
   setJoinCode.mockImplementation(async (a) => ({ code: a.code, setAt: new Date().toISOString() }));
   updateMembership.mockResolvedValue(undefined);
   revokeInvitation.mockResolvedValue(undefined);
+  fetchRemovalPreview.mockResolvedValue([]);
 }
 
 function renderPeople(role: Role = "admin") {
@@ -505,18 +508,156 @@ describe("People, the role rules", () => {
 /* ------------------------------------------------------------------ status */
 
 describe("People, removing and adding back", () => {
-  it("removes a member and reports it", async () => {
+  it("removes a member only once the dialog is confirmed, and reports it", async () => {
     serve();
     renderPeople();
     await settled();
 
     await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    expect(updateMembership).not.toHaveBeenCalled();
+    expect(fetchRemovalPreview).toHaveBeenCalledWith({ orgId: 7, profileId: "teo" });
+
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Remove" }));
 
     await waitFor(() => expect(updateMembership).toHaveBeenCalledWith({
       membershipId: 3,
       status: "inactive",
     }));
     expect(success).toHaveBeenCalledWith("Removed Tèo");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("removes nobody when the dialog is closed with Keep", async () => {
+    serve();
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Keep" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(updateMembership).not.toHaveBeenCalled();
+  });
+
+  it("holds Remove while it works out what removing would cancel", async () => {
+    serve();
+    fetchRemovalPreview.mockReturnValue(new Promise(() => {}));
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    const remove = within(dialog).getByRole("button", { name: "Remove" });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    expect(within(dialog).getByText("Working out what removing Tèo would cancel.")).toBeInTheDocument();
+
+    await userEvent.click(remove);
+    expect(updateMembership).not.toHaveBeenCalled();
+  });
+
+  it("says so when removing cancels nothing", async () => {
+    serve();
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    expect(await within(dialog).findByText(/Nothing is cancelled: Tèo has no lunch on a day still open/))
+      .toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Remove" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("lists every meal and pass removing changes, by day, and says Add back restores none", async () => {
+    serve();
+    fetchRemovalPreview.mockResolvedValue([
+      { action: "cancel", serviceDate: "2026-10-12", dishes: "Phở bò", otherName: null },
+      { action: "return", serviceDate: "2026-10-12", dishes: "Bún chả", otherName: "Sếp" },
+      { action: "cancel_passed", serviceDate: "2026-10-13", dishes: null, otherName: "Dinh" },
+      { action: "decline", serviceDate: "2026-10-14", dishes: "Cơm gà", otherName: "Neyu" },
+    ]);
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    const list = await within(dialog).findByRole("list", { name: "What removing Tèo changes" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Mon 12 OctTèo's Phở bò is cancelled.",
+      "Mon 12 OctSếp's Bún chả, passed to Tèo, goes back to Sếp and onto their bill.",
+      "Tue 13 OctDinh's lunch, no dish chosen yet, passed to Tèo, is cancelled: Dinh is no longer in the office either.",
+      "Wed 14 OctNeyu's offer of Cơm gà to Tèo is declined.",
+    ]);
+    expect(within(dialog).getByText(/adding them back does not restore them/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Remove" })).not.toHaveAttribute("aria-disabled");
+  });
+
+  it("scrolls a long list and keeps the title and both buttons out of it", async () => {
+    serve();
+    fetchRemovalPreview.mockResolvedValue(
+      Array.from({ length: 16 }, (_, i) => ({
+        action: "cancel" as const,
+        serviceDate: `2026-10-${String(12 + i).padStart(2, "0")}`,
+        dishes: "Phở bò",
+        otherName: null,
+      })),
+    );
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    const list = await within(dialog).findByRole("list", { name: "What removing Tèo changes" });
+    expect(within(list).getAllByRole("listitem")).toHaveLength(16);
+
+    // jsdom has no layout, so the rule is what can be held: the dialog is
+    // capped and does not scroll, the list does, and is reachable by keyboard.
+    const content = dialog.closest("[data-slot=dialog-content]") as HTMLElement;
+    expect(content.className).toContain("max-h-[85dvh]");
+    expect(content.className).toContain("overflow-hidden");
+    expect(list.className).toContain("overflow-y-auto");
+    expect(list.className).toContain("min-h-0");
+    expect(list).toHaveAttribute("tabindex", "0");
+    for (const el of [
+      within(dialog).getByRole("heading", { name: "Remove Tèo?" }),
+      within(dialog).getByRole("button", { name: "Keep" }),
+      within(dialog).getByRole("button", { name: "Remove" }),
+    ]) {
+      expect(list.contains(el)).toBe(false);
+    }
+  });
+
+  it("will not remove when the list did not load, and says why", async () => {
+    serve();
+    fetchRemovalPreview.mockRejectedValue({ message: "JWT expired" });
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      /What removing would cancel did not load\. Close this and try again\./,
+    );
+    const remove = within(dialog).getByRole("button", { name: "Remove" });
+    expect(remove).toHaveAttribute("aria-disabled", "true");
+    await userEvent.click(remove);
+    expect(updateMembership).not.toHaveBeenCalled();
+  });
+
+  it("keeps the dialog open when the removal is refused", async () => {
+    serve();
+    updateMembership.mockRejectedValue({ code: "42501", message: "only an owner can remove an owner" });
+    renderPeople();
+    await settled();
+
+    await userEvent.click(control("Tèo", "Remove"));
+    const dialog = await screen.findByRole("dialog", { name: "Remove Tèo?" });
+    await userEvent.click(await within(dialog).findByRole("button", { name: "Remove" }));
+
+    await waitFor(() => expect(failure).toHaveBeenCalledWith("You don't have permission to do that."));
+    expect(screen.getByRole("dialog", { name: "Remove Tèo?" })).toBeInTheDocument();
+    expect(success).not.toHaveBeenCalled();
   });
 
   it("refuses to let you remove yourself, and says where leaving is", async () => {

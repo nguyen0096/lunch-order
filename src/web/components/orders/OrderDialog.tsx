@@ -305,7 +305,8 @@ export function OrderDialog({
   } else if (step === "pass" && meal) {
     title = `Pass ${person.name}'s ${dishLabel}`;
     description = `${dayLine}. Whoever you pick pays for it instead of ${person.name}.`;
-    const others = members.filter((m) => m.profileId !== person.profileId);
+    // Nobody gone can be given a meal: `record_pass` refuses them.
+    const others = members.filter((m) => m.profileId !== person.profileId && !m.gone);
     const toName = to === null ? null : nameOf(to);
     body = (
       <>

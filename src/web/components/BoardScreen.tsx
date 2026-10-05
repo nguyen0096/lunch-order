@@ -689,7 +689,9 @@ export function BoardScreen({ me, org }: ScreenProps) {
           <span className="tabular">{portionsWord(totals.get(day.serviceDate) ?? 0)}</span>
         </div>
         <ul>
-          {board.members.map((member) => (
+          {board.members
+            .filter((member) => !member.gone || placedOn(member, day))
+            .map((member) => (
             <li
               key={member.profileId}
               className="grid grid-cols-[minmax(0,5fr)_minmax(0,6fr)] items-start gap-3 border-b border-border px-3 py-1.5 last:border-b-0"
@@ -697,6 +699,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
               <span className="py-2.5 text-sm leading-5 font-medium wrap-break-word">
                 {member.name}
                 {member.isMe && <span className="text-muted"> (you)</span>}
+                {member.gone && <span className="text-muted"> (left)</span>}
               </span>
               <div className="text-center">{renderCell(member, day, true)}</div>
             </li>
@@ -705,6 +708,9 @@ export function BoardScreen({ me, org }: ScreenProps) {
       </section>
     );
   };
+
+  const placedOn = (member: BoardMember, day: BoardDay) =>
+    board.cells.get(cellKey(member.profileId, day.serviceDate))?.status === "placed";
 
   // One cell, drawn the same in the grid and in the phone's day list. `wide`
   // is the list, where a cell has room to lay its controls side by side.
@@ -729,6 +735,10 @@ export function BoardScreen({ me, org }: ScreenProps) {
           exception: board.exceptions.get(day.serviceDate) ?? null,
         })
       : null;
+
+    if (member.gone) {
+      return <GoneCell wide={wide} cell={live} />;
+    }
 
     return (
       incoming !== null ? (
@@ -921,6 +931,7 @@ export function BoardScreen({ me, org }: ScreenProps) {
                 >
                   {member.name}
                   {member.isMe && <span className="text-muted"> (you)</span>}
+                  {member.gone && <span className="text-muted"> (left)</span>}
                 </TableCell>
 
                 {days.map((day) => (
@@ -1654,6 +1665,44 @@ function TheirCell({
         <CheckIcon className="size-4 opacity-60" aria-hidden="true" />
       ) : null}
     </Action>
+  );
+}
+
+/**
+ * Somebody who has left, on a day they still have a placed order: the meal
+ * the caterer was told about, named so the box finds its owner. Nothing to
+ * tap: nobody hands a meal to somebody gone, and an admin puts theirs right
+ * on the Orders screen.
+ */
+function GoneCell({
+  cell,
+  wide = false,
+}: {
+  cell: BoardCell | null;
+  wide?: boolean;
+}) {
+  const base = cn(
+    "flex h-auto min-h-9 w-full min-w-16 flex-col items-center justify-center gap-0.5 rounded-md px-1 py-1.5 text-xs font-medium",
+    wide && "min-h-11 px-2",
+  );
+  if (cell === null) return <div className={base} aria-hidden="true" />;
+  const dish = cell.dishName;
+  const passed = cell.transferredToName;
+  return (
+    <div
+      className={cn(base, passed !== null ? MARK_FILL.passed : "border border-border-strong text-text")}
+    >
+      {passed !== null ? (
+        <span className={CELL_TEXT}>to {passed}</span>
+      ) : dish !== null ? (
+        <span className={CELL_TEXT}>
+          {dish}
+          <Times n={cell.portions} />
+        </span>
+      ) : (
+        <span className={cn(CELL_TEXT, "font-normal")}>no dish yet</span>
+      )}
+    </div>
   );
 }
 

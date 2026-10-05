@@ -391,6 +391,16 @@ export function OrdersScreen({ me, org }: ScreenProps) {
   const renderCell = (member: OrdersMember, day: BoardDay, wide = false) => {
     const key = cellKey(member.profileId, day.serviceDate);
     const meal = week.meals.get(key) ?? null;
+    // Somebody gone keeps the meals they had, which can be put right; on any
+    // other day there is nothing to open, as the database records nothing new.
+    const dayAccess: DayAccess =
+      member.gone && meal === null
+        ? {
+            mode: "inert",
+            reason: `${member.name} is no longer in this office, so no lunch can be recorded for them`,
+            toMenu: false,
+          }
+        : access.get(day.serviceDate) ?? { mode: "read" };
     return (
       <OrderCell
         member={member}
@@ -398,7 +408,7 @@ export function OrdersScreen({ me, org }: ScreenProps) {
         meal={meal}
         pass={meal ? week.passes.get(meal.orderId) ?? null : null}
         received={received.get(key) ?? []}
-        access={access.get(day.serviceDate) ?? { mode: "read" }}
+        access={dayAccess}
         provenance={meal ? provenanceWord(meal, week.entries) : null}
         nameOf={nameOf}
         wide={wide}
@@ -488,7 +498,9 @@ export function OrdersScreen({ me, org }: ScreenProps) {
             <span className="tabular">{portionsWord(perDay.get(panelDay.serviceDate)?.portions ?? 0)}</span>
           </div>
           <ul>
-            {week.members.map((member) => (
+            {week.members
+              .filter((member) => !member.gone || week.meals.has(cellKey(member.profileId, panelDay.serviceDate)))
+              .map((member) => (
               <li
                 key={member.profileId}
                 className="grid grid-cols-[minmax(0,5fr)_minmax(0,6fr)] items-start gap-3 border-b border-border px-3 py-1.5 last:border-b-0"
@@ -667,6 +679,7 @@ function Who({
       <span className="block font-medium">
         {member.name}
         {member.isMe && <span className="text-muted"> (you)</span>}
+        {member.gone && <span className="text-muted"> (left)</span>}
       </span>
       <span className="block text-xs text-muted tabular">{balanceNow(member.balanceMinor, currency)}</span>
     </span>

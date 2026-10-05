@@ -780,7 +780,8 @@ export function renderLeaveConfirmText(m: ExitMessage): string {
     "You'd stop ordering lunch here, and I'd stop messaging you about it.",
     "",
     "Lunch you've ordered for a day still open for ordering would be " +
-    "cancelled. A day whose ordering has closed stays ordered and billed.",
+    "cancelled, and a meal somebody passed you for such a day would go back " +
+    "to them. A day whose ordering has closed stays ordered and billed.",
     "",
     "Nothing is deleted: your past orders, your bill and your short code stay " +
     "as they are, so you'd come back to the same membership rather than a new one.",
@@ -791,8 +792,8 @@ export function renderLeaveConfirmText(m: ExitMessage): string {
 
 /**
  * Left, and still on record: the two halves somebody needs in one message.
- * `cancelled` is how many open days' lunch leaving cancelled, as
- * `leave_office` answers it.
+ * `cancelled` is on how many open days leaving took a lunch off them, their
+ * own or one passed to them, as `leave_office` answers it.
  */
 export function renderLeftText(m: ExitMessage, cancelled = 0): string {
   return [

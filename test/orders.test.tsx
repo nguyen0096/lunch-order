@@ -167,11 +167,11 @@ function week(over: Partial<OrdersWeek> = {}): OrdersWeek {
   return {
     days: days(),
     members: [
-      { profileId: "me", name: "Neyu", isMe: true, balanceMinor: 0 },
-      { profileId: "dinh", name: "Dinh", isMe: false, balanceMinor: 140_000 },
-      { profileId: "quy", name: "Quy", isMe: false, balanceMinor: -20_000 },
-      { profileId: "vy", name: "Thảo Vy", isMe: false, balanceMinor: 95_000 },
-      { profileId: "teo", name: "Tèo", isMe: false, balanceMinor: 185_000 },
+      { profileId: "me", name: "Neyu", isMe: true, gone: false, balanceMinor: 0 },
+      { profileId: "dinh", name: "Dinh", isMe: false, gone: false, balanceMinor: 140_000 },
+      { profileId: "quy", name: "Quy", isMe: false, gone: false, balanceMinor: -20_000 },
+      { profileId: "vy", name: "Thảo Vy", isMe: false, gone: false, balanceMinor: 95_000 },
+      { profileId: "teo", name: "Tèo", isMe: false, gone: false, balanceMinor: 185_000 },
     ],
     meals: new Map(list.map((m) => [cellKey(m.profileId, m.serviceDate), m])),
     passes: new Map([[201, PASSED], [401, OFFER]]),
@@ -1000,5 +1000,58 @@ describe("Orders, on a phone", () => {
 
     await user.click(within(strip).getByRole("button", { name: /^Fri 2/ }));
     expect(screen.getByRole("region", { name: "Everyone on Friday 2 October" })).toBeInTheDocument();
+  });
+});
+
+/* ----------------------------------------------------- somebody who has left */
+
+describe("Orders, somebody who has left", () => {
+  // Bình left after Wednesday's cutoff and keeps that meal; it is why she is
+  // in the week at all.
+  function withBinh(): OrdersWeek {
+    const base = week();
+    const meals = new Map(base.meals);
+    const kept = meal({ orderId: 601, profileId: "binh", serviceDate: WED, menuItemId: 31, dishName: "Bún chả Hà Nội", unitPriceMinor: 50_000 });
+    meals.set(cellKey("binh", WED), kept);
+    return {
+      ...base,
+      members: [...base.members, { profileId: "binh", name: "Bình", isMe: false, gone: true, balanceMinor: 50_000 }],
+      meals,
+    };
+  }
+
+  it("names her as left, and opens her kept meal to put it right", async () => {
+    const user = fakeClockUser();
+    serve(withBinh());
+    renderScreen();
+    await ready();
+
+    expect(screen.getByText("(left)")).toBeInTheDocument();
+    const dialog = await open(user, /^Bình, Wed 30: Bún chả Hà Nội\. Change$/);
+    expect(within(dialog).getByRole("heading", { name: /Bình/ })).toBeInTheDocument();
+  });
+
+  it("offers nothing to record for her on a day she has no meal, and says why", async () => {
+    serve(withBinh());
+    renderScreen();
+    await ready();
+
+    const thu = screen.getByRole("button", { name: /^Bình, Thu 1: nothing recorded\.?$/ });
+    expect(thu).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getAllByText("Bình is no longer in this office, so no lunch can be recorded for them").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("never offers her as somebody to pass a meal to", async () => {
+    const user = fakeClockUser();
+    serve(withBinh());
+    renderScreen();
+    await ready();
+
+    const dialog = await open(user, /^Thảo Vy, Mon 28: Bún bò\. Change$/);
+    await user.click(within(dialog).getByRole("button", { name: "Pass this meal to someone" }));
+    expect(within(dialog).getByRole("radio", { name: /^Tèo(,|$)/ })).toBeInTheDocument();
+    expect(within(dialog).queryByRole("radio", { name: /^Bình(,|$)/ })).not.toBeInTheDocument();
   });
 });

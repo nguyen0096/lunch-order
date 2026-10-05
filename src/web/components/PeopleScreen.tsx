@@ -31,6 +31,7 @@ import {
   type OrgMember,
 } from "../api.js";
 import { now as appNow } from "../../shared/clock.js";
+import { RemoveMemberDialog } from "./RemoveMemberDialog.js";
 import { botDeepLink } from "../../shared/telegram.js";
 import type { Role } from "../../shared/types.js";
 import type { ScreenProps } from "./screenProps.js";
@@ -66,6 +67,8 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
   // is measured from one instant and every row on the screen agrees.
   const [now, setNow] = useState(() => appNow());
   const [confirming, setConfirming] = useState(false);
+  // Remove asks first; Add back does not, as it cancels nothing.
+  const [removing, setRemoving] = useState<OrgMember | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -133,7 +136,10 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
     {
       success: (a) =>
         a.status === "inactive" ? `Removed ${a.member.name}` : `Added ${a.member.name} back`,
-      onSuccess: () => void load(),
+      onSuccess: () => {
+        setRemoving(null);
+        void load();
+      },
     },
   );
 
@@ -231,7 +237,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
             : `${onTelegram} of ${activeCount} on Telegram. Anybody not on it hears nothing the bot sends to people one by one, the weekly bill included.`}
         </p>
         <p className="mt-1 text-sm text-muted">
-          {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one and cancels their lunch on every day still open for ordering, which adding them back does not restore. A day whose ordering has closed, and their past orders, stay on the bill. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
+          {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one, cancels their lunch on every day still open for ordering, gives a meal passed to them on those days back to whoever passed it, and declines offers waiting for them. Adding them back restores none of it, so Remove lists it first. A day whose ordering has closed, and their past orders, stay on the bill. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
         </p>
 
         {members.length === 0 ? (
@@ -252,12 +258,24 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
                 iAmOwner={iAmOwner}
                 busy={busy}
                 onRole={(next) => void changeRole.run({ member, role: next })}
-                onStatus={(status) => void changeStatus.run({ member, status })}
+                onStatus={(status) =>
+                  status === "inactive"
+                    ? setRemoving(member)
+                    : void changeStatus.run({ member, status })
+                }
               />
             ))}
           </ul>
         )}
       </section>
+
+      <RemoveMemberDialog
+        orgId={org.id}
+        member={removing}
+        pending={changeStatus.pending}
+        onOpenChange={(open) => !open && setRemoving(null)}
+        onConfirm={(member) => void changeStatus.run({ member, status: "inactive" })}
+      />
 
       <RotateDialog
         open={confirming}

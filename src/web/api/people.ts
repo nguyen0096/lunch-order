@@ -134,6 +134,44 @@ export async function fetchOrgMembers(args: {
 }
 
 /**
+ * One meal or pass that removing somebody would change, as `removal_preview`
+ * answers it.
+ *
+ * - `cancel`: their own lunch on a day still open for ordering.
+ * - `return`: a meal `otherName` passed to them goes back on `otherName`'s bill.
+ * - `cancel_passed`: a meal `otherName` passed to them is cancelled, because
+ *   `otherName` has gone too.
+ * - `decline`: `otherName`'s offer of a meal to them is declined.
+ */
+export type RemovalEffect = {
+  action: "cancel" | "return" | "cancel_passed" | "decline";
+  serviceDate: string;
+  /** Null for a meal with no dish chosen yet. */
+  dishes: string | null;
+  /** The other person on a pass; null on their own meal. */
+  otherName: string | null;
+};
+
+/**
+ * What removing this person would cancel or hand back, read without locking
+ * anything, by date. The removal itself reads again when it runs.
+ */
+export async function fetchRemovalPreview(args: {
+  orgId: number; profileId: string;
+}): Promise<RemovalEffect[]> {
+  const { data, error } = await supabase.rpc("removal_preview", {
+    p_org_id: args.orgId, p_profile_id: args.profileId,
+  });
+  if (error) throw error;
+  return ((data ?? []) as Array<{
+    action: RemovalEffect["action"]; service_date: string;
+    dishes: string | null; other_name: string | null;
+  }>).map((r) => ({
+    action: r.action, serviceDate: r.service_date, dishes: r.dishes, otherName: r.other_name,
+  }));
+}
+
+/**
  * When each member linked Telegram, keyed by membership id. Somebody absent
  * from the map has not linked: no row, or a row whose /start never finished.
  *

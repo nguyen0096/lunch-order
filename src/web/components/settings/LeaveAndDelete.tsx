@@ -174,9 +174,9 @@ function LeaveOffice({
       description={`You stop appearing on the board of ${org.name}, and the bot stops asking you what you want for lunch.`}
     >
       <p className="max-w-prose text-sm text-muted">
-        Lunch you ordered for a day still open for ordering is cancelled and comes off your bill.
-        A day whose ordering has closed stays ordered and billed, because the caterer may already
-        have the count. Your past orders and anything you owe stay on the office&apos;s books:
+        Lunch you ordered for a day still open for ordering is cancelled and comes off your bill,
+        and a meal somebody passed you for such a day goes back to them. A day whose ordering has
+        closed stays ordered and billed, because the caterer may already have the count. Your past orders and anything you owe stay on the office&apos;s books:
         leaving settles no bill and erases none.
       </p>
       <p className="max-w-prose text-sm text-muted">
@@ -300,9 +300,10 @@ function DeleteOffice({
       description={`Ends ${org.name} for everybody in it. The board, every bill and the member list disappear at the same moment.`}
     >
       <p className="max-w-prose text-sm text-muted">
-        Nothing is erased. Every order, statement and payment stays in the database, and somebody
-        with access to it can bring the office back. You cannot bring it back from here, and
-        neither can anybody else in this app.
+        Lunch ordered for today or later is cancelled, so nothing more reaches the caterer, and
+        no message goes out for the office again. Nothing is erased: every order, statement and
+        payment stays in the database, and somebody with access to it can bring the office back.
+        You cannot bring it back from here, and neither can anybody else in this app.
       </p>
       <p className="max-w-prose text-sm text-muted">
         Everybody loses access straight away, including anyone who still owes money.
@@ -328,7 +329,7 @@ function DeleteOffice({
           <DialogHeader>
             <DialogTitle>{`Delete ${org.name}?`}</DialogTitle>
             <DialogDescription>
-              {`Everybody in ${org.name} loses it at once: the board, every bill and the member list.`}
+              {`Everybody in ${org.name} loses it at once: the board, every bill and the member list. Lunch ordered for today or later is cancelled.`}
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted">

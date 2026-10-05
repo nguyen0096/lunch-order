@@ -154,6 +154,12 @@ export type BoardMember = {
   name: string;
   shortCode: string;
   isMe: boolean;
+  /**
+   * Left or removed. Such a person is on the board only for a week in which
+   * they still have a placed order, kept because its ordering had closed, so
+   * the day's total has a name behind every portion.
+   */
+  gone: boolean;
 };
 
 export type BoardDay = {
@@ -232,11 +238,12 @@ export async function fetchBoard(args: {
       .eq("org_id", args.orgId)
       .gte("service_date", args.from)
       .lte("service_date", args.to),
+    // Every status: somebody who has gone keeps a row while they have a
+    // placed order in the range, as worked out from the orders below.
     supabase
       .from("memberships")
-      .select(`profile_id, short_code, display_name, profiles!memberships_profile_id_fkey ( full_name )`)
-      .eq("org_id", args.orgId)
-      .eq("status", "active"),
+      .select(`profile_id, short_code, display_name, status, profiles!memberships_profile_id_fkey ( full_name )`)
+      .eq("org_id", args.orgId),
     supabase
       .from("orders")
       .select(`id, profile_id, service_date, status, source,
@@ -294,21 +301,33 @@ export async function fetchBoard(args: {
     );
   }
 
+  const placedBy = new Set(
+    (ordersRes.data ?? []).filter((o) => o.status === "placed").map((o) => o.profile_id as string),
+  );
   const nameOf = new Map<string, string>();
-  const members: BoardMember[] = (membersRes.data ?? []).map((r) => {
+  const members: BoardMember[] = [];
+  for (const r of membersRes.data ?? []) {
     const prof = r.profiles as unknown as { full_name: string } | null;
     const name = r.display_name ?? prof?.full_name ?? r.short_code;
     nameOf.set(r.profile_id, name);
-    return {
+    const gone = r.status !== "active";
+    if (gone && !placedBy.has(r.profile_id)) continue;
+    members.push({
       profileId: r.profile_id,
       name,
       shortCode: r.short_code,
       isMe: r.profile_id === args.meProfileId,
-    };
-  });
-  // You first, then everyone else alphabetically: you are the row you interact with.
+      gone,
+    });
+  }
+  // You first, then everyone else alphabetically, and anybody gone last: you
+  // are the row you interact with, and theirs are only there to be read.
   members.sort((a, b) =>
-    a.isMe === b.isMe ? a.name.localeCompare(b.name) : a.isMe ? -1 : 1,
+    a.isMe !== b.isMe
+      ? a.isMe ? -1 : 1
+      : a.gone !== b.gone
+        ? a.gone ? 1 : -1
+        : a.name.localeCompare(b.name),
   );
 
   const transferTo = new Map<number, string>();
@@ -445,11 +464,12 @@ export async function fetchTransfers(args: {
       .eq("status", "placed")
       .gte("service_date", args.openPeriodStart)
       .order("service_date"),
+    // Names only, of every status, so a pass with somebody who has gone still
+    // names them rather than "someone".
     supabase
       .from("memberships")
-      .select(`profile_id, short_code, display_name, profiles!memberships_profile_id_fkey ( full_name )`)
-      .eq("org_id", args.orgId)
-      .eq("status", "active"),
+      .select(`profile_id, short_code, display_name, status, profiles!memberships_profile_id_fkey ( full_name )`)
+      .eq("org_id", args.orgId),
   ]);
   for (const r of [transfersRes, ordersRes, membersRes]) if (r.error) throw r.error;
 

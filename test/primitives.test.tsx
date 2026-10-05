@@ -97,6 +97,25 @@ describe("primitives mount and behave", () => {
     expect(content.className).toContain("[&_[data-slot=dialog-header]]:pr-10");
   });
 
+  it("Dialog is capped at the screen and scrolls, so nothing taller loses its title or buttons", async () => {
+    render(
+      <Dialog defaultOpen>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>A long one</DialogTitle>
+          </DialogHeader>
+        </DialogContent>
+      </Dialog>,
+    );
+    // Measured in a browser: without the cap a centred dialog of sixteen rows
+    // put its title above the viewport and its buttons below it.
+    const content = (await screen.findByRole("dialog")).closest(
+      "[data-slot=dialog-content]",
+    ) as HTMLElement;
+    expect(content.className).toContain("max-h-[85dvh]");
+    expect(content.className).toContain("overflow-y-auto");
+  });
+
   it("Dialog reclaims that room when there is no close button", async () => {
     render(
       <Dialog defaultOpen>

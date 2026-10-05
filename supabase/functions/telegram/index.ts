@@ -349,7 +349,7 @@ async function onLinkToken(chatId: number, token: string): Promise<void> {
     tx<Array<{ membership_id: number; chat_id: number | null; org_name: string }>>`
       select tl.membership_id, tl.chat_id, o.name as org_name
         from public.telegram_links tl
-        join public.organizations o on o.id = tl.org_id
+        join public.organizations o on o.id = tl.org_id and o.deleted_at is null
        where tl.link_token = ${token}::uuid`
   );
   if (!link) return await say(chatId, unknown);
@@ -388,7 +388,8 @@ async function orgForJoinCode(code: string): Promise<{ id: number; name: string 
   const [org] = await asSystem((tx) =>
     tx<Array<{ id: number; name: string }>>`
       select o.id, o.name from public.organizations o
-       where o.telegram_join_code = ${code} and o.status = 'active'`
+       where o.telegram_join_code = ${code} and o.status = 'active'
+         and o.deleted_at is null`
   );
   return org ?? null;
 }
@@ -1649,7 +1650,8 @@ async function clearOrder(tx: Tx, link: Link, menuId: number): Promise<Written> 
  *
  * Read with the connection's own role because there is no member to act as
  * until this query has answered. It is the only read in this file that has to
- * be, and it is the one gate everything else stands on.
+ * be, and it is the one gate everything else stands on. A deleted office
+ * resolves to nobody here, so the bot answers nothing for it.
  */
 async function linksForChat(chatId: number): Promise<Link[]> {
   const rows = await asSystem((tx) =>
@@ -1666,7 +1668,7 @@ async function linksForChat(chatId: number): Promise<Link[]> {
         from public.telegram_links tl
         join public.memberships m on m.id = tl.membership_id and m.status = 'active'
         join public.profiles p on p.id = m.profile_id
-        join public.organizations o on o.id = tl.org_id
+        join public.organizations o on o.id = tl.org_id and o.deleted_at is null
        where tl.chat_id = ${chatId}
        order by o.name, m.profile_id`
   );

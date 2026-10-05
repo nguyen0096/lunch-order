@@ -106,13 +106,19 @@ export type OrdersMember = {
   profileId: string;
   name: string;
   isMe: boolean;
+  /**
+   * Left or removed, and here only because they still have a placed meal this
+   * week, kept past its cutoff. It can be put right or removed; nothing new
+   * can be recorded for them.
+   */
+  gone: boolean;
   /** Positive is a debt, negative is credit, as on the Bill screen. */
   balanceMinor: number;
 };
 
 export type OrdersWeek = {
   days: BoardDay[];
-  /** Everybody active in the office: the reader first, then by name. */
+  /** Everybody active in the office, then anybody gone who still has a meal this week. */
   members: OrdersMember[];
   /** Placed meals only, keyed `cellKey(profileId, serviceDate)`. */
   meals: Map<string, RecordedMeal>;
@@ -300,10 +306,15 @@ export async function fetchOrdersWeek(args: {
         profileId: m.profileId,
         name: m.name,
         isMe: m.isMe,
+        gone: m.gone,
         balanceMinor: balanceOf.get(m.profileId) ?? 0,
       }))
       .sort((a, b) =>
-        a.isMe === b.isMe ? a.name.localeCompare(b.name, "vi") : a.isMe ? -1 : 1,
+        a.isMe !== b.isMe
+          ? a.isMe ? -1 : 1
+          : a.gone !== b.gone
+            ? a.gone ? 1 : -1
+            : a.name.localeCompare(b.name, "vi"),
       ),
     meals,
     passes,

@@ -48,6 +48,11 @@ function DialogContent({
         data-slot="dialog-content"
         className={cn(
           "fixed top-1/2 left-1/2 z-50 grid w-[calc(100%-2rem)] max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 rounded-lg border border-border bg-surface-raised p-6 shadow-lg duration-150 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
+          // Centred on the viewport, so a dialog taller than the screen loses
+          // its top and bottom, title and buttons included, past any scroll.
+          // Capped and scrolling by default; a dialog that keeps its title and
+          // buttons fixed and scrolls a part of itself overrides both.
+          "max-h-[85dvh] overflow-y-auto",
           // The close button is absolutely positioned and takes no space, so
           // nothing stopped a title running underneath it -- which almost every
           // title did, because most of them are a sentence. It sits 16px from

@@ -96,9 +96,9 @@ const OPEN_CUTOFF = zonedTimeToInstant(WED, "23:00", TZ).toISOString();
 const PAST_CUTOFF = zonedTimeToInstant(TODAY, "07:00", TZ).toISOString();
 
 const MEMBERS = [
-  { profileId: "me", name: "Neyu", shortCode: "NEYU", paymentRef: "LUNCHNEYU", isMe: true },
-  { profileId: "teo", name: "Tèo", shortCode: "TEO", paymentRef: "LUNCHTEO", isMe: false },
-  { profileId: "dinh", name: "Dinh", shortCode: "DINH", paymentRef: "LUNCHDINH", isMe: false },
+  { profileId: "me", name: "Neyu", shortCode: "NEYU", paymentRef: "LUNCHNEYU", isMe: true, gone: false },
+  { profileId: "teo", name: "Tèo", shortCode: "TEO", paymentRef: "LUNCHTEO", isMe: false, gone: false },
+  { profileId: "dinh", name: "Dinh", shortCode: "DINH", paymentRef: "LUNCHDINH", isMe: false, gone: false },
 ];
 
 function menuDay(over: Partial<BoardDay> = {}): BoardDay {
@@ -2309,5 +2309,72 @@ describe("Board, on a phone", () => {
     );
     expect(screen.getByRole("button", { name: "This week" })).toBeInTheDocument();
     expect(screen.queryByRole("table")).toBeNull();
+  });
+});
+
+describe("Board, somebody who has left", () => {
+  // Bình left after Wednesday's cutoff, so that meal stays ordered and billed;
+  // the board reads her only because of it.
+  const BINH = { profileId: "binh", name: "Bình", shortCode: "BINH", isMe: false, gone: true };
+  function binhHasWed() {
+    const cells = myCell();
+    cells.set(cellKey("binh", WED), {
+      orderId: 9,
+      status: "placed",
+      source: "member",
+      itemId: 7,
+      dishName: "Phở bò",
+      note: null,
+      amountMinor: 40_000,
+      transferredToName: null,
+    });
+    return cells;
+  }
+  const board = () => makeBoard({ members: [...MEMBERS, BINH], cells: binhHasWed() });
+
+  it("has a row named as left, last, with the meal and nothing to tap", async () => {
+    serve(board());
+    renderBoard();
+
+    await screen.findByRole("table");
+    const rows = screen.getAllByRole("row").filter((r) => r.closest("tbody"));
+    const last = rows[rows.length - 1]!;
+    expect(within(last).getAllByRole("cell")[0]).toHaveTextContent(/^Bình \(left\)$/);
+    expect(within(last).getByText("Phở bò")).toBeInTheDocument();
+    expect(within(last).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("counts the meal in the day's total, as before", async () => {
+    serve(board());
+    renderBoard();
+
+    const total = (await screen.findByText("Total")).closest("tr")!;
+    const wed = within(total).getAllByRole("cell")[
+      screen.getAllByRole("columnheader").findIndex((h) => h.getAttribute("data-service-date") === WED)
+    ]!;
+    expect(wed).toHaveTextContent("2");
+  });
+
+  it("shows her on a phone only on the day she still has a meal", async () => {
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query.includes("max-width"),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
+    try {
+      serve(board());
+      renderBoard();
+      const wed = await screen.findByRole("region", { name: `Who is eating on ${longDayLabel(WED)}` });
+      expect(within(wed).getByText("(left)")).toBeInTheDocument();
+      expect(within(wed).getByText("Phở bò")).toBeInTheDocument();
+
+      await user.click(document.querySelector<HTMLElement>(`[data-strip-date="${TODAY}"]`)!);
+      const today = await screen.findByRole("region", { name: `Who is eating on ${longDayLabel(TODAY)}` });
+      expect(within(today).queryByText(/Bình/)).toBeNull();
+      expect(within(today).getByText("Tèo")).toBeInTheDocument();
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
