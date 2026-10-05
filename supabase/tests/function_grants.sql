@@ -31,6 +31,9 @@ insert into expected (name, anon_may) values
   -- The caller's own balance once leaving has cancelled their open orders,
   -- worked out and rolled back; nobody else's, and only in their own office.
   ('my_balance_after_leaving', false),
+  -- The People screen's Remove dialog: what removing somebody would cancel,
+  -- read-only, for an admin of that office only.
+  ('removal_preview',     false),
   ('delete_office',       false),
   ('ensure_period',       false),
   -- The Orders screen. Each one repeats the admin check itself, which is
