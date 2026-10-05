@@ -15,8 +15,9 @@ import {
 import { Section, TextField } from "./Section.js";
 import {
   deleteOffice,
-  fetchLeaveStanding,
   fetchOfficeDebt,
+  fetchOwedAfterLeaving,
+  fetchOwnerCount,
   humanError,
   leaveOffice,
   type OfficeDebt,
@@ -25,7 +26,6 @@ import { formatMoney } from "../../../shared/money.js";
 import type { Org, Role } from "../../../shared/types.js";
 
 type Standing = {
-  owedMinor: number;
   ownerCount: number;
   /** Only an owner can read the office's books, and only an owner needs to. */
   debt: OfficeDebt | null;
@@ -43,7 +43,9 @@ type Standing = {
  *
  * It loads its own facts rather than joining the screen's `load()`. A billing
  * read that fails should cost you the Leave button and its reason, not turn
- * Settings into an error page with your display name behind it.
+ * Settings into an error page with your display name behind it. What you would
+ * still owe is asked only once the dialog opens: working it out takes the
+ * locks leaving takes, which every visit to Settings has no business holding.
  */
 export function LeaveAndDelete({
   org,
@@ -65,12 +67,12 @@ export function LeaveAndDelete({
     let alive = true;
     void (async () => {
       try {
-        const [mine, debt] = await Promise.all([
-          fetchLeaveStanding({ orgId: org.id, profileId }),
+        const [ownerCount, debt] = await Promise.all([
+          fetchOwnerCount(org.id),
           owner ? fetchOfficeDebt(org.id) : Promise.resolve(null),
         ]);
         if (!alive) return;
-        setStanding({ ...mine, debt });
+        setStanding({ ownerCount, debt });
         setLoadError(null);
       } catch (e) {
         if (!alive) return;
@@ -120,6 +122,25 @@ function LeaveOffice({
   onGone: () => void;
 }) {
   const [confirming, setConfirming] = useState(false);
+  // null while it loads; a string when it failed.
+  const [owed, setOwed] = useState<number | string | null>(null);
+
+  useEffect(() => {
+    if (!confirming) return;
+    let alive = true;
+    setOwed(null);
+    void (async () => {
+      try {
+        const minor = await fetchOwedAfterLeaving(org.id);
+        if (alive) setOwed(minor);
+      } catch (e) {
+        if (alive) setOwed(humanError(e));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [confirming, org.id]);
 
   const leave = useAction(async () => leaveOffice(org.id), {
     success: `Left ${org.name}`,
@@ -130,15 +151,21 @@ function LeaveOffice({
   });
 
   const soleOwner = owner && standing !== null && standing.ownerCount <= 1;
-  const owes = standing !== null && standing.owedMinor > 0;
 
   const reason =
     loadError !== null
-      ? "Your bill did not load, so this cannot say yet whether you can leave. Reload the page."
-      : owes && standing !== null
-        ? `You still owe ${formatMoney(standing.owedMinor, org.currency)}. Settle up before you leave.`
-        : soleOwner
-          ? "You are the only owner. Make somebody else an owner first, or delete the office."
+      ? "This did not load, so it cannot say yet whether you can leave. Reload the page."
+      : soleOwner
+        ? "You are the only owner. Make somebody else an owner first, or delete the office."
+        : null;
+
+  const confirmReason =
+    owed === null
+      ? "Working out what you would still owe."
+      : typeof owed === "string"
+        ? "Your bill did not load, so this cannot say yet whether you can leave. Close this and try again."
+        : owed > 0
+          ? `You would still owe ${formatMoney(owed, org.currency)}. Settle up before you leave.`
           : null;
 
   return (
@@ -147,8 +174,10 @@ function LeaveOffice({
       description={`You stop appearing on the board of ${org.name}, and the bot stops asking you what you want for lunch.`}
     >
       <p className="max-w-prose text-sm text-muted">
-        Your past orders and anything you owe stay on the office&apos;s books. Leaving settles no
-        bill and erases none: an admin still sees what you ate and what is outstanding.
+        Lunch you ordered for a day still open for ordering is cancelled and comes off your bill.
+        A day whose ordering has closed stays ordered and billed, because the caterer may already
+        have the count. Your past orders and anything you owe stay on the office&apos;s books:
+        leaving settles no bill and erases none.
       </p>
       <p className="max-w-prose text-sm text-muted">
         {`You can come back. Joining again with ${org.name}'s join code puts you back on the same membership, with the same short code and the same history behind it.`}
@@ -184,18 +213,27 @@ function LeaveOffice({
           <DialogHeader>
             <DialogTitle>{`Leave ${org.name}?`}</DialogTitle>
             <DialogDescription>
-              {`You come off the board straight away. Anything already ordered stays ordered, and anything owed stays owed.`}
+              {`You come off the board straight away. Lunch on a day still open for ordering is cancelled; a day whose ordering has closed stays ordered, and anything owed stays owed.`}
             </DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted">
             {`Joining again with ${org.name}'s join code brings you back to the same membership.`}
           </p>
+          {owed === null ? (
+            <Skeleton className="h-5 w-64" />
+          ) : (
+            confirmReason !== null && (
+              <p role="status" className="rounded-md bg-warn-subtle p-3 text-sm text-warn-subtle-fg">
+                {confirmReason}
+              </p>
+            )
+          )}
           <DialogFooter>
             <DialogClose asChild>
               <Button variant="outline">Stay</Button>
             </DialogClose>
             <Action
-              reason={null}
+              reason={confirmReason}
               pending={leave.pending}
               variant="danger"
               onClick={() => void leave.run()}

@@ -790,7 +790,10 @@ cannot change, remove or add back an owner. Owners can do everything an admin
 can. An inactive member carries **left** or **removed**, because only the
 second is kept out of the join code; **Remove** on an active row, **Add back**
 on an inactive one, and adding back is the way in for a removed member (a new
-invitation is the other). A row of grey controls
+invitation is the other). The line above the list says that removing somebody
+cancels their lunch on every day still open for ordering, which adding them
+back does not restore, while a day whose ordering has closed and their past
+orders stay on the bill. A row of grey controls
 with no explanation is what made this screen look broken while it was working.
 
 Who is on Telegram heads the list, "9 of 12 on Telegram", counting active
@@ -910,6 +913,22 @@ joining; once it is used the field is disabled and Save carries "You have used
 your one change. An admin can change it for you." An admin or owner is told
 they can change it whenever they need to, and is never counted. A refusal for
 being too close to a colleague's code is the database's sentence, as it comes.
+
+**Leave this office** is last, behind a rule. It says what leaving does before
+it is pressed: lunch on a day still open for ordering is cancelled and comes
+off the bill, a day whose ordering has closed stays ordered and billed, and
+past orders and anything owed stay on the books. Leave is unavailable, with
+the reason, for the only owner, and when the owner count fails to load (`This
+did not load, so it cannot say yet whether you can leave. Reload the page.`);
+while it loads, the button is a placeholder. The confirmation repeats it in one
+line: `You come off the board straight away. Lunch on a day still open for
+ordering is cancelled; a day whose ordering has closed stays ordered, and
+anything owed stays owed.` Only then is what would still be owed asked for
+(`my_balance_after_leaving`): a placeholder line while it loads, and the
+dialog's Leave unavailable until it is known. Owed, it says `You would still
+owe 45.000 ₫. Settle up before you leave.` on a `warn-subtle` block; failed,
+`Your bill did not load, so this cannot say yet whether you can leave. Close
+this and try again.` An owner also sees **Delete this office** below it.
 
 An admin also sees **Your office**: when ordering closes, the bank account,
 and the **Telegram group chat**. The group chat card does not ask anybody to

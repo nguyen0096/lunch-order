@@ -779,20 +779,31 @@ export function renderLeaveConfirmText(m: ExitMessage): string {
     "",
     "You'd stop ordering lunch here, and I'd stop messaging you about it.",
     "",
-    "Nothing is deleted: your orders, your bill and your short code stay as " +
-    "they are, so you'd come back to the same membership rather than a new one.",
+    "Lunch you've ordered for a day still open for ordering would be " +
+    "cancelled. A day whose ordering has closed stays ordered and billed.",
+    "",
+    "Nothing is deleted: your past orders, your bill and your short code stay " +
+    "as they are, so you'd come back to the same membership rather than a new one.",
     "",
     comeBackLine(m.joinCode),
   ].join("\n");
 }
 
-/** Left, and still on record: the two halves somebody needs in one message. */
-export function renderLeftText(m: ExitMessage): string {
+/**
+ * Left, and still on record: the two halves somebody needs in one message.
+ * `cancelled` is how many open days' lunch leaving cancelled, as
+ * `leave_office` answers it.
+ */
+export function renderLeftText(m: ExitMessage, cancelled = 0): string {
   return [
     `${orgHeading(m.orgName)}<b>You've left this office.</b>`,
     "",
-    "Nothing was deleted. Your orders and your bill stay on record, and the " +
-    "membership is kept for when you come back.",
+    (cancelled > 0
+      ? `Your lunch on ${cancelled === 1 ? "1 day" : `${cancelled} days`} still open ` +
+        "for ordering was cancelled. "
+      : "") +
+    "Nothing was deleted: your past orders and your bill stay on record, and " +
+    "the membership is kept for when you come back.",
     "",
     comeBackLine(m.joinCode),
   ].join("\n");

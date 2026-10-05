@@ -82,7 +82,8 @@ has never been taken:
   back when somebody leaves" are different products, and the second needs a
   payout path this app has never had. `leave_office` refuses on a positive
   balance and says nothing about a negative one, so today somebody in credit
-  can walk away from it.
+  can walk away from it. Leaving cancels the person's open orders before that
+  check, which can turn what they owed for those meals into credit.
 - **Nothing invites a top-up.** The reference and the QR appear only where
   something is owed, deliberately, because offering somebody a way to pay what
   they do not owe is an instruction to overpay. That leaves the person who

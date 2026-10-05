@@ -30,7 +30,8 @@ vi.mock("../src/web/api.js", async (importOriginal) => {
     setPaymentConfig: vi.fn(),
     setTelegramGroupChatId: vi.fn(),
     setDefaultCutoffLocalTime: vi.fn(),
-    fetchLeaveStanding: vi.fn(),
+    fetchOwnerCount: vi.fn(),
+    fetchOwedAfterLeaving: vi.fn(),
     fetchOfficeDebt: vi.fn(),
     leaveOffice: vi.fn(),
     deleteOffice: vi.fn(),
@@ -45,7 +46,8 @@ const createTelegramLink = vi.mocked(api.createTelegramLink);
 const unlinkTelegram = vi.mocked(api.unlinkTelegram);
 const setDisplayName = vi.mocked(api.setDisplayName);
 const setShortCode = vi.mocked(api.setShortCode);
-const fetchLeaveStanding = vi.mocked(api.fetchLeaveStanding);
+const fetchOwnerCount = vi.mocked(api.fetchOwnerCount);
+const fetchOwedAfterLeaving = vi.mocked(api.fetchOwedAfterLeaving);
 const fetchOfficeDebt = vi.mocked(api.fetchOfficeDebt);
 const leaveOffice = vi.mocked(api.leaveOffice);
 const deleteOffice = vi.mocked(api.deleteOffice);
@@ -107,7 +109,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   gone = vi.fn();
-  fetchLeaveStanding.mockResolvedValue({ owedMinor: 0, ownerCount: 2 });
+  fetchOwnerCount.mockResolvedValue(2);
+  fetchOwedAfterLeaving.mockResolvedValue(0);
   fetchOfficeDebt.mockResolvedValue({ outstandingMinor: 0, peopleOwing: 0 });
   leaveOffice.mockResolvedValue(undefined);
   deleteOffice.mockResolvedValue(undefined);
@@ -912,22 +915,50 @@ describe("leaving an office", () => {
     expect(within(leave).getByText(/join code puts you back/)).toBeInTheDocument();
   });
 
-  it("is unavailable while money is owed, and names the amount", async () => {
-    fetchLeaveStanding.mockResolvedValue({ owedMinor: 180000, ownerCount: 2 });
+  it("asks what would still be owed only once the dialog opens", async () => {
     await renderSettings("member");
+    // Working it out takes the locks leaving takes, so a visit to Settings
+    // does not.
+    expect(fetchOwedAfterLeaving).not.toHaveBeenCalled();
+    await userEvent.click(leaveButton());
+    await waitFor(() => expect(fetchOwedAfterLeaving).toHaveBeenCalledWith(7));
+  });
 
-    expect(leaveButton()).toHaveAccessibleDescription(
-      `You still owe ${formatMoney(180000, ORG.currency)}. Settle up before you leave.`,
-    );
-    expect(leaveButton()).toHaveAccessibleDescription(/180\.000/);
+  it("is unavailable while money would still be owed, and names the amount", async () => {
+    fetchOwedAfterLeaving.mockResolvedValue(180000);
+    await renderSettings("member");
+    expect(leaveButton()).not.toHaveAccessibleDescription();
 
     await userEvent.click(leaveButton());
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    const confirm = () => within(dialog()).getByRole("button", { name: "Leave" });
+    await waitFor(() =>
+      expect(confirm()).toHaveAccessibleDescription(
+        `You would still owe ${formatMoney(180000, ORG.currency)}. Settle up before you leave.`,
+      ),
+    );
+    expect(within(dialog()).getByRole("status")).toHaveTextContent(/180\.000/);
+
+    await userEvent.click(confirm());
+    expect(leaveOffice).not.toHaveBeenCalled();
+  });
+
+  it("does not offer leaving until it knows what would be owed, and says why when it cannot", async () => {
+    fetchOwedAfterLeaving.mockRejectedValue(new Error("upstream connect error"));
+    await renderSettings("member");
+    await userEvent.click(leaveButton());
+
+    const confirm = () => within(dialog()).getByRole("button", { name: "Leave" });
+    await waitFor(() =>
+      expect(confirm()).toHaveAccessibleDescription(
+        "Your bill did not load, so this cannot say yet whether you can leave. Close this and try again.",
+      ),
+    );
+    await userEvent.click(confirm());
     expect(leaveOffice).not.toHaveBeenCalled();
   });
 
   it("is unavailable to the only owner, and points at the two real ways out", async () => {
-    fetchLeaveStanding.mockResolvedValue({ owedMinor: 0, ownerCount: 1 });
+    fetchOwnerCount.mockResolvedValue(1);
     await renderSettings("owner");
 
     expect(leaveButton()).toHaveAccessibleDescription(
@@ -959,6 +990,9 @@ describe("leaving an office", () => {
     expect(await screen.findByRole("heading", { name: "Leave Test Office?" })).toBeInTheDocument();
     expect(leaveOffice).not.toHaveBeenCalled();
 
+    await waitFor(() =>
+      expect(within(dialog()).getByRole("button", { name: "Leave" })).not.toHaveAccessibleDescription(),
+    );
     await userEvent.click(within(dialog()).getByRole("button", { name: "Leave" }));
     await waitFor(() => expect(leaveOffice).toHaveBeenCalledWith(7));
     expect(success).toHaveBeenCalledWith("Left Test Office");
@@ -985,6 +1019,9 @@ describe("leaving an office", () => {
     );
     await renderSettings("member");
     await userEvent.click(leaveButton());
+    await waitFor(() =>
+      expect(within(dialog()).getByRole("button", { name: "Leave" })).not.toHaveAccessibleDescription(),
+    );
     await userEvent.click(within(dialog()).getByRole("button", { name: "Leave" }));
 
     await waitFor(() =>
@@ -997,14 +1034,14 @@ describe("leaving an office", () => {
   });
 
   it("says nothing about what you owe until it knows, and then says why", async () => {
-    fetchLeaveStanding.mockRejectedValue(new Error("upstream connect error"));
+    fetchOwnerCount.mockRejectedValue(new Error("upstream connect error"));
     render(<SettingsScreen me={ME} org={ORG} role="member" onGone={gone} />);
 
     // The rest of Settings is untouched: a billing read that failed is not a
     // reason to replace the display name field with an error page.
     expect(await screen.findByRole("heading", { name: "Standing days" })).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "Leave" })).toHaveAccessibleDescription(
-      "Your bill did not load, so this cannot say yet whether you can leave. Reload the page.",
+      "This did not load, so it cannot say yet whether you can leave. Reload the page.",
     );
   });
 });

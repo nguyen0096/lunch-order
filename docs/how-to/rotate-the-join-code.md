@@ -41,8 +41,10 @@ Or use **Remove** on the People screen, which is the same thing. Either way the
 code will not bring them back.
 
 `private.my_org_ids()` filters on `status = 'active'`, so this takes effect on
-their next request: every policy stops matching and they see nothing. Their past
-orders stay on the bill, which is deliberate. They ate the food.
+their next request: every policy stops matching and they see nothing. In the
+same transaction their lunch on every day still open for ordering is cancelled
+and taken off the bill. Days past their cutoff and past orders stay on the
+bill, which is deliberate: the caterer has the count, or they ate the food.
 
 ## Afterwards
 

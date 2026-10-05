@@ -1379,8 +1379,8 @@ async function onExitCallback(
       const joinCode = await joinCodeOf(tx, link);
 
       if (action.kind === "leave") {
-        await tx`select public.leave_office(${link.org.id})`;
-        return { joinCode, changed: true };
+        const [row] = await tx`select public.leave_office(${link.org.id}) as cancelled`;
+        return { joinCode, changed: true, cancelled: Number(row?.cancelled ?? 0) };
       }
 
       // The membership and the link_token stay. chat_id is the whole of what
@@ -1393,7 +1393,7 @@ async function onExitCallback(
                              where membership_id = ${link.membershipId}
                                and chat_id = ${chatId}
                          returning membership_id`;
-      return { joinCode, changed: rows.length > 0 };
+      return { joinCode, changed: rows.length > 0, cancelled: 0 };
     })
   );
 
@@ -1404,7 +1404,7 @@ async function onExitCallback(
     return await say(chatId, renderExitRefusedText(orgName, action.kind, outcome.reason));
   }
 
-  const { joinCode, changed } = outcome.value;
+  const { joinCode, changed, cancelled } = outcome.value;
   if (!changed) {
     // An UPDATE that matches nothing is silent, so this is the one outcome that
     // would otherwise be reported as a success that never happened.
@@ -1415,7 +1415,7 @@ async function onExitCallback(
   await answerCallbackQuery(
     BOT_TOKEN, cb.id, action.kind === "leave" ? "You've left." : "Disconnected.");
   await edit(chatId, messageId, action.kind === "leave"
-    ? renderLeftText({ orgName, joinCode })
+    ? renderLeftText({ orgName, joinCode }, cancelled)
     : renderUnlinkedText({ orgName, joinCode }));
   // After the message, not before it: the menu is the smaller promise of the
   // two, and a chat that has just left its last office should not be left with

@@ -1059,6 +1059,14 @@ describe("/leave and /unlink", () => {
       expect(text).toContain(`send me the join code <code>${CODE}</code>`);
     });
 
+    it("names the lunch leaving cancelled, and only when there was some", () => {
+      expect(renderLeftText({ orgName: null, joinCode: CODE })).not.toContain("cancelled");
+      expect(renderLeftText({ orgName: null, joinCode: CODE }, 1))
+        .toContain("Your lunch on 1 day still open for ordering was cancelled.");
+      expect(renderLeftText({ orgName: null, joinCode: CODE }, 3))
+        .toContain("Your lunch on 3 days still open for ordering was cancelled.");
+    });
+
     it("says what /unlink stops and what it leaves alone", () => {
       const text = renderUnlinkConfirmText({ orgName: null, joinCode: CODE });
       expect(text).toContain("<b>Disconnect this chat?</b>");

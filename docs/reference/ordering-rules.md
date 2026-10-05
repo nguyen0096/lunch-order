@@ -97,7 +97,7 @@ one ([Ordering](screens.md#ordering)).
 | Turning a weekday on, or writing an exception, re-runs that for every published menu still before its cutoff | `trg_standing_materialize` |
 | Nothing is materialized after the cutoff, for a past date, or into a slot that already has a row. A slot the member cancelled stays cancelled | `materialize_standing_orders`, `orders_menu_profile_uk` |
 | Turning a weekday off cancels nothing already created | no trigger on turning off |
-| A member who left or was removed keeps their rule but gets no new standing orders; orders already created stay | `m.status = 'active'` in `materialize_standing_orders` |
+| A member who left or was removed keeps their rule but gets no new standing orders, and the open ones already created are cancelled ([Leaving or being removed](#leaving-or-being-removed)). Coming back revives none: the rule orders again only into a slot with no row | `m.status = 'active'` in `materialize_standing_orders`, `orders_menu_profile_uk` |
 
 On the Board, a day after today with no order row of mine shows `Standing` or
 `Planned` when the rule and exceptions predict an order, and bare `+` or
@@ -129,7 +129,7 @@ tappable only while the day has no menu
 | withdraw | the person who offered | same | `enforce_transfer_rules` |
 | record a pass | an admin, from anybody to anybody else, their own meal included; accepted at once, no answer needed | the week is settled; not on a cancelled day | `record_pass` (20261021100100) |
 | accept, decline or withdraw on somebody's behalf | an admin, on a pending offer; accept and decline only while the order is placed, so an offer left on a cancelled order is withdrawn | same | `answer_pass` (20261023100100) |
-| undo an accepted pass | an admin; the meal goes back on the giver's bill | same | `undo_pass` |
+| undo an accepted pass | an admin; the meal goes back on the giver's bill. Refused while the day is still open if the giver has left or was removed (`Tèo has left the office, so the meal cannot go back to them on 24/09`); past the cutoff it is allowed | same | `undo_pass` (20261024100000) |
 
 A pass ends `accepted`, `declined`, `cancelled` (withdrawn) or `undone`.
 `undone` means it happened and was reversed later, so the record can tell it
@@ -137,10 +137,12 @@ from one that never took effect; `undone_at` and `undone_by` say when and who,
 and `decided_at` keeps the acceptance. Only `undo_pass` writes it.
 
 **A pending pass ends with its meal.** When its order stops being placed, by
-lunch being cancelled, the member cancelling it or an admin removing it, the
-pass is withdrawn in the same transaction: `cancelled`, `decided_by` whoever
-cancelled the order, and a reason, `withdrawn: lunch on 24/09 was cancelled`
-or `withdrawn: the meal was cancelled`. Nobody is told, as for any withdrawal.
+lunch being cancelled, the member cancelling it, an admin removing it or its
+owner leaving the office, the pass is withdrawn in the same transaction:
+`cancelled`, `decided_by` whoever cancelled the order, and a reason,
+`withdrawn: lunch on 24/09 was cancelled`, `withdrawn: the meal was
+cancelled`, or `withdrawn: the meal was cancelled when its owner left the
+office` (`... was removed from the office`). Nobody is told, as for any withdrawal.
 The recipient who answers it anyway is refused. Accepting says why: `lunch on
 24/09 was cancelled`, `the lunch on 24/09 offered to you was cancelled, so
 there is no meal to accept`, or, once the order is placed again, `the lunch on
@@ -194,6 +196,23 @@ recipient pays. A pass is never deleted, by anybody; it ends by being declined,
 withdrawn or undone (20261020100100). The Board holds admins to the member's window
 ([Passing a meal](screens.md#passing-a-meal)).
 
+## Leaving or being removed
+
+The owner's rule (2026-10-02): somebody going stops eating from the next day
+nobody has told the caterer about, and no sooner.
+
+| Rule | Enforced by |
+| --- | --- |
+| Leaving (Settings, or `/leave` to the bot), an admin's Remove, and the service role setting a membership inactive all cancel the person's open orders, in the same transaction | `memberships_leaving_cancels`, `private.cancel_leavers_open_orders` (20261024100000) |
+| Open means the menu is published and its cutoff ahead, the window in which the person could cancel it themselves. A day past its cutoff (published or locked) and a past day keep the order placed and billed: the caterer may already have the count | `cancel_leavers_open_orders`, as `enforce_order_window` |
+| A meal the person passed on, and somebody accepted, stays: it is the recipient's | same |
+| The cancel is the ordinary one: `status = cancelled`, the dish line kept (the system's one dish included), the pending pass withdrawn, and the week re-billed at once, so a statement left with no lines is deleted and its credit is the person's again. A week nobody has billed gets no period; a settled week is never touched | same, `public.run_billing` |
+| `leave_office` checks the membership and the sole-owner rule, then cancels, then refuses if anything is still owed. So a meal leaving takes off the bill does not stop anybody leaving; a meal past its cutoff still unpaid does, and the refusal rolls the cancellation back | `leave_office` (20261024100000) |
+| `leave_office` answers how many orders it cancelled, and the bot's reply names that many days, or none | `leave_office`, `renderLeftText` |
+| Settings says what would still be owed after the cancellation, by doing it and rolling it back, for the caller in their own office only, once the Leave dialog opens | `my_balance_after_leaving` |
+| Nothing places an order for somebody who is leaving or gone: their own order (on the Board, the bot or the table), an admin's record of a meal on a day they have none or had cancelled (`Tèo is no longer in this office, so no lunch can be recorded for them on 24/09`), a pass to them (`that person is not a member of this office`), and an undo putting an open day's meal back on them (`Tèo has left the office, so the meal cannot go back to them on 24/09`) are refused, and one in flight when they leave finishes first and is then cancelled with the rest. A meal they kept past its cutoff can still be put right, and a pass of one undone onto them | `private.hold_membership` in `set_my_order`, `correct_meal`, `correct_meal_off_menu`, `record_pass`, `answer_pass`, `undo_pass`; `orders_for_a_member` |
+| Coming back (the join code, an invitation, an admin's Add back) revives nothing: cancelled orders and withdrawn offers stay as they are | `materialize_standing_orders` writes only into a slot with no row |
+
 ## Billing
 
 | Order state | Charged | Enforced by |
@@ -207,7 +226,8 @@ withdrawn or undone (20261020100100). The Board holds admins to the member's win
 Billing lines are written only by `run_billing`: when the tick closes a week,
 when an admin settles one, on every correction, when a pass is accepted,
 declined or withdrawn by a person (`trg_transfer_rebills`, 20261023100200), and when lunch
-is cancelled (`trg_menu_cancelled`, 20261023100200). A correction, a pass
+is cancelled (`trg_menu_cancelled`, 20261023100200), and when somebody with an
+open order leaves or is removed (20261024100000). A correction, a pass
 answer and a cancel each take the office-week key before they look the week's
 billing period up, so none misses a period another is creating at the same
 moment. A member's own
@@ -271,11 +291,12 @@ Surprises in the code as it stands. None is fixed here.
 8. "Eating, no dish chosen" on a menu of several dishes is billed as a 0 meal and counted in the weekly message's meal count (`v_order_charges`, `run_billing_inner`).
 9. A dish chosen by somebody who later cancelled still cannot be removed; cancelling keeps the order's lines (`order_items_menu_item_fk`).
 10. The database allows several dishes on one order; the Board and Orders always write one (`order_items_one_per_dish_uk` allows distinct dishes).
-11. Leaving or being removed keeps already-created future orders placed and billed (`leave_office`, 20261002100000; no trigger on memberships).
-12. A member added back with a rule on gets no standing order for a menu already published; the Board still projects `Standing` there (`trg_standing_materialize` fires on rule writes only; `projectStandingDays` ignores menu status).
-13. Every guard exempts `private.is_service()`, which is true inside any `SECURITY DEFINER` function owned by `postgres`; the corrections RPCs therefore check the settled week themselves (20261007100200 header).
-14. The menu message is written once per date when first enqueued; later dish changes are never announced to the group, only to those a second dish puts back to undecided (`run_hourly_tick`, dedupe key per date).
-15. A second dish added before the first hourly tick after publishing queues `dish_choice` to the people it puts back before `menu_published` reaches anybody, so their first message about the day asks them to choose (`private.settle_undecided`, `run_hourly_tick`).
+11. A member added back with a rule on gets no standing order for a menu already published; the Board still projects `Standing` there (`trg_standing_materialize` fires on rule writes only; `projectStandingDays` ignores menu status).
+12. Every guard exempts `private.is_service()`, which is true inside any `SECURITY DEFINER` function owned by `postgres`; the corrections RPCs therefore check the settled week themselves (20261007100200 header).
+13. The menu message is written once per date when first enqueued; later dish changes are never announced to the group, only to those a second dish puts back to undecided (`run_hourly_tick`, dedupe key per date).
+14. A second dish added before the first hourly tick after publishing queues `dish_choice` to the people it puts back before `menu_published` reaches anybody, so their first message about the day asks them to choose (`private.settle_undecided`, `run_hourly_tick`).
+15. Somebody who left or was removed keeps the orders past their cutoff, and the Board counts them in the day's total and the caterer's message lists them, but neither the Board nor Orders has a row for them, so nobody sees whose they are or can correct them there (`fetchBoard` reads active memberships only; `BoardScreen` totals every placed cell; `fetchCatererOrder`).
+16. A meal somebody passed to a person who then left stays on the leaver's bill if it was accepted, and an offer still waiting for them stays pending; leaving cancels only orders that are the leaver's own (`private.cancel_leavers_open_orders`).
 
 ## One-dish menus
 

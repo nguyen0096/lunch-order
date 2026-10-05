@@ -259,49 +259,29 @@ export async function setShortCode(args: {
 
 /* ------------------------------------------------- leaving, and deleting */
 
-export type LeaveStanding = {
-  /** What this person still owes the office, in minor units. */
-  owedMinor: number;
-  /** Active owners of the office, which is what the sole-owner rule counts. */
-  ownerCount: number;
-};
+/** Active owners of the office, which is what the sole-owner rule counts. */
+export async function fetchOwnerCount(orgId: number): Promise<number> {
+  const { count, error } = await supabase
+    .from("memberships")
+    .select("id", { count: "exact", head: true })
+    .eq("org_id", orgId)
+    .eq("role", "owner")
+    .eq("status", "active");
+  if (error) throw error;
+  return count ?? 0;
+}
 
 /**
- * The two things `leave_office` will refuse for, asked before the button is
- * pressed. Not the enforcement -- that is the function's, and it is checked
- * again there -- only the difference between a control that fails and one that
- * explains itself.
+ * What `leave_office` would find you owe: the balance once your open orders
+ * are cancelled and their weeks re-billed. The database does exactly that and
+ * rolls it back, so the affordance and the rule cannot say different numbers.
+ * It takes the locks leaving takes, so ask only when somebody is about to leave.
  */
-export async function fetchLeaveStanding(args: {
-  orgId: number; profileId: string;
-}): Promise<LeaveStanding> {
-  const [account, owners] = await Promise.all([
-    // The same view `leave_office` refuses on, so the affordance and the rule
-    // cannot say different numbers. It used to walk statements and take the
-    // newest short week, because carry-forward meant that week contained the
-    // older ones. It does not any more, and taking the newest would have told
-    // somebody who owes three weeks that they owe the smallest of them.
-    supabase
-      .from("v_account_balance")
-      .select("balance_minor")
-      .eq("org_id", args.orgId)
-      .eq("profile_id", args.profileId)
-      .maybeSingle(),
-    supabase
-      .from("memberships")
-      .select("id", { count: "exact", head: true })
-      .eq("org_id", args.orgId)
-      .eq("role", "owner")
-      .eq("status", "active"),
-  ]);
-  if (account.error) throw account.error;
-  if (owners.error) throw owners.error;
-
-  return {
-    // Credit is not a debt, so a negative balance owes nothing.
-    owedMinor: Math.max(Number(account.data?.balance_minor ?? 0), 0),
-    ownerCount: owners.count ?? 0,
-  };
+export async function fetchOwedAfterLeaving(orgId: number): Promise<number> {
+  const { data, error } = await supabase.rpc("my_balance_after_leaving", { p_org_id: orgId });
+  if (error) throw error;
+  // Credit is not a debt, so a negative balance owes nothing.
+  return Math.max(Number(data ?? 0), 0);
 }
 
 export type OfficeDebt = {

@@ -461,6 +461,34 @@ Dish availability went at the same time. No screen ever set it, and it was a
 second answer to "how many dishes does this menu have", which the one-dish rule
 needs to have exactly one answer.
 
+**Leaving cancels what is still open, and nothing past the cutoff.** The
+owner's rule (2026-10-02). A membership going inactive used to leave every
+order placed, and the Board lists active members only, so a leaver's meals were
+cooked, counted in the day's total and billed with nobody seeing them. Open is
+the window the person could have cancelled in themselves (published, cutoff
+ahead): inside it nobody has told the caterer yet, so cancelling costs nothing
+and is what the person would have done. Past the cutoff the count may already
+be with the caterer, so the meal stays ordered and billed, as it would for
+anybody who forgot to cancel. A meal the leaver passed on and somebody accepted
+is that person's now, so it stays. It is one trigger on `memberships` rather
+than a step in `leave_office`, because an admin's Remove is a plain update and
+the service role can make one too; a rule only one door obeys is not a rule.
+`leave_office` cancels before it reads the debt: a meal that leaving takes off
+the bill is not money owed, and checking first would make somebody pay for a
+lunch they will never eat, then leave with a credit nobody refunds. A refusal
+rolls the cancellation back, so trying costs nothing. Settings shows the same
+figure by doing the same work and rolling it back, because a week's lines can
+be stale (a member's own change reaches the bill only at the next re-bill), and
+any shortcut would sometimes say a number the refusal does not. The price is
+that asking takes the locks leaving takes, office-wide ones included (the
+publish lock and each open week's), for as long as the re-bill runs, so a
+publish or a correction in that office waits behind it. That is kept, and
+asked only once somebody opens the Leave dialog, not on every visit to
+Settings. Every path that places an order holds the person's membership row
+before anything else, because leaving looks for open orders once: an order
+committed just after that look, from a second device or an admin, would
+otherwise stay placed on somebody who has gone (20261024100000).
+
 **No horizon.** A member may skip or plan any date after today, however far
 ahead, and the Board pages forward without limit. The projection is a pure
 function of the rule and the exceptions over whatever week is on screen, so

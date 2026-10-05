@@ -42,6 +42,8 @@ and whether it rolls back. The ones to know first:
 | `rebill_race.sql` | over dblink, three or four sessions on one person: payments arriving held open, a re-bill of their week (a removal, a reprice) and a payment moved (matched to this week, to another week, a stray applied, one that arrived while the re-bill waited), voided, or the week waived; each waits rather than deadlocks and nobody is left owing | **yes, then removes them**; local only, needs `dblink` |
 | `admin_orders.sql` | the Orders screen's writes: only an admin of the office may call `correct_meal`, `correct_meal_off_menu`, `remove_meal`, `record_pass`, `answer_pass` or `undo_pass`; a cancelled, menu-less or settled day is refused in their words, and `reprice_dish` refuses a cancelled day too; exact money on both sides of every write and nobody else moved; lines and statements agree with the record and nothing is billed twice; a pass is recorded, answered, withdrawn and undone, chains are refused, a correction after a pass lands on the payer; each write's audit row and message, including "ordered lunch for you" ahead; a member's own offer is always pending and a browser cannot write `undone`. No fixture holds credit, so no figure depends on a statement left behind by a week's last meal leaving | no, rolls back |
 | `admin_orders_race.sql` | over dblink: an admin answering an offer while the recipient accepts it, both ways round and with the week held by a third correction, never deadlocks; a pass meets the member cancelling or offering the same meal, both ways round; an undo waits for a correction on the same meal; a member's offer taken while the real `record_pass` holds the order goes through, and `record_pass` then names it, with `record_pass` paused between its order lock and its insert by a test-only trigger the file creates and drops (R7); cancelling lunch waits for a correction in flight and cancels the order it wrote (R8); cancelling lunch and a correction on another day of the same week wait for each other, both ways round, and leave every statement the sum of its lines (R9, R10), including when the correction creates the week's first billing period, so nothing stays billed on a cancelled order (R11, R12); a member accepting an offer and the week's first correction, both ways round, leave the meal on the recipient's bill (R13, R14) | **yes, then removes them**; local only, needs `dblink` |
+| `leaving_cancels_orders.sql` | leaving, an admin's removal and one service-role UPDATE removing two people each cancel only the person's open orders (the system's one dish included), withdraw the pending offer on them, saying why, and re-bill the week at once: credit comes back, a statement with no lines goes, nothing past the cutoff, in a settled week or passed on and accepted moves; `leave_office` reads the debt after cancelling (owing only for open meals is no bar, a debt past the cutoff refuses and the refusal cancels nothing), and `my_balance_after_leaving` gives the same figure and changes nothing; the rules order nothing for somebody gone, nobody records a meal for them, passes them one or places their order again on the table, a meal they kept can still be corrected, an undo puts an open day's meal back on no giver who has gone but does past the cutoff, an order in another office gets RLS's refusal whoever it names, and coming back revives nothing; the other office and everybody who stayed are untouched | no, rolls back |
+| `leaving_race.sql` | over dblink: leaving waits for a publish in flight and cancels what it ordered (R1), a publish waits for a leaving or a removal and orders nothing for them (R2, R3), leaving waits for a correction of the meal and cancels it, leaving every statement the sum of its lines (R4), leaving and a removal of the same person wait for each other both ways without a deadlock (R5, R6), an accept of the leaver's offer before leaving keeps the meal on the recipient's bill and one after is refused (R7, R8), leaving waits for an offer somebody holds rather than cancel the meal under an accept (R9), and the member's own order and an admin's record of a meal each wait for a leaving in flight and are refused after it, or are waited for and cancelled with the rest (R10 to R13), and an undo of the leaver's pass waits for the leaving and is refused, or is waited for and its meal cancelled (R14, R15), and the same with both queued on the giver's row behind a third session, either order, without a deadlock (R16) | **yes, then removes them**; local only, needs `dblink` |
 | `caterer_template.sql` | an owner or admin saves the office's caterer template and null restores the default; one without `{dishes}`, with an unknown placeholder or over 2000 characters is refused; a member or another office's admin changes nothing | no, rolls back |
 | `function_grants.sql` | no function in `public` is callable by a signed-in person unless listed as intended | no, rolls back |
 
@@ -195,7 +197,24 @@ These are not style preferences. Breaking one corrupts money or leaks data.
   offer that won the slot. These and `remove_meal` take the order
   `FOR NO KEY UPDATE`, not `FOR UPDATE`: a member's offer holds its pass slot
   and then takes the order `FOR KEY SHARE` through its foreign key, and
-  `FOR UPDATE` would make the two wait on each other (40P01). Nothing
+  `FOR UPDATE` would make the two wait on each other (40P01). A membership
+  going inactive holds its row first (`leave_office` takes it `FOR NO KEY
+  UPDATE` before anything else, as an admin's `UPDATE` does), then follows the
+  order above for the person's open orders: the publish lock, their menus
+  `FOR SHARE`, the pending passes, every office-week key, every week, the
+  orders, and only then re-bills each week in date order
+  (`private.cancel_leavers_open_orders`, 20261024100000). Every path that
+  places or revives somebody's order holds that person's membership row
+  `FOR SHARE` before its first menu, so it waits for a leaving in flight and
+  a leaving waits for it: `set_my_order`, `correct_meal`,
+  `correct_meal_off_menu`, `record_pass` and `answer_pass` (the recipient, to
+  accept) and `undo_pass` (the giver) through `private.hold_membership`, and a
+  browser's own write to `orders` in its own office through
+  `orders_for_a_member`, which leaves another office's row to RLS so its
+  refusal says nothing about who is a member there. Holding it from inside a correction
+  (after the menu or the week) would deadlock with leaving, which takes the row
+  first and the week later. A publish takes no membership row: the publish
+  lock serializes it with leaving. Nothing
   that holds a menu `FOR UPDATE` may then wait on a dish, a line, an order or a
   week, because a foreign key check takes the menu `FOR KEY SHARE`. So a menu
   is taken `FOR SHARE` to order on it and `FOR NO KEY UPDATE` to change it,

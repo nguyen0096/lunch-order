@@ -231,7 +231,7 @@ export function PeopleScreen({ me, org, role }: ScreenProps) {
             : `${onTelegram} of ${activeCount} on Telegram. Anybody not on it hears nothing the bot sends to people one by one, the weekly bill included.`}
         </p>
         <p className="mt-1 text-sm text-muted">
-          {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one; their past orders stay on the bill, because they ate the food. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
+          {`${activeCount} active in ${org.name}. Removing somebody stops every request they make from their next one and cancels their lunch on every day still open for ordering, which adding them back does not restore. A day whose ordering has closed, and their past orders, stay on the bill. The join code will not bring back somebody you removed: only an admin adding them back, or a new invitation, does.`}
         </p>
 
         {members.length === 0 ? (

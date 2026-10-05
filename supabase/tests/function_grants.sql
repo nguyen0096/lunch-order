@@ -28,6 +28,9 @@ insert into expected (name, anon_may) values
   -- whether this particular signed-in browser gets an answer.
   ('settle_period',       false),
   ('leave_office',        false),
+  -- The caller's own balance once leaving has cancelled their open orders,
+  -- worked out and rolled back; nobody else's, and only in their own office.
+  ('my_balance_after_leaving', false),
   ('delete_office',       false),
   ('ensure_period',       false),
   -- The Orders screen. Each one repeats the admin check itself, which is
